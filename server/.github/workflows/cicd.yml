@@ -1,0 +1,70 @@
+name: Deploy Node Application
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: nikhil2523/chat-app-backend:latest,nikhil2523/chat-app-backend:${{ github.sha }}
+
+  deploy:
+    needs: build
+    runs-on: self-hosted
+    steps:
+      - name: Pull Image from Docker Hub
+        run: docker pull nikhil2523/chat-app-backend:latest
+
+      - name: Delete Old Container
+        run: |
+          if docker ps -a --format '{{.Names}}' | grep -q '^nodejs-app-container$'; then
+            docker stop nodejs-app-container
+            docker rm nodejs-app-container
+          fi
+        continue-on-error: true
+
+      - name: Run Docker Container
+        run: |
+          docker run -d \
+          -p 80:3000 \
+          --name nodejs-app-container \
+          --restart unless-stopped \
+          -e MONGO_PASSWORD='${{ secrets.MONGO_PASSWORD }}' \
+          -e MONGO_URI='${{ secrets.MONGO_URI }}' \
+          -e CLOUDINARY_API_KEY='${{ secrets.CLOUDINARY_API_KEY }}' \
+          -e CLOUDINARY_API_SECRET='${{ secrets.CLOUDINARY_API_SECRET }}' \
+          -e CLOUDINARY_CLOUD_NAME='${{ secrets.CLOUDINARY_CLOUD_NAME }}' \
+          -e CLIENT_URL='${{ secrets.CLIENT_URL }}' \
+          -e NODE_ENV=production \
+          nikhil2523/chat-app-backend:latest
+
+      - name: Verify Container is Running
+        run: |
+          if ! docker ps | grep -q nodejs-app-container; then
+            echo "Container failed to start"
+            docker logs nodejs-app-container
+            exit 1
+          else
+            echo "Container is running"
+            docker ps --filter "name=nodejs-app-container" --format "App is running on port(s): {{.Ports}}"
+          fi
