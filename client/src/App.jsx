@@ -14,7 +14,7 @@ const Login = lazy(() => import("./pages/Login"));
 const Chat = lazy(() => import("./pages/Chat"));
 const Groups = lazy(() => import("./pages/Groups"));
 const NotFound = lazy(() => import("./pages/NotFound"));
-
+// const user = True;
 const App = () => {
   
   const { user, loader } = useSelector((state) => state.auth);

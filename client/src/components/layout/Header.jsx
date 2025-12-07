@@ -23,9 +23,13 @@ import { useNavigate } from 'react-router-dom';
 import { server } from '../../constants/config';
 import { userExists } from "../../redux/reducers/auth";
 import { setIsMobile, setIsNotification, setIsSearch } from "../../redux/reducers/misc";
+
+
 const SearchDialog = lazy(() => import("../specific/Search"));
 const NotificationsDialog = lazy(() => import("../specific/Notifications"));
 const NewGroupsDialog = lazy(() => import("../specific/NewGroup"));
+
+
 const Header = () => {
   const navigate = useNavigate();
   const dispatch = useDispatch();
