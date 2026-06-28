@@ -5,6 +5,9 @@ import {
   Edit as EditIcon,
   KeyboardBackspace as KeyboardBackspaceIcon,
   Menu as MenuIcon,
+  Security as SecurityIcon,
+  Lock as LockIcon,
+  LockOpen as LockOpenIcon,
 } from "@mui/icons-material";
 import {
   Backdrop,
@@ -18,6 +21,8 @@ import {
   TextField,
   Tooltip,
   Typography,
+  Switch,
+  FormControlLabel,
 } from "@mui/material";
 import React, { Suspense, lazy, memo, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -34,6 +39,9 @@ import {
   useMyGroupsQuery,
   useRemoveGroupMemberMutation,
   useRenameGroupMutation,
+  useToggleRestrictMessagesMutation,
+  useAddAdminMutation,
+  useRemoveAdminMutation,
 } from "../redux/api/api";
 import { setIsAddMember } from "../redux/reducers/misc";
 
@@ -50,6 +58,7 @@ const Groups = () => {
   const dispatch = useDispatch();
 
   const { isAddMember } = useSelector((state) => state.misc);
+  const { user } = useSelector((state) => state.auth);
 
   const myGroups = useMyGroupsQuery("");
 
@@ -70,6 +79,10 @@ const Groups = () => {
     useDeleteChatMutation
   );
 
+  const [toggleRestrict] = useAsyncMutation(useToggleRestrictMessagesMutation);
+  const [addAdmin] = useAsyncMutation(useAddAdminMutation);
+  const [removeAdmin] = useAsyncMutation(useRemoveAdminMutation);
+
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isEdit, setIsEdit] = useState(false);
   const [confirmDeleteDialog, setConfirmDeleteDialog] = useState(false);
@@ -78,6 +91,9 @@ const Groups = () => {
   const [groupNameUpdatedValue, setGroupNameUpdatedValue] = useState("");
 
   const [members, setMembers] = useState([]);
+  const [admins, setAdmins] = useState([]);
+  const [creator, setCreator] = useState(null);
+  const [restricted, setRestricted] = useState(false);
 
   const errors = [
     {
@@ -98,12 +114,17 @@ const Groups = () => {
       setGroupName(groupData.chat.name);
       setGroupNameUpdatedValue(groupData.chat.name);
       setMembers(groupData.chat.members);
+      setAdmins(groupData.chat.admins || []);
+      setCreator(groupData.chat.creator);
+      setRestricted(groupData.chat.restrictedMessages || false);
     }
 
     return () => {
       setGroupName("");
       setGroupNameUpdatedValue("");
       setMembers([]);
+      setAdmins([]);
+      setCreator(null);
       setIsEdit(false);
     };
   }, [groupDetails.data]);
@@ -147,6 +168,24 @@ const Groups = () => {
   const removeMemberHandler = (userId) => {
     removeMember("Removing Member...", { chatId, userId });
   };
+
+  const toggleRestrictHandler = () => {
+    toggleRestrict("Updating restrictions...", chatId);
+    setRestricted((prev) => !prev);
+  };
+
+  const handleAdminToggle = (userId) => {
+    if (admins.includes(userId)) {
+      removeAdmin("Demoting Admin...", { chatId, userId });
+      setAdmins(prev => prev.filter(id => id !== userId));
+    } else {
+      addAdmin("Promoting to Admin...", { chatId, userId });
+      setAdmins(prev => [...prev, userId]);
+    }
+  };
+
+  const isUserCreator = creator?.toString() === user?._id?.toString();
+  const isUserAdmin = admins?.includes(user?._id?.toString()) || isUserCreator;
 
   useEffect(() => {
     if (chatId) {
@@ -298,13 +337,15 @@ const Groups = () => {
           <>
             {GroupName}
 
-            <Typography
-              margin={"2rem"}
-              alignSelf={"flex-start"}
-              variant="body1"
-            >
-              Members
-            </Typography>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "2rem", alignSelf: "stretch" }}>
+              <Typography variant="body1">Members</Typography>
+              {isUserAdmin && (
+                <FormControlLabel
+                  control={<Switch checked={restricted} onChange={toggleRestrictHandler} />}
+                  label="Restrict Messages (Admins Only)"
+                />
+              )}
+            </Box>
 
             <Stack
               maxWidth={"45rem"}
@@ -324,19 +365,23 @@ const Groups = () => {
               {isLoadingRemoveMember ? (
                 <CircularProgress />
               ) : (
-                members.map((i) => (
-                  <UserItem
-                    user={i}
-                    key={i._id}
-                    isAdded
-                    styling={{
-                      boxShadow: "0 0 0.5rem  rgba(0,0,0,0.2)",
-                      padding: "1rem 2rem",
-                      borderRadius: "1rem",
-                    }}
-                    handler={removeMemberHandler}
-                  />
-                ))
+                members.map((i) => {
+                  const isCreator = i._id === creator;
+                  const isAdmin = admins.includes(i._id) || isCreator;
+                  return (
+                    <Box key={i._id} sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", boxShadow: "0 0 0.5rem rgba(0,0,0,0.2)", padding: "1rem 2rem", borderRadius: "1rem", mb: 2 }}>
+                      <UserItem user={i} isAdded handler={removeMemberHandler} />
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                        {isAdmin && <Tooltip title="Group Admin"><SecurityIcon color="primary" fontSize="small" /></Tooltip>}
+                        {isUserCreator && !isCreator && (
+                          <Button size="small" variant="outlined" onClick={() => handleAdminToggle(i._id)}>
+                            {isAdmin ? "Remove Admin" : "Make Admin"}
+                          </Button>
+                        )}
+                      </Box>
+                    </Box>
+                  );
+                })
               )}
             </Stack>
 

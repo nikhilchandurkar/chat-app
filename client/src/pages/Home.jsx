@@ -1,23 +1,19 @@
 import React from "react";
 import AppLayout from "../components/layout/AppLayout";
 import { Box, Typography } from "@mui/material";
-import { motion } from "framer-motion";
-import AnimatedGradientBackground from "../components/effects/AnimatedGradientBackground";
-import TextAnimation from "../components/effects/TextAnimation";
+
 
 const Home = () => {
   return (
-    <Box sx={{ position: "relative", width: "100%", height: "100vh", overflow: "hidden", backgroundColor: "black" }}>
-      {/* 🌈 Animated Gradient Background */}
-      <AnimatedGradientBackground
-        preset="Plasma"
-        speed={30}
-        noise={{ opacity: 0.3, scale: 1 }}
-        radius="0px"
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 0 }}
-      />
-
-      {/* ✨ Foreground Animated Text */}
+    <Box sx={{ 
+      position: "relative", 
+      width: "100%", 
+      height: "100%", 
+      overflow: "hidden", 
+      backgroundColor: "background.default",
+      backgroundImage: "radial-gradient(circle at center, rgba(0,0,0,0.03) 0%, rgba(0,0,0,0) 100%)",
+      borderLeft: "1px solid rgba(0,0,0,0.05)"
+    }}>
       <Box
         sx={{
           position: "absolute",
@@ -31,18 +27,12 @@ const Home = () => {
           px: 2,
         }}
       >
-        <TextAnimation
-          text={"Select a friend to chat 💬"}
-          typingSpeed={50}
-          deletingSpeed={30}
-          pauseDuration={2000}
-          loop={true}
-          textColors={["#ffffff", "#ff9f21"]}
-          style={{ fontSize: "2rem", fontWeight: "bold", textShadow: "0px 3px 15px rgba(0,0,0,0.5)" }}
-        />
+        <Typography variant="h5" color="text.secondary" fontWeight={500}>
+          Select a friend to chat 💬
+        </Typography>
       </Box>
     </Box>
   );
 };
 
-export default AppLayout()(Home);
+export default Home;

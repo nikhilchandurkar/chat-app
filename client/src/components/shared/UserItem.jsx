@@ -20,7 +20,9 @@ const UserItem = ({
         width={"100%"}
         {...styling}
       >
-        <Avatar src={avatar.url} />
+        <Avatar src={avatar?.url} alt={name}>
+          {name ? name[0].toUpperCase() : "U"}
+        </Avatar>
 
         <Typography
           variant="body1"

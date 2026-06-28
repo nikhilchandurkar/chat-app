@@ -1,12 +1,11 @@
-import { v2 as cloudinary } from "cloudinary";
 import cookieParser from "cookie-parser";
 import cors from 'cors';
 import dotenv from "dotenv";
 import express from "express";
 import { createServer } from 'http';
 import { Server } from "socket.io";
-import { v4 as uuid } from "uuid";
-import { NEW_MESSAGE } from "./constants/events.js";
+import crypto from "crypto";
+import { NEW_MESSAGE, START_TYPING, STOP_TYPING, ONLINE_USERS } from "./constants/events.js";
 import { getSockets } from "./lib/helper.js";
 import { socketAuthenticator } from "./middlewares/auth.js";
 import { errorMiddleware } from "./middlewares/error.js";
@@ -14,11 +13,15 @@ import { Message } from "./models/message.js";
 import adminRoute from "./routes/admin.js";
 import chatRoute from "./routes/chat.js";
 import userRoute from "./routes/user.js";
+import messageRoute from "./routes/message.js";
+import previewRoute from "./routes/preview.js";
 import { connectDB } from "./utils/features.js";
 import { corsOption } from "./constants/config.js";
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 try {
-    dotenv.config({ path: "./.env" });
+    dotenv.config({ path: ".env" });
 } catch (error) {
     console.error("Failed to load environment variables:", error);
     process.exit(1); // Exit process if .env fails
@@ -35,29 +38,22 @@ try {
     process.exit(1); // Exit process if DB connection fails
 }
 
-// Cloudinary configuration
-try {
-    cloudinary.config({
-        cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-        api_key: process.env.CLOUDINARY_API_KEY,
-        api_secret: process.env.CLOUDINARY_API_SECRET,
-    });
-} catch (error) {
-    console.error("Failed to configure Cloudinary:", error);
-    process.exit(1); // Exit process if Cloudinary config fails
-}
 
 const userSocketIDs = new Map();
 
 const app = express();
 const server = createServer(app);
-const io = new Server(server, {
-    cors: corsOption,
-});
+const io = new Server(server, { cors: corsOption });
+
+// Make io accessible in controllers via req.app.get('io')
+app.set("io", io);
 
 app.use(express.json());
 app.use(cookieParser());
 app.use(cors(corsOption));
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+app.use('/media', express.static(path.join(__dirname, 'media')));
 
 app.get("/", (req, res) => {
     res.json("hello its chat app API");
@@ -70,6 +66,8 @@ app.get("/hello", (req, res) => {
 app.use("/api/v1/user", userRoute);
 app.use("/api/v1/chat", chatRoute);
 app.use("/api/v1/admin", adminRoute);
+app.use("/api/v1/message", messageRoute);
+app.use("/api/v1/preview", previewRoute);
 
 io.use((socket, next) => {
     try {
@@ -95,7 +93,7 @@ io.on("connection", (socket) => {
         socket.on(NEW_MESSAGE, async ({ chatId, members, message }) => {
             const messageForRealTime = {
                 content: message,
-                _id: uuid(),
+                _id: crypto.randomUUID(),
                 sender: {
                     _id: user._id,
                     name: user.name,
@@ -124,9 +122,22 @@ io.on("connection", (socket) => {
             }
         });
 
+        socket.on(START_TYPING, ({ members, chatId }) => {
+            const membersSocket = getSockets(members, userSocketIDs);
+            socket.to(membersSocket).emit(START_TYPING, { chatId });
+        });
+
+        socket.on(STOP_TYPING, ({ members, chatId }) => {
+            const membersSocket = getSockets(members, userSocketIDs);
+            socket.to(membersSocket).emit(STOP_TYPING, { chatId });
+        });
+
+        io.emit(ONLINE_USERS, Array.from(userSocketIDs.keys()));
+
         socket.on("disconnect", () => {
             userSocketIDs.delete(user._id.toString());
             console.log("User disconnected, updated users:", userSocketIDs);
+            io.emit(ONLINE_USERS, Array.from(userSocketIDs.keys()));
         });
     } catch (error) {
         console.error("Socket connection error:", error);
@@ -136,7 +147,7 @@ io.on("connection", (socket) => {
 app.use(errorMiddleware);
 
 // Start the server
-server.listen(port, () => {
+server.listen(port,'0.0.0.0', () => {
     console.log(`Server is running at port ${port} in ${process.env.NODE_ENV || "development"}`);
 });
 

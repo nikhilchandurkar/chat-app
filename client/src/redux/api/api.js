@@ -113,11 +113,11 @@ const api = createApi({
     }),
 
     renameGroup: builder.mutation({
-      query: ({ chatId, name }) => ({
+      query: ({ chatId, formData }) => ({
         url: `chat/${chatId}`,
         method: "PUT",
         credentials: "include",
-        body: { name },
+        body: formData,
       }),
       invalidatesTags: ["Chat"],
     }),
@@ -159,6 +159,197 @@ const api = createApi({
       }),
       invalidatesTags: ["Chat"],
     }),
+
+    updateProfile: builder.mutation({
+      query: (data) => ({
+        url: "user/profile",
+        method: "PUT",
+        credentials: "include",
+        body: data,
+      }),
+      invalidatesTags: ["User"],
+    }),
+
+    deleteProfile: builder.mutation({
+      query: () => ({
+        url: "user/profile",
+        method: "DELETE",
+        credentials: "include",
+      }),
+    }),
+
+    editMessage: builder.mutation({
+      query: ({ messageId, content }) => ({
+        url: `message/${messageId}`,
+        method: "PATCH",
+        credentials: "include",
+        body: { content },
+      }),
+    }),
+
+    deleteMessage: builder.mutation({
+      query: (messageId) => ({
+        url: `message/${messageId}`,
+        method: "DELETE",
+        credentials: "include",
+      }),
+    }),
+
+    reactMessage: builder.mutation({
+      query: ({ messageId, emoji }) => ({
+        url: `message/react/${messageId}`,
+        method: "POST",
+        credentials: "include",
+        body: { emoji },
+      }),
+    }),
+
+    forwardMessage: builder.mutation({
+      query: ({ messageId, targetChatIds }) => ({
+        url: `message/forward`,
+        method: "POST",
+        credentials: "include",
+        body: { messageId, targetChatIds },
+      }),
+    }),
+
+    searchMessages: builder.query({
+      query: ({ chatId, q, page = 1 }) => ({
+        url: `message/search/${chatId}?q=${encodeURIComponent(q)}&page=${page}`,
+        credentials: "include",
+      }),
+      keepUnusedDataFor: 0,
+    }),
+
+    getChatMedia: builder.query({
+      query: ({ chatId, page = 1 }) => ({
+        url: `message/media/${chatId}?page=${page}`,
+        credentials: "include",
+      }),
+      keepUnusedDataFor: 0,
+    }),
+
+    getLinkPreview: builder.query({
+      query: (url) => ({
+        url: `preview?url=${encodeURIComponent(url)}`,
+        credentials: "include",
+      }),
+      keepUnusedDataFor: 3600,
+    }),
+
+    changePassword: builder.mutation({
+      query: (data) => ({
+        url: "user/password",
+        method: "PUT",
+        credentials: "include",
+        body: data,
+      }),
+    }),
+    updateStatus: builder.mutation({
+      query: (data) => ({
+        url: "user/status",
+        method: "PUT",
+        credentials: "include",
+        body: data,
+      }),
+    }),
+
+    toggleRestrictMessages: builder.mutation({
+      query: (chatId) => ({
+        url: `chat/${chatId}/restrict`,
+        method: "PUT",
+        credentials: "include",
+      }),
+    }),
+
+    addAdmin: builder.mutation({
+      query: (body) => ({
+        url: "chat/add-admin",
+        method: "POST",
+        credentials: "include",
+        body,
+      }),
+    }),
+
+    removeAdmin: builder.mutation({
+      query: (body) => ({
+        url: "chat/remove-admin",
+        method: "POST",
+        credentials: "include",
+        body,
+      }),
+    }),
+
+    forgotPassword: builder.mutation({
+      query: (data) => ({
+        url: "user/forgot-password",
+        method: "POST",
+        credentials: "include",
+        body: data,
+      }),
+    }),
+
+    updateStatus: builder.mutation({
+      query: (data) => ({
+        url: "user/status",
+        method: "PUT",
+        credentials: "include",
+        body: data,
+      }),
+    }),
+
+    updatePrivacy: builder.mutation({
+      query: (data) => ({
+        url: "user/privacy",
+        method: "PUT",
+        credentials: "include",
+        body: data,
+      }),
+    }),
+
+    toggleStarMessage: builder.mutation({
+      query: (messageId) => ({
+        url: `user/star/${messageId}`,
+        method: "POST",
+        credentials: "include",
+      }),
+      invalidatesTags: ["Starred"],
+    }),
+
+    getStarredMessages: builder.query({
+      query: () => ({
+        url: "user/starred",
+        credentials: "include",
+      }),
+      providesTags: ["Starred"],
+      keepUnusedDataFor: 0,
+    }),
+
+    getPinnedMessages: builder.query({
+      query: (chatId) => ({
+        url: `chat/${chatId}/pins`,
+        credentials: "include",
+      }),
+      keepUnusedDataFor: 0,
+    }),
+
+    pinMessage: builder.mutation({
+      query: ({ chatId, messageId }) => ({
+        url: `chat/${chatId}/pin/${messageId}`,
+        method: "POST",
+        credentials: "include",
+      }),
+      invalidatesTags: ["Chat"],
+    }),
+
+    unpinMessage: builder.mutation({
+      query: ({ chatId, messageId }) => ({
+        url: `chat/${chatId}/pin/${messageId}`,
+        method: "DELETE",
+        credentials: "include",
+      }),
+      invalidatesTags: ["Chat"],
+    }),
   }),
 });
 
@@ -180,4 +371,25 @@ export const {
   useAddGroupMembersMutation,
   useDeleteChatMutation,
   useLeaveGroupMutation,
+  useUpdateProfileMutation,
+  useDeleteProfileMutation,
+  useEditMessageMutation,
+  useDeleteMessageMutation,
+  useReactMessageMutation,
+  useForwardMessageMutation,
+  useLazySearchMessagesQuery,
+  useLazyGetChatMediaQuery,
+  useGetLinkPreviewQuery,
+  useChangePasswordMutation,
+  useForgotPasswordMutation,
+  useUpdateStatusMutation,
+  useUpdatePrivacyMutation,
+  useToggleStarMessageMutation,
+  useGetStarredMessagesQuery,
+  useGetPinnedMessagesQuery,
+  usePinMessageMutation,
+  useUnpinMessageMutation,
+  useToggleRestrictMessagesMutation,
+  useAddAdminMutation,
+  useRemoveAdminMutation,
 } = api;

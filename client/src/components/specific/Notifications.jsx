@@ -1,4 +1,4 @@
-import { Avatar, Button, Dialog, DialogTitle, ListItem, Skeleton, Stack, Typography } from "@mui/material";
+import { Avatar, Box, Button, ListItem, Skeleton, Stack, Typography } from "@mui/material";
 import { memo } from "react";
 import toast from "react-hot-toast";
 import { useDispatch, useSelector } from "react-redux";
@@ -14,7 +14,7 @@ const Notifications = () => {
   const [acceptRequest] = useAcceptFriendRequestMutation();
   // const {acceptRequest} = useAcceptFriendRequestMutation()
 
-  const closeHandler = () => dispatch(setIsNotification(true));
+  const closeHandler = () => dispatch(setIsNotification(false));
 
   const friendRequestHandler = async ({ _id, accept }) => {
     dispatch(setIsNotification(false));
@@ -32,12 +32,12 @@ const Notifications = () => {
   useErrors([{ error, isError }]);
 
   return (
-    <Dialog open={isNotification} onClose={closeHandler}>
-      <Stack p={{ xs: "1rem", sm: "2rem" }} maxWidth={"25rem"}>
-        <DialogTitle alignSelf={"center"}>Notifications</DialogTitle>
+    <Box sx={{ width: "100%", height: "100%", display: "flex", flexDirection: "column", bgcolor: "rgba(247,247,247,1)" }}>
+      <Stack p={{ xs: "1rem", sm: "2rem" }} sx={{ flexGrow: 1, overflowY: "auto" }}>
+        <Typography variant="h5" alignSelf={"center"} mb={2} fontWeight="bold">Notifications</Typography>
 
         {isLoading ? (
-          <Skeleton variant="rectangular" width="100%" height={100} />
+          <Skeleton variant="rectangular" width="100%" height={100} sx={{ borderRadius: "1rem" }} />
         ) : (
           <>
             {data?.allRequests?.length > 0 ? (
@@ -58,7 +58,7 @@ const Notifications = () => {
           </>
         )}
       </Stack>
-    </Dialog>
+    </Box>
   );
 };
 

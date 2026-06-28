@@ -1,10 +1,12 @@
 import { createSlice } from "@reduxjs/toolkit";
 
 const initialState = {
+  themeMode: localStorage.getItem("themeMode") || "light",
   isNewGroup: false,
   isAddMember: false,
   isNotification: false,
   isMobile: false,
+  isMobileProfile: false,
   isSearch: false,
   isFileMenu: false,
   isDeleteMenu: false,
@@ -13,6 +15,8 @@ const initialState = {
     chatId: "",
     groupChat: false,
   },
+  notificationCount: 0,
+  activeChatId: null,
 };
 
 const miscSlice = createSlice({
@@ -31,6 +35,9 @@ const miscSlice = createSlice({
     setIsMobile: (state, action) => {
       state.isMobile = action.payload;
     },
+    setIsMobileProfile: (state, action) => {
+      state.isMobileProfile = action.payload;
+    },
     setIsSearch: (state, action) => {
       state.isSearch = action.payload;
     },
@@ -46,6 +53,22 @@ const miscSlice = createSlice({
     setSelectedDeleteChat: (state, action) => {
       state.selectedDeleteChat = action.payload;
     },
+    incrementNotificationCount: (state) => {
+      state.notificationCount += 1;
+    },
+    resetNotificationCount: (state) => {
+      state.notificationCount = 0;
+    },
+    setNotificationCount: (state, action) => {
+      state.notificationCount = action.payload;
+    },
+    setActiveChatId: (state, action) => {
+      state.activeChatId = action.payload;
+    },
+    toggleTheme: (state) => {
+      state.themeMode = state.themeMode === "light" ? "dark" : "light";
+      localStorage.setItem("themeMode", state.themeMode);
+    }
   },
 });
 
@@ -55,9 +78,15 @@ export const {
   setIsAddMember,
   setIsNotification,
   setIsMobile,
+  setIsMobileProfile,
   setIsSearch,
   setIsFileMenu,
   setIsDeleteMenu,
   setUploadingLoader,
   setSelectedDeleteChat,
+  incrementNotificationCount,
+  resetNotificationCount,
+  setNotificationCount,
+  setActiveChatId,
+  toggleTheme,
 } = miscSlice.actions;

@@ -21,12 +21,12 @@ const nameValidator = () => [param("name", "please enter name ").notEmpty()]
 const registerValidator = () => [
     body("name", "please enter name").notEmpty(),
     body("username", "please enter username").notEmpty(),
+    body("email", "please enter a valid email").notEmpty().isEmail(),
     body("password", "please enter password").notEmpty(),
-
 ]
 
 const loginValidator = () => [
-    body("username", "please enter username").notEmpty(),
+    body("username", "please enter username or email").notEmpty(),
     body("password", "please enter password").notEmpty()
 ]
 
@@ -53,11 +53,12 @@ const removeMembersValidator = () => [
 ]
 
 const sendAttachmentValidator = () => [
-    body("id", "please enter chat ID ").notEmpty(),
+    body("chatId", "please enter chat ID ").notEmpty(),
 ]
 const renameGrouptValidator = () => [
-    param("id", "please enter chat ID ").notEmpty(),
-    body("name", "please enter new name ").notEmpty(),
+    param("id", "please enter chat ID").notEmpty(),
+    // name is optional now, since they might only update the avatar
+
 
 ]
 

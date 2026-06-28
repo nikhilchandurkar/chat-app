@@ -1,7 +1,8 @@
 
 import express from "express";
 import { isAuthenticated } from "../middlewares/auth.js";
-import { attachmentsMulter } from "../middlewares/multer.js";
+import { httpCache } from "../middlewares/cache.js";
+import { attachmentsMulter, singleAvatar } from "../middlewares/multer.js";
 import {
     addMembers,
     deleteChats,
@@ -13,7 +14,13 @@ import {
     newGroupChat,
     removeMembers,
     renameGroup,
-    sendAttachments
+    sendAttachments,
+    pinMessage,
+    unpinMessage,
+    getPinnedMessages,
+    addAdmin,
+    removeAdmin,
+    toggleRestrictMessages,
 } from "../controllers/chat.js";
 
 import {
@@ -36,9 +43,9 @@ app.post("/new", newGroupValidator(),
     validateHandler,
     newGroupChat)
 
-app.get("/my", getMyChats)
+app.get("/my", httpCache, getMyChats)
 
-app.get("/my/groups", getMyGroup)
+app.get("/my/groups", httpCache, getMyGroup)
 
 app.put("/addmembers", addMembersValidator(), validateHandler, addMembers)
 
@@ -50,17 +57,24 @@ app.delete("/leave/:id", chatIdValidator(), validateHandler, leaveGroup)
 
 app.post("/message",
     attachmentsMulter,
-    sendAttachmentValidator(),
-    validateHandler,
     sendAttachments);
 
 // get messages 
-app.get("/message/:id", chatIdValidator(), validateHandler, getMessages);
+app.get("/message/:id", chatIdValidator(), validateHandler, httpCache, getMessages);
 
 app.route("/:id")
-    .get(chatIdValidator(), validateHandler, getChatDetails)
-    .put(renameGrouptValidator(), validateHandler, renameGroup)
+    .get(chatIdValidator(), validateHandler, httpCache, getChatDetails)
+    .put(singleAvatar, renameGrouptValidator(), validateHandler, renameGroup)
     .delete(chatIdValidator(), validateHandler, deleteChats);
 
+// ─── Advanced Admin Controls ──────────────────────────────────────────────────
+app.put("/:id/restrict", toggleRestrictMessages);
+app.post("/add-admin", addAdmin);
+app.post("/remove-admin", removeAdmin);
+
+// Pin routes
+app.get("/:chatId/pins", getPinnedMessages);
+app.post("/:chatId/pin/:messageId", pinMessage);
+app.delete("/:chatId/pin/:messageId", unpinMessage);
 
 export default app;

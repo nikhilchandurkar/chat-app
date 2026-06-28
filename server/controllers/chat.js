@@ -6,7 +6,8 @@ import { User } from "../models/user.js";
 import { Message } from "../models/message.js";
 import {
     deleteFilesFromCloudnary,
-    emitEvent
+    emitEvent,
+    uploadFilesToCloudinary
 } from "../utils/features.js";
 import {
     ALERT,
@@ -26,6 +27,7 @@ const newGroupChat = tryCatch(async (req, res, next) => {
         groupChat: true,
         creator: req.user,
         members: allMembers,
+        admins: [req.user], // Creator is the first admin
     }).catch((err) => next(new ErrorHandler(err.message, 500)));
     
     emitEvent(req, ALERT, allMembers, `Welcome to ${name} group`);
@@ -58,6 +60,7 @@ const getMyChats = tryCatch(async (req, res, next) => {
                 }
                 return prev;
             }, []),
+            memberNames: groupChat ? members.map(m => m.name) : [],
         };
     });
 
@@ -143,22 +146,89 @@ const addMembers = tryCatch(async (req, res, next) => {
     });
 });
 
+// ─── Advanced Admin Controls ──────────────────────────────────────────────────
+
+const addAdmin = tryCatch(async (req, res, next) => {
+    const { chatId, userId } = req.body;
+    const chat = await Chat.findById(chatId);
+
+    if (!chat || !chat.groupChat) return next(new ErrorHandler("Group chat not found", 404));
+    
+    // Only creator can promote admins
+    if (chat.creator.toString() !== req.user.toString()) {
+        return next(new ErrorHandler("Only the group creator can promote members to admin", 403));
+    }
+
+    if (!chat.members.includes(userId)) return next(new ErrorHandler("User is not in the group", 400));
+    if (chat.admins.includes(userId)) return next(new ErrorHandler("User is already an admin", 400));
+
+    chat.admins.push(userId);
+    await chat.save();
+
+    res.status(200).json({ success: true, message: "Member promoted to Admin" });
+});
+
+const removeAdmin = tryCatch(async (req, res, next) => {
+    const { chatId, userId } = req.body;
+    const chat = await Chat.findById(chatId);
+
+    if (!chat || !chat.groupChat) return next(new ErrorHandler("Group chat not found", 404));
+    
+    // Only creator can demote admins
+    if (chat.creator.toString() !== req.user.toString()) {
+        return next(new ErrorHandler("Only the group creator can demote admins", 403));
+    }
+
+    if (userId.toString() === chat.creator.toString()) {
+        return next(new ErrorHandler("Creator cannot be removed from admins", 400));
+    }
+
+    chat.admins = chat.admins.filter(a => a.toString() !== userId.toString());
+    await chat.save();
+
+    res.status(200).json({ success: true, message: "Admin demoted to Member" });
+});
+
+const toggleRestrictMessages = tryCatch(async (req, res, next) => {
+    const { id } = req.params; // chatId
+    const chat = await Chat.findById(id);
+
+    if (!chat || !chat.groupChat) return next(new ErrorHandler("Group chat not found", 404));
+    
+    // Any admin can toggle restrictions
+    if (!chat.admins.includes(req.user.toString())) {
+        return next(new ErrorHandler("Only admins can change message restrictions", 403));
+    }
+
+    chat.restrictedMessages = !chat.restrictedMessages;
+    await chat.save();
+
+    res.status(200).json({ 
+        success: true, 
+        message: `Group is now ${chat.restrictedMessages ? 'restricted (Admins only)' : 'open to all members'}` 
+    });
+});
+
 const removeMembers = tryCatch(async (req, res, next) => {
     const { userId, chatId } = req.body;
-    const [chat, userThatWillBeRemoved] = await Promise.all(
-        [
-            Chat.findById(chatId),
-            Chat.findById(userId, "name")
-        ]
-    )
+    const [chat, userThatWillBeRemoved] = await Promise.all([
+        Chat.findById(chatId),
+        User.findById(userId, "name")
+    ]);
 
-    if (!chat)
-        return next(new ErrorHandler("Chat not found", 404));
-    if (!chat.groupChat)
-        return next(new ErrorHandler("This is not a GroupChat", 400));
+    if (!chat) return next(new ErrorHandler("Chat not found", 404));
+    if (!chat.groupChat) return next(new ErrorHandler("This is not a GroupChat", 400));
 
-    if (chat.creator.toString() !== req.user.toString())
-        return next(new ErrorHandler("You are not allowed to add members", 403));
+    // Admin authorization check
+    const isRequestorAdmin = chat.admins?.includes(req.user.toString()) || chat.creator.toString() === req.user.toString();
+    if (!isRequestorAdmin) return next(new ErrorHandler("Only admins can remove members", 403));
+
+    const isTargetAdmin = chat.admins?.includes(userId.toString());
+    const isRequestorCreator = chat.creator.toString() === req.user.toString();
+
+    if (isTargetAdmin && !isRequestorCreator) {
+        return next(new ErrorHandler("Only the group creator can remove other admins", 403));
+    }
 
     if (chat.members.length <= 3)
         return next(new ErrorHandler("Group must have al least 3 members", 400));
@@ -212,6 +282,8 @@ const sendAttachments = tryCatch(async (req, res, next) => {
 
     const { chatId } = req.body;
 
+    if (!chatId) return next(new ErrorHandler("Please enter chat ID", 400));
+
     const [chat, me] = await Promise.all([
         Chat.findById(chatId),
         User.findById(req.user, "name")
@@ -224,6 +296,10 @@ const sendAttachments = tryCatch(async (req, res, next) => {
     if (!chat)
         return next(new ErrorHandler("Chat not found", 404));
 
+    if (chat.restrictedMessages && !chat.admins?.includes(req.user.toString())) {
+        return next(new ErrorHandler("Only admins can send messages in this group", 403));
+    }
+
     const files = req.files || [];
     //  
 
@@ -234,10 +310,13 @@ const sendAttachments = tryCatch(async (req, res, next) => {
         return next(new ErrorHandler("Please provide attachment", 400));
     }
     if (!req.files || req.files.length > 5) {
-        return next(new ErrorHandler("Please ", 400));
+        return next(new ErrorHandler("Maximum 5 attachments allowed", 400));
     }
-    //  upload files 
-    const attachments = [];
+
+    const attachments = files.map((file) => ({
+        public_id: file.filename,
+        url: `${req.protocol}://${req.get("host")}/media/${file.filename}`,
+    }));
 
     const messageForRealTime = {
         content: " ",
@@ -315,12 +394,30 @@ const renameGroup = tryCatch(async (req, res, next) => {
     if (!chat)
         return next(new ErrorHandler("Chat not found", 404));
 
-    if (!chat.groupChat) return next(new ErrorHandler("this is not the group", 400));
+    if (!chat.groupChat) return next(new ErrorHandler("This is not a group chat", 400));
 
-    if (chat.creator.toString() !== req.user.toString())
-        return next(new ErrorHandler("You are not allowed to add members", 403));
+    // Allow both Creator and Admins to edit the group
+    const isCreator = chat.creator.toString() === req.user.toString();
+    const isAdmin = chat.admins?.includes(req.user.toString());
 
-    chat.name = name;
+    if (!isCreator && !isAdmin)
+        return next(new ErrorHandler("You are not allowed to edit this group", 403));
+
+    if (name) {
+        chat.name = name;
+    }
+
+    // Handle avatar upload if provided
+    if (req.file) {
+        const result = await uploadFilesToCloudinary([req.file]);
+        if (result && result.length > 0) {
+            // Delete old avatar from cloudinary if it exists
+            if (chat.avatar && chat.avatar.length > 0 && chat.avatar[0].public_id) {
+                await deleteFilesFromCloudnary([{ public_id: chat.avatar[0].public_id }]);
+            }
+            chat.avatar = [{ url: result[0].url, public_id: result[0].public_id }];
+        }
+    }
 
     await chat.save();
 
@@ -328,12 +425,10 @@ const renameGroup = tryCatch(async (req, res, next) => {
 
     res.status(200).json({
         success: true,
-        message: "Group renamed succesfully"
-    })
-
-
-
-})
+        message: "Group updated successfully",
+        chat
+    });
+});
 
 const deleteChats = tryCatch(async (req, res, next) => {
     const chatId = req.params.id;
@@ -408,6 +503,63 @@ const getMessages = tryCatch(async (req, res, next) => {
 
 })
 
+// ─── Pin / Unpin Message ──────────────────────────────────────────────────────
+const pinMessage = tryCatch(async (req, res, next) => {
+    const { chatId, messageId } = req.params;
+
+    const chat = await Chat.findById(chatId);
+    if (!chat) return next(new ErrorHandler("Chat not found", 404));
+
+    // Only group creator or member in DM can pin
+    if (chat.groupChat && chat.creator.toString() !== req.user.toString())
+        return next(new ErrorHandler("Only the group admin can pin messages", 403));
+
+    if (chat.pinnedMessages.length >= 3)
+        return next(new ErrorHandler("Maximum 3 messages can be pinned per chat", 400));
+
+    if (chat.pinnedMessages.some((m) => m.toString() === messageId))
+        return next(new ErrorHandler("Message is already pinned", 400));
+
+    chat.pinnedMessages.push(messageId);
+    await chat.save();
+
+    emitEvent(req, REFETCH_CHATS, chat.members);
+
+    return res.status(200).json({ success: true, message: "Message pinned" });
+});
+
+const unpinMessage = tryCatch(async (req, res, next) => {
+    const { chatId, messageId } = req.params;
+
+    const chat = await Chat.findById(chatId);
+    if (!chat) return next(new ErrorHandler("Chat not found", 404));
+
+    if (chat.groupChat && chat.creator.toString() !== req.user.toString())
+        return next(new ErrorHandler("Only the group admin can unpin messages", 403));
+
+    chat.pinnedMessages = chat.pinnedMessages.filter((m) => m.toString() !== messageId);
+    await chat.save();
+
+    emitEvent(req, REFETCH_CHATS, chat.members);
+
+    return res.status(200).json({ success: true, message: "Message unpinned" });
+});
+
+const getPinnedMessages = tryCatch(async (req, res, next) => {
+    const { chatId } = req.params;
+    const chat = await Chat.findById(chatId).populate({
+        path: "pinnedMessages",
+        populate: { path: "sender", select: "name avatar" },
+    });
+
+    if (!chat) return next(new ErrorHandler("Chat not found", 404));
+
+    return res.status(200).json({
+        success: true,
+        pinnedMessages: chat.pinnedMessages,
+    });
+});
+
 export {
     newGroupChat,
     getMyChats,
@@ -420,5 +572,11 @@ export {
     renameGroup,
     deleteChats,
     getMessages,
-
+    pinMessage,
+    unpinMessage,
+    getPinnedMessages,
+    addAdmin,
+    removeAdmin,
+    toggleRestrictMessages,
 };
+

@@ -3,7 +3,7 @@ import React from "react";
 import { transformImage } from "../../lib/feature";
 
 // Todo Transform
-const AvatarCard = ({ avatar = [], max = 4 }) => {
+const AvatarCard = ({ avatar = [], max = 4, name = "" }) => {
   return (
     <Stack direction={"row"} spacing={0.5}>
       <AvatarGroup
@@ -27,7 +27,9 @@ const AvatarCard = ({ avatar = [], max = 4 }) => {
                   sm: `${index}rem`,
                 },
               }}
-            />
+            >
+              {name ? name[0].toUpperCase() : "U"}
+            </Avatar>
           ))}
         </Box>
       </AvatarGroup>

@@ -38,6 +38,11 @@ const FileMenu = ({ anchorE1, chatId }) => {
     if (files.length > 5)
       return toast.error(`You can only send 5 ${key} at a time`);
 
+    const hasLargeFile = files.some((file) => file.size > 1024 * 1024 * 2);
+    if (hasLargeFile) {
+      return toast.error(`Files must be smaller than 2MB`);
+    }
+
     dispatch(setUploadingLoader(true));
 
     const toastId = toast.loading(`Sending ${key}...`);

@@ -1,39 +1,20 @@
-# Stage 1: Build the React application /    dev 
+# Stage 1: Build the React application
 FROM node:18-alpine AS build
 
 WORKDIR /app
 
-COPY package.json ./
-COPY package-lock.json ./
-
-RUN npm C
+COPY package*.json ./
+RUN npm install
 
 COPY . ./
 
-EXPOSE 3000
+RUN npm run build
 
-CMD ["npm", "start"]
+# Stage 2: Serve the production build with Nginx
+FROM nginx:alpine
 
+COPY --from=build /app/dist /usr/share/nginx/html
 
-# Stage 1: Build the React application
-# FROM node:18-alpine AS build
+EXPOSE 80
 
-# WORKDIR /app
-
-# COPY package.json ./
-# COPY package-lock.json ./
-
-# RUN npm install
-
-# COPY . ./
-
-# RUN npm run build
-
-# # Stage 2: Serve the production build with Nginx
-# FROM nginx:alpine
-
-# COPY --from=build /app/build /usr/share/nginx/html
-
-# EXPOSE 80
-
-# CMD ["nginx", "-g", "daemon off;"]
+CMD ["nginx", "-g", "daemon off;"]
