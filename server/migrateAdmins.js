@@ -6,7 +6,7 @@ dotenv.config();
 
 const migrate = async () => {
     try {
-        await mongoose.connect(process.env.MONGO_URI);
+        await mongoose.connect(process.env.MONGO_URI, { dbName: "ChitChat" });
         console.log("Connected to DB");
 
         const groupChats = await Chat.find({ groupChat: true });

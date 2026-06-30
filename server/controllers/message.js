@@ -133,8 +133,7 @@ const searchMessages = tryCatch(async (req, res, next) => {
             .sort(sortOption)
             .skip(skip)
             .limit(resultPerPage)
-            .populate("sender", "name avatar")
-            .lean(),
+            .populate("sender", "name avatar"),
         Message.countDocuments(query),
     ]);
 
@@ -289,8 +288,7 @@ const getMedia = tryCatch(async (req, res, next) => {
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(resultPerPage)
-            .populate("sender", "name avatar")
-            .lean(),
+            .populate("sender", "name avatar"),
         Message.countDocuments(query),
     ]);
 

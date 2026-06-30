@@ -9,7 +9,7 @@ dotenv.config({
 const migrate = async () => {
   try {
     console.log("Connecting to Database for Migration...");
-    await mongoose.connect(process.env.MONGO_URI, { dbName: "chatApp" });
+    await mongoose.connect(process.env.MONGO_URI, { dbName: "ChitChat" });
     console.log("Connected. Running migration for Chat schema...");
 
     const chats = await Chat.find({ groupChat: true });

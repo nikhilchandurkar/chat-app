@@ -23,8 +23,16 @@ const storage = multer.diskStorage({
 const multerUpload = multer({
     storage: storage,
     limits: {
-        fileSize: 1024 * 1024 * 6,
+        fileSize: 1024 * 1024 * 5, // 5MB Limit
     },
+    fileFilter: (req, file, cb) => {
+        // Prevent zip bombs and executables
+        const blockedTypes = ['application/zip', 'application/x-zip-compressed', 'application/x-msdownload', 'application/x-sh'];
+        if (blockedTypes.includes(file.mimetype)) {
+            return cb(new Error("File type not allowed for security reasons"), false);
+        }
+        cb(null, true);
+    }
 })
 
 const singleAvatar = multerUpload.single("avatar")

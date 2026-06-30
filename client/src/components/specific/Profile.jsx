@@ -128,10 +128,7 @@ const Profile = () => {
       <Box 
         sx={{ 
           position: "relative", 
-          p: "4px", 
           borderRadius: "50%", 
-          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-          boxShadow: "0 10px 30px rgba(118,75,162,0.3)"
         }}
       >
         <Avatar

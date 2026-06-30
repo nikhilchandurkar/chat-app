@@ -48,7 +48,7 @@ const newUser = tryCatch(async (req, res, next) => {
     if (file) {
         avatar = {
             public_id: file.filename,
-            url: `${req.protocol}://${req.get("host")}/media/${file.filename}`,
+            url: `/api/v1/media/${file.filename}`,
         };
     }
 
@@ -104,7 +104,7 @@ const updateProfile = tryCatch(async (req, res, next) => {
     if (file) {
         user.avatar = {
             public_id: file.filename,
-            url: `${req.protocol}://${req.get("host")}/media/${file.filename}`,
+            url: `/api/v1/media/${file.filename}`,
         };
     }
 
@@ -297,7 +297,7 @@ const sendFriendRequest = tryCatch(async (req, res, next) => {
     if (request) return next(new ErrorHandler("Request already sent", 400));
 
     await Request.create({ sender: req.user, receiver: userId });
-    emitEvent(req.user, NEW_REQUEST, userId, "request");
+    emitEvent(req, NEW_REQUEST, [userId], "request");
     sendResponse(res, true, "Friend request sent successfully");
 });
 

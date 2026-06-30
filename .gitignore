@@ -2,3 +2,13 @@
 **/node_modules
 **/.env
 .vercel
+chat_app.pem
+chat_app_latest.tar
+frontend_dist.zip
+ls
+client/.env.development
+client/.env.production
+server/.env.development
+server/.env.production
+server/media/1782784044959-283192692-pexels-optical-chemist-340351297-31332939 (1).jpg
+server/media/1782785050021-123401688-pexels-optical-chemist-340351297-31332939 (1).jpg

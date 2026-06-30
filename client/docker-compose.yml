@@ -2,11 +2,12 @@ version: "3.9"
 
 services:
   react-app:
-    build: .
+    image: node:18-slim
+    working_dir: /app
+    command: sh -c "npm install && npm run dev"
     ports:
-      - "3000:3000"
+      - "5173:5173"
     volumes:
       - .:/app
-      - /app/node_modules
     environment:
       - CHOKIDAR_USEPOLLING=true  # Fixes file watching in Docker on some OS

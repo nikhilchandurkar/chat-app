@@ -1,5 +1,8 @@
 import cookieParser from "cookie-parser";
 import cors from 'cors';
+import helmet from "helmet";
+import mongoSanitize from "express-mongo-sanitize";
+import xss from "xss-clean";
 import dotenv from "dotenv";
 import express from "express";
 import { createServer } from 'http';
@@ -19,9 +22,12 @@ import { connectDB } from "./utils/features.js";
 import { corsOption } from "./constants/config.js";
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { requestLogger } from "./middlewares/logger.js";
 
 try {
     dotenv.config({ path: ".env" });
+    const envFile = process.env.NODE_ENV === "production" ? ".env.production" : ".env.development";
+    dotenv.config({ path: envFile, override: true });
 } catch (error) {
     console.error("Failed to load environment variables:", error);
     process.exit(1); // Exit process if .env fails
@@ -49,11 +55,15 @@ const io = new Server(server, { cors: corsOption });
 app.set("io", io);
 
 app.use(express.json());
+app.use(requestLogger);
+app.use(helmet());
+app.use(mongoSanitize());
+app.use(xss());
 app.use(cookieParser());
 app.use(cors(corsOption));
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-app.use('/media', express.static(path.join(__dirname, 'media')));
+app.use('/api/v1/media', express.static(path.join(__dirname, 'media')));
 
 app.get("/", (req, res) => {
     res.json("hello its chat app API");
@@ -147,7 +157,7 @@ io.on("connection", (socket) => {
 app.use(errorMiddleware);
 
 // Start the server
-server.listen(port,'0.0.0.0', () => {
+server.listen(port, '0.0.0.0', () => {
     console.log(`Server is running at port ${port} in ${process.env.NODE_ENV || "development"}`);
 });
 

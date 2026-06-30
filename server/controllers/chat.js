@@ -17,18 +17,23 @@ import {
 
 const newGroupChat = tryCatch(async (req, res, next) => {
     const { name, members } = req.body;
-    // if (members.length < 2)
-    //     return next(new ErrorHandler("group must have at least 2 members", 400));
+    
+    if (!members || !Array.isArray(members) || members.length < 2)
+        return next(new ErrorHandler("Group must have at least 2 other members", 400));
 
     const allMembers = [...members, req.user];
 
-    await Chat.create({
-        name,
-        groupChat: true,
-        creator: req.user,
-        members: allMembers,
-        admins: [req.user], // Creator is the first admin
-    }).catch((err) => next(new ErrorHandler(err.message, 500)));
+    try {
+        await Chat.create({
+            name,
+            groupChat: true,
+            creator: req.user,
+            members: allMembers,
+            admins: [req.user], // Creator is the first admin
+        });
+    } catch (err) {
+        return next(new ErrorHandler(err.message, 500));
+    }
     
     emitEvent(req, ALERT, allMembers, `Welcome to ${name} group`);
     emitEvent(req, REFETCH_CHATS, members);
@@ -103,8 +108,11 @@ const addMembers = tryCatch(async (req, res, next) => {
     if (!chat.groupChat)
         return next(new ErrorHandler("This is not a GroupChat", 400));
 
-    if (chat.creator.toString() !== req.user.toString())
-        return next(new ErrorHandler("You are not allowed to add members", 403));
+    const isCreator = chat.creator.toString() === req.user.toString();
+    const isAdmin = chat.admins?.includes(req.user.toString());
+
+    if (!isCreator && !isAdmin)
+        return next(new ErrorHandler("Only admins can add members", 403));
 
     // Fetching new members from the database
     const allNewMembersPromise = members.map((memberId) => User.findById(memberId, "name"));
@@ -230,10 +238,11 @@ const removeMembers = tryCatch(async (req, res, next) => {
         return next(new ErrorHandler("Only the group creator can remove other admins", 403));
     }
 
-    if (chat.members.length <= 3)
-        return next(new ErrorHandler("Group must have al least 3 members", 400));
+    if (chat.members.length < 3)
+        return next(new ErrorHandler("Group must have at least 3 members", 400));
 
-    chat.members = chat.members.filter(member => member.toString() !== userId.toString())
+    chat.members = chat.members.filter(member => member.toString() !== userId.toString());
+    chat.admins = chat.admins.filter(admin => admin.toString() !== userId.toString());
 
     await chat.save()
 
@@ -259,10 +268,17 @@ const leaveGroup = tryCatch(async (req, res, next) => {
 
     if (!chat.groupChat) return next(new ErrorHandler("this is not the group", 400));
 
-    if (chat.members.length <= 3)
-        return next(new ErrorHandler("Group must have al least 3 members", 400));
+    if (chat.creator.toString() === req.user.toString()) {
+        return next(new ErrorHandler("Creator cannot leave the group. You must transfer ownership or delete the group.", 400));
+    }
 
-    const [userThatWillBeRemoved] = Promise.all([
+    if (chat.members.length < 3)
+        return next(new ErrorHandler("Group must have at least 3 members", 400));
+
+    chat.members = chat.members.filter(member => member.toString() !== req.user.toString());
+    chat.admins = chat.admins.filter(admin => admin.toString() !== req.user.toString());
+
+    const [userThatWillBeRemoved] = await Promise.all([
         User.findById(req.user, "name"),
         chat.save()
     ]);
@@ -315,7 +331,7 @@ const sendAttachments = tryCatch(async (req, res, next) => {
 
     const attachments = files.map((file) => ({
         public_id: file.filename,
-        url: `${req.protocol}://${req.get("host")}/media/${file.filename}`,
+        url: `/api/v1/media/${file.filename}`,
     }));
 
     const messageForRealTime = {
@@ -487,8 +503,7 @@ const getMessages = tryCatch(async (req, res, next) => {
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(resultPerPage)
-            .populate("sender", "name")
-            .lean(), 
+            .populate("sender", "name"), 
         Message.countDocuments({ chat: chatId }),
 
     ])

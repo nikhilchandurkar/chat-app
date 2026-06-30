@@ -11,7 +11,7 @@ import {
 import toast from "react-hot-toast";
 import { useSendAttachmentsMutation } from "../../redux/api/api";
 
-const FileMenu = ({ anchorE1, chatId }) => {
+const FileMenu = ({ anchorEl, chatId }) => {
   const { isFileMenu } = useSelector((state) => state.misc);
 
   const dispatch = useDispatch();
@@ -68,7 +68,7 @@ const FileMenu = ({ anchorE1, chatId }) => {
   };
 
   return (
-    <Menu anchorEl={anchorE1} open={isFileMenu} onClose={closeFileMenu}>
+    <Menu anchorEl={anchorEl} open={isFileMenu} onClose={closeFileMenu}>
       <div
         style={{
           width: "10rem",

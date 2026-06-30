@@ -9,11 +9,10 @@ export const getSockets = (users = []) => {
     
     const sockets = userArray
         .map((user) => {
-            // Ensure user and user._id are defined
-            if (user && user._id) {
-                return userSocketIDs.get(user._id.toString());
-            }
-            return undefined;
+            if (!user) return undefined;
+            // Handle both populated users (user._id) and raw ObjectIds (user.toString())
+            const id = user._id ? user._id.toString() : user.toString();
+            return userSocketIDs.get(id);
         })
         .filter((socketId) => socketId !== undefined); 
     
