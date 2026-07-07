@@ -12,6 +12,8 @@ import {
   PushPin as PinIcon,
   AddReaction as AddReactionIcon,
   Forward as ForwardIcon,
+  Reply as ReplyIcon,
+  DoneAll as DoneAllIcon,
 } from "@mui/icons-material";
 import React, { memo, useState, lazy, Suspense } from "react";
 import { lightBlue } from "../../constants/color";
@@ -28,10 +30,10 @@ const ForwardMessageDialog = lazy(() => import("../dialogs/ForwardMessageDialog"
 
 const COMMON_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
-const MessageComponent = ({ message, onEdit, onDelete, chatId, isGroupAdmin }) => {
+const MessageComponent = ({ message, onEdit, onDelete, onReply, chatId, isGroupAdmin }) => {
   const { user } = useSelector((state) => state.auth);
 
-  const { _id, sender, content, attachments = [], createdAt, isDeleted, isEdited } = message;
+  const { _id, sender, content, attachments = [], createdAt, isDeleted, isEdited, replyTo, readBy = [] } = message;
   const sameSender = sender?._id === user?._id;
   const timeAgo = createdAt ? moment(createdAt).fromNow() : "Just now";
 
@@ -121,6 +123,11 @@ const MessageComponent = ({ message, onEdit, onDelete, chatId, isGroupAdmin }) =
     setShowForwardDialog(true);
   };
 
+  const handleReplyClick = () => {
+    handleCloseMenu();
+    onReply?.(message);
+  };
+
   // Group reactions by emoji
   const reactionCounts = message.reactions?.reduce((acc, curr) => {
     acc[curr.emoji] = (acc[curr.emoji] || 0) + 1;
@@ -191,6 +198,22 @@ const MessageComponent = ({ message, onEdit, onDelete, chatId, isGroupAdmin }) =
             </Box>
           ) : (
             <>
+              {/* Quoted Message Block */}
+              {replyTo && (
+                <Box sx={{
+                  bgcolor: sameSender ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.05)",
+                  p: 1, mb: 1, borderRadius: 1,
+                  borderLeft: sameSender ? "4px solid rgba(255,255,255,0.5)" : "4px solid primary.main"
+                }}>
+                  <Typography variant="caption" fontWeight="bold" sx={{ color: sameSender ? "white" : "primary.main" }}>
+                    {replyTo.sender?.name || "Unknown"}
+                  </Typography>
+                  <Typography variant="body2" sx={{ opacity: 0.9, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                    {replyTo.content || "Attachment"}
+                  </Typography>
+                </Box>
+              )}
+
               {/* Message content */}
               {content && <Typography variant="body2" sx={{ wordBreak: "break-word", lineHeight: 1.5 }}>{content}</Typography>}
 
@@ -212,7 +235,7 @@ const MessageComponent = ({ message, onEdit, onDelete, chatId, isGroupAdmin }) =
             </>
           )}
 
-          {/* Timestamp + edited tag */}
+          {/* Timestamp + edited tag + read receipts */}
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.3, justifyContent: "flex-end" }}>
             {isEdited && !isDeleted && (
               <Typography variant="caption" sx={{ color: sameSender ? "rgba(255,255,255,0.5)" : "text.disabled", fontSize: "0.6rem" }}>
@@ -222,6 +245,15 @@ const MessageComponent = ({ message, onEdit, onDelete, chatId, isGroupAdmin }) =
             <Typography variant="caption" sx={{ color: sameSender ? "rgba(255,255,255,0.55)" : "text.secondary", fontSize: "0.65rem" }}>
               {timeAgo}
             </Typography>
+            {sameSender && !isDeleted && (
+              <DoneAllIcon 
+                sx={{ 
+                  fontSize: "1rem", 
+                  color: readBy.length > 0 ? "#4ade80" : "rgba(255,255,255,0.6)", // Green for read, faint white for delivered
+                  ml: 0.2
+                }} 
+              />
+            )}
           </Box>
 
           {/* Render grouped reactions below message */}
@@ -248,7 +280,12 @@ const MessageComponent = ({ message, onEdit, onDelete, chatId, isGroupAdmin }) =
 
         {/* Hover reaction bar */}
         {isHovered && !isDeleted && (
-          <Box sx={{ display: "flex", backgroundColor: "background.paper", borderRadius: "20px", boxShadow: 1, p: 0.5 }}>
+          <Box sx={{ display: "flex", backgroundColor: "background.paper", borderRadius: "20px", boxShadow: 1, p: 0.5, alignItems: "center" }}>
+            <Tooltip title="Reply">
+              <IconButton size="small" onClick={handleReplyClick} sx={{ padding: "4px", mr: 1, color: "text.secondary" }}>
+                <ReplyIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
             {COMMON_REACTIONS.map((emoji) => (
               <IconButton key={emoji} size="small" onClick={() => handleReact(emoji)} sx={{ padding: "4px" }}>
                 <span style={{ fontSize: "1rem" }}>{emoji}</span>
@@ -275,6 +312,12 @@ const MessageComponent = ({ message, onEdit, onDelete, chatId, isGroupAdmin }) =
         <MenuItem onClick={handleForwardClick} dense>
           <ListItemIcon><ForwardIcon fontSize="small" /></ListItemIcon>
           <ListItemText>Forward</ListItemText>
+        </MenuItem>
+
+        {/* Reply — available on all messages */}
+        <MenuItem onClick={handleReplyClick} dense>
+          <ListItemIcon><ReplyIcon fontSize="small" /></ListItemIcon>
+          <ListItemText>Reply</ListItemText>
         </MenuItem>
 
         {/* Pin — available to group admin */}

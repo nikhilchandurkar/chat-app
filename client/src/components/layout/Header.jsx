@@ -26,7 +26,7 @@ import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from 'react-router-dom';
 import { server } from '../../constants/config';
 import { userExists } from "../../redux/reducers/auth";
-import { setIsMobile, setIsMobileProfile, setIsNotification, setIsSearch, resetNotificationCount, setActiveChatId, toggleTheme } from "../../redux/reducers/misc";
+import { setIsMobile, setIsMobileProfile, setIsNotification, setIsSearch, setIsNewGroup, resetNotificationCount, setActiveChatId, toggleTheme } from "../../redux/reducers/misc";
 
 
 const SearchDialog = lazy(() => import("../specific/Search"));
@@ -39,16 +39,15 @@ const Header = ({ unreadMessagesCount = 0 }) => {
   const navigate = useNavigate();
   const dispatch = useDispatch();
 
-  const { isSearch, isNotification, notificationCount, themeMode } = useSelector(state => state.misc);
+  const { isSearch, isNotification, isNewGroup, notificationCount, themeMode } = useSelector(state => state.misc);
 
-  const [isNewGroup, setIsNewGroup] = useState(false);
   const [showStarred, setShowStarred] = useState(false);
 
   const handleMobile = () => dispatch(setIsMobile(true));
   const openMobileProfile = () => dispatch(setIsMobileProfile(true));
   const openSearch = () => dispatch(setIsSearch(true));
 
-  const addNewGroup = () => setIsNewGroup((prev) => !prev);
+  const addNewGroup = () => dispatch(setIsNewGroup(true));
   const openNotification = () => {
     dispatch(setIsNotification(true));
     dispatch(resetNotificationCount());
@@ -70,7 +69,17 @@ const Header = ({ unreadMessagesCount = 0 }) => {
   return (
     <>
       <Box sx={{ flexGrow: 1 }} height="4rem">
-        <AppBar color={"secondary"} position="static" >
+        <AppBar 
+          elevation={0}
+          position="fixed" 
+          sx={{ 
+            backgroundColor: themeMode === "dark" ? "rgba(28, 28, 30, 0.75)" : "rgba(255, 255, 255, 0.75)",
+            backdropFilter: "blur(12px)",
+            color: themeMode === "dark" ? "#ffffff" : "#000000",
+            borderBottom: `1px solid ${themeMode === "dark" ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+            zIndex: 1200
+          }}
+        >
           <Toolbar >
             <Typography 
               variant="h6" 
@@ -114,7 +123,6 @@ const Header = ({ unreadMessagesCount = 0 }) => {
         </AppBar>
       </Box>
 
-
       {isSearch && (
         <Suspense fallback={<Backdrop open><Typography>Loading...</Typography></Backdrop>}>
           <SearchDialog />
@@ -140,12 +148,16 @@ const Header = ({ unreadMessagesCount = 0 }) => {
   );
 };
 
+import { motion } from "framer-motion";
+
 const IconBtn = ({ title, icon, onClick, sx }) => {
   return (
     <Tooltip title={title}>
-      <IconButton color="inherit" size="large" onClick={onClick} aria-label={title} sx={sx}>
-        {icon}
-      </IconButton>
+      <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.95 }} style={{ display: 'inline-block' }}>
+        <IconButton color="inherit" size="large" onClick={onClick} aria-label={title} sx={sx}>
+          {icon}
+        </IconButton>
+      </motion.div>
     </Tooltip>
   );
 };

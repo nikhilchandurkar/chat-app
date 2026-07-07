@@ -16,6 +16,7 @@ import {
 import moment from "moment";
 import React, { useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import { setFontFamily } from "../../redux/reducers/misc";
 import { transformImage } from "../../lib/feature";
 import {
   useUpdateProfileMutation,
@@ -31,6 +32,7 @@ import StatusSelector from "./StatusSelector";
 
 const Profile = () => {
   const { user } = useSelector((state) => state.auth);
+  const { fontFamily } = useSelector((state) => state.misc);
   const dispatch = useDispatch();
 
   const [isEditing, setIsEditing] = useState(false);
@@ -128,13 +130,14 @@ const Profile = () => {
       <Box 
         sx={{ 
           position: "relative", 
-          borderRadius: "50%", 
+          borderRadius: "50%",
+          boxShadow: "0 0 20px rgba(0, 122, 255, 0.3)", // Glowing Apple Blue shadow
         }}
       >
         <Avatar
           src={avatarPreview}
           alt={user?.name || "User"}
-          sx={{ width: 180, height: 180, objectFit: "cover", border: "4px solid", borderColor: "background.paper", fontSize: "4rem" }}
+          sx={{ width: 160, height: 160, objectFit: "cover", border: "4px solid", borderColor: "background.paper", fontSize: "4rem" }}
         >
           {user?.name ? user.name[0].toUpperCase() : user?.username ? user.username[0].toUpperCase() : "U"}
         </Avatar>
@@ -221,6 +224,21 @@ const Profile = () => {
             <option value="everyone">Everyone</option>
             <option value="friends">Friends Only</option>
             <option value="nobody">Nobody</option>
+          </TextField>
+
+          <TextField
+            select
+            label="App Font Family"
+            size="medium"
+            value={fontFamily || "Inter"}
+            onChange={(e) => dispatch(setFontFamily(e.target.value))}
+            SelectProps={{ native: true }}
+            sx={{ width: "100%", maxWidth: "350px", "& .MuiOutlinedInput-root": { borderRadius: "1rem" } }}
+          >
+            <option value="Inter">Inter (Modern Sans)</option>
+            <option value="Outfit">Outfit (Sleek Geometric)</option>
+            <option value="Poppins">Poppins (Rounded)</option>
+            <option value="Roboto">Roboto (Classic Material)</option>
           </TextField>
 
           <Stack direction="row" spacing={2} mt={2} width="100%" maxWidth="350px">

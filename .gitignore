@@ -12,3 +12,6 @@ server/.env.development
 server/.env.production
 server/media/1782784044959-283192692-pexels-optical-chemist-340351297-31332939 (1).jpg
 server/media/1782785050021-123401688-pexels-optical-chemist-340351297-31332939 (1).jpg
+deploy.ps1
+server_code.zip
+server/logs/2026-07-07.log

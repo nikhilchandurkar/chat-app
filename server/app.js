@@ -8,7 +8,7 @@ import express from "express";
 import { createServer } from 'http';
 import { Server } from "socket.io";
 import crypto from "crypto";
-import { NEW_MESSAGE, START_TYPING, STOP_TYPING, ONLINE_USERS } from "./constants/events.js";
+import { NEW_MESSAGE, START_TYPING, STOP_TYPING, ONLINE_USERS, MESSAGE_READ, MESSAGE_READ_UPDATE } from "./constants/events.js";
 import { getSockets } from "./lib/helper.js";
 import { socketAuthenticator } from "./middlewares/auth.js";
 import { errorMiddleware } from "./middlewares/error.js";
@@ -100,7 +100,7 @@ io.on("connection", (socket) => {
         userSocketIDs.set(user._id.toString(), socket.id);
         console.log("Connected users:", userSocketIDs);
 
-        socket.on(NEW_MESSAGE, async ({ chatId, members, message }) => {
+        socket.on(NEW_MESSAGE, async ({ chatId, members, message, replyTo }) => {
             const messageForRealTime = {
                 content: message,
                 _id: crypto.randomUUID(),
@@ -109,6 +109,7 @@ io.on("connection", (socket) => {
                     name: user.name,
                 },
                 chat: chatId,
+                replyTo: replyTo || null,
                 createdAt: new Date().toISOString(),
             };
 
@@ -116,6 +117,7 @@ io.on("connection", (socket) => {
                 content: message,
                 sender: user._id,
                 chat: chatId,
+                replyTo: replyTo ? replyTo._id : null,
             };
 
             console.log("Emitting", messageForRealTime);
@@ -140,6 +142,22 @@ io.on("connection", (socket) => {
         socket.on(STOP_TYPING, ({ members, chatId }) => {
             const membersSocket = getSockets(members, userSocketIDs);
             socket.to(membersSocket).emit(STOP_TYPING, { chatId });
+        });
+
+        socket.on(MESSAGE_READ, async ({ chatId, messageIds, members }) => {
+            try {
+                // Update messages in DB
+                await Message.updateMany(
+                    { _id: { $in: messageIds }, readBy: { $ne: user._id } },
+                    { $push: { readBy: user._id } }
+                );
+                
+                // Notify others in the chat
+                const membersSocket = getSockets(members, userSocketIDs);
+                socket.to(membersSocket).emit(MESSAGE_READ_UPDATE, { chatId, messageIds, readBy: user._id });
+            } catch (error) {
+                console.error("Error in MESSAGE_READ", error);
+            }
         });
 
         io.emit(ONLINE_USERS, Array.from(userSocketIDs.keys()));

@@ -5,7 +5,7 @@ import {
   EmojiEmotions as EmojiIcon,
   Info as InfoIcon,
 } from "@mui/icons-material";
-import { IconButton, Skeleton, Stack, Tooltip, Box, ClickAwayListener } from "@mui/material";
+import { IconButton, Skeleton, Stack, Tooltip, Box, ClickAwayListener, Typography } from "@mui/material";
 import React, { useCallback, useRef, useState, useEffect, lazy, Suspense } from "react";
 import FileMenu from "../components/dialogs/FileMenu";
 import TypingIndicator from "../components/specific/TypingIndicator";
@@ -21,6 +21,7 @@ import { useDispatch } from "react-redux";
 import {
   NEW_MESSAGE, START_TYPING, STOP_TYPING,
   MESSAGE_EDITED, MESSAGE_DELETED,
+  MESSAGE_READ, MESSAGE_READ_UPDATE
 } from "../constants/events";
 import { useSocketEvents } from "../hooks/hook";
 import { useChatDetailsQuery, useGetMessagesQuery } from "../redux/api/api";
@@ -67,6 +68,7 @@ const Chat = ({ chatId, user }) => {
   const [showEmoji, setShowEmoji] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [unreadIndex, setUnreadIndex] = useState(null);
+  const [replyingTo, setReplyingTo] = useState(null);
 
   const chatDetails = useChatDetailsQuery({ chatId, populate: true }, { skip: !chatId });
   const oldMessageChunk = useGetMessagesQuery({ chatId, page }, { skip: !chatId });
@@ -103,9 +105,10 @@ const Chat = ({ chatId, user }) => {
   const submitHandler = (e) => {
     e.preventDefault();
     if (!message.trim()) return;
-    socket.emit(NEW_MESSAGE, { chatId, members, message });
+    socket.emit(NEW_MESSAGE, { chatId, members, message, replyTo: replyingTo });
     setMessage("");
     setShowEmoji(false);
+    setReplyingTo(null);
   };
 
   const onEmojiClick = useCallback((emojiData) => {
@@ -182,6 +185,18 @@ const Chat = ({ chatId, user }) => {
     setOldMessages((prev) => prev.map(patch));
   }, [chatId]);
 
+  const messageReadUpdateHandler = useCallback((data) => {
+    if (data.chatId !== chatId) return;
+    const patch = (msg) => {
+      if (data.messageIds.includes(msg._id)) {
+        return { ...msg, readBy: [...(msg.readBy || []), data.readBy] };
+      }
+      return msg;
+    };
+    setMessages((prev) => prev.map(patch));
+    setOldMessages((prev) => prev.map(patch));
+  }, [chatId]);
+
   useSocketEvents(socket, {
     [NEW_MESSAGE]: newMessagesHandler,
     [START_TYPING]: startTypingListener,
@@ -189,9 +204,31 @@ const Chat = ({ chatId, user }) => {
     [MESSAGE_EDITED]: messageEditedHandler,
     [MESSAGE_DELETED]: messageDeletedHandler,
     "MESSAGE_REACTED": messageReactedHandler,
+    [MESSAGE_READ_UPDATE]: messageReadUpdateHandler,
   });
 
   const allMessages = [...(oldMessages || []), ...(messages || [])];
+  
+  // Mark messages as read when they appear
+  useEffect(() => {
+    if (!allMessages.length || !user) return;
+    const unreadMessageIds = allMessages
+      .filter((m) => m.sender?._id !== user._id && !(m.readBy || []).includes(user._id))
+      .map((m) => m._id);
+
+    if (unreadMessageIds.length > 0) {
+      socket.emit(MESSAGE_READ, { chatId, members, messageIds: unreadMessageIds });
+      // Optimistically update locally
+      const patch = (msg) => {
+        if (unreadMessageIds.includes(msg._id)) {
+          return { ...msg, readBy: [...(msg.readBy || []), user._id] };
+        }
+        return msg;
+      };
+      setMessages((prev) => prev.map(patch));
+      setOldMessages((prev) => prev.map(patch));
+    }
+  }, [allMessages, user, chatId, members, socket]);
   const unreadCount = unreadIndex !== null ? allMessages.length - unreadIndex : 0;
 
   const chat = chatDetails?.data?.chat;
@@ -258,6 +295,7 @@ const Chat = ({ chatId, user }) => {
                   isGroupAdmin={chatDetails?.data?.chat?.creator?.toString() === user?._id?.toString()}
                   onEdit={handleLocalEdit}
                   onDelete={handleLocalDelete}
+                  onReply={() => setReplyingTo(value)}
                 />
               </div>
             </React.Fragment>
@@ -281,11 +319,23 @@ const Chat = ({ chatId, user }) => {
 
       {/* Input bar */}
       {canSendMessages ? (
-        <form
-          onSubmit={submitHandler}
-          style={{ height: "10%", display: "flex", alignItems: "center" }}
-        >
-        <Stack direction="row" height="100%" padding="1rem" alignItems="center" position="relative" flex={1} gap={0.5}>
+        <Box sx={{ height: "10%", display: "flex", flexDirection: "column", justifyContent: "flex-end", position: "relative" }}>
+          {replyingTo && (
+            <Box sx={{ px: 2, py: 1, bgcolor: "rgba(0,0,0,0.05)", borderTop: "1px solid rgba(0,0,0,0.1)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <Box sx={{ overflow: "hidden" }}>
+                <Typography variant="caption" color="primary" fontWeight="bold">Replying to {replyingTo.sender?.name}</Typography>
+                <Typography variant="body2" sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{replyingTo.content}</Typography>
+              </Box>
+              <IconButton size="small" onClick={() => setReplyingTo(null)}>
+                <AttachFileIcon sx={{ transform: "rotate(45deg)" }} />
+              </IconButton>
+            </Box>
+          )}
+          <form
+            onSubmit={submitHandler}
+            style={{ display: "flex", alignItems: "center", height: "100%" }}
+          >
+          <Stack direction="row" height="100%" padding="1rem" alignItems="center" position="relative" flex={1} gap={0.5}>
           {/* Emoji button */}
           <Tooltip title="Emoji">
             <IconButton onClick={() => setShowEmoji((s) => !s)} sx={{ color: showEmoji ? "primary.main" : "text.secondary" }}>
@@ -338,6 +388,7 @@ const Chat = ({ chatId, user }) => {
           </IconButton>
         </Stack>
       </form>
+      </Box>
       ) : (
         <Box sx={{ height: "10%", display: "flex", alignItems: "center", justifyContent: "center", bgcolor: "rgba(0,0,0,0.05)" }}>
           <Typography variant="body2" color="text.secondary">

@@ -503,7 +503,12 @@ const getMessages = tryCatch(async (req, res, next) => {
             .sort({ createdAt: -1 })
             .skip(skip)
             .limit(resultPerPage)
-            .populate("sender", "name"), 
+            .populate("sender", "name")
+            .populate({
+                path: "replyTo",
+                select: "content sender",
+                populate: { path: "sender", select: "name" }
+            }),
         Message.countDocuments({ chat: chatId }),
 
     ])

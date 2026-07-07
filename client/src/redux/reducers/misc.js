@@ -2,6 +2,7 @@ import { createSlice } from "@reduxjs/toolkit";
 
 const initialState = {
   themeMode: localStorage.getItem("themeMode") || "light",
+  fontFamily: localStorage.getItem("fontFamily") || "Inter",
   isNewGroup: false,
   isAddMember: false,
   isNotification: false,
@@ -68,6 +69,10 @@ const miscSlice = createSlice({
     toggleTheme: (state) => {
       state.themeMode = state.themeMode === "light" ? "dark" : "light";
       localStorage.setItem("themeMode", state.themeMode);
+    },
+    setFontFamily: (state, action) => {
+      state.fontFamily = action.payload;
+      localStorage.setItem("fontFamily", action.payload);
     }
   },
 });
@@ -89,4 +94,5 @@ export const {
   setNotificationCount,
   setActiveChatId,
   toggleTheme,
+  setFontFamily,
 } = miscSlice.actions;

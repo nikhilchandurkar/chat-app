@@ -133,58 +133,73 @@ const AppLayout = () => (WrappedComponent) => {
           </Box>
         </Drawer>
 
-        <Grid container height={"calc(100vh - 4rem)"}>
-          <Grid item height={"100%"}
-            sm={4}
-            md={3}
-            lg={3}
-            sx={{
-              display: { xs: "none", sm: "block" },
-            }}
-            aria-label="Chat List"
-          >
-
-            {
-              isLoading ? (<Skeleton />) : (
-                <ChatList
-                  handleDeleteChat={handleDeleteChats}
-                  chats={data?.chats || sampleChats}
-                  chatId={chatId}
-                  user={user}
-                  onlineUsers={onlineUsers}
-                  newMessagesAlert={newMessagesAlert}
-                  typingChats={typingChats}
-                />
-              )
-            }
-
+        <Box sx={{ display: 'flex', height: 'calc(100vh - 4rem)', bgcolor: 'background.default' }}>
+          <Grid container sx={{ height: '100%', m: 0, p: 0 }}>
+            <Grid item
+              sm={4}
+              md={3}
+              lg={3}
+              sx={{
+                height: "100%",
+                display: { xs: "none", sm: "block" },
+                borderRight: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.paper",
+                overflowY: "auto",
+              }}
+              aria-label="Chat List"
+            >
+              {
+                isLoading ? (<Skeleton />) : (
+                  <ChatList
+                    handleDeleteChat={handleDeleteChats}
+                    chats={data?.chats || sampleChats}
+                    chatId={chatId}
+                    user={user}
+                    onlineUsers={onlineUsers}
+                    newMessagesAlert={newMessagesAlert}
+                    typingChats={typingChats}
+                  />
+                )
+              }
+            </Grid>
+            
+            <Grid item
+              xs={12}
+              sm={8}
+              md={6}
+              lg={6}
+              sx={{ 
+                height: "100%",
+                bgcolor: 'background.default',
+                overflowY: "auto",
+              }}
+            >
+              <WrappedComponent {...props}
+                chatId={chatId} 
+                user={user}
+              />
+            </Grid>
+            
+            <Grid item
+              md={3}
+              lg={3}
+              sx={{
+                height: "100%",
+                display: { xs: "none", md: "block" },
+                borderLeft: "1px solid",
+                borderColor: "divider",
+                bgcolor: "background.paper",
+                padding: "2rem",
+                overflowY: "auto",
+              }}
+            >
+              <Profile 
+              // user={user} 
+              />
+            </Grid>
           </Grid>
-          <Grid item
-            xs={12}
-            sm={8}
-            md={5}
-            lg={6}
-            height={"100%"}
-          >
-          <WrappedComponent {...props}
-           chatId={chatId} 
-           user={user}
-            />
-
-          </Grid>
-          <Grid item height={"100%"}
-            md={4}
-            lg={3}
-            sx={{
-              display: { xs: "none", md: "block" },
-              padding: "2rem",
-            }}
-          >
-            <Profile 
-            // user={user} 
-            />
-          </Grid>
-        </Grid>
+        </Box>
       </>
     )
   }

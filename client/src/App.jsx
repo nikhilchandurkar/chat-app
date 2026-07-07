@@ -11,6 +11,8 @@ import { SocketProvider } from "./socket";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 
+import { lightBackground, lightSurface, lightText, darkBackground, darkSurface, darkText, purple, lightBlue } from "./constants/color";
+
 const Home = lazy(() => import("./pages/Home"));
 const Login = lazy(() => import("./pages/Login"));
 const Chat = lazy(() => import("./pages/Chat"));
@@ -22,21 +24,33 @@ const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 
 const App = () => {
   const { user, loader } = useSelector((state) => state.auth);
-  const { themeMode } = useSelector((state) => state.misc);
+  const { themeMode, fontFamily } = useSelector((state) => state.misc);
   const dispatch = useDispatch();
 
   const theme = React.useMemo(() => createTheme({
     palette: {
       mode: themeMode,
-      primary: { main: "#667eea" },
-      secondary: { main: "#764ba2" },
+      primary: { main: purple }, // Apple Blue
+      secondary: { main: lightBlue }, // Apple Green
       ...(themeMode === "dark" ? {
-        background: { default: "#121212", paper: "#1e1e1e" },
+        background: { default: darkBackground, paper: darkSurface },
+        text: { primary: darkText },
       } : {
-        background: { default: "#f5f5f5", paper: "#ffffff" },
+        background: { default: lightBackground, paper: lightSurface },
+        text: { primary: lightText },
       }),
+    },
+    typography: {
+      fontFamily: `"${fontFamily}", "Helvetica", "Arial", sans-serif`,
+      button: {
+        textTransform: "none", // Apple style buttons are not uppercase
+        fontWeight: 600,
+      }
+    },
+    shape: {
+      borderRadius: 12, // More rounded corners
     }
-  }), [themeMode]);
+  }), [themeMode, fontFamily]);
 
   useEffect(() => {
     axios

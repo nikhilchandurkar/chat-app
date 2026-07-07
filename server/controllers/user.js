@@ -252,7 +252,7 @@ const deleteProfile = tryCatch(async (req, res, next) => {
 // ─── Search User ──────────────────────────────────────────────────────────────
 const searchUser = tryCatch(async (req, res, next) => {
     const { name = "", page = 1, limit = 10 } = req.query;
-    const myChats = await Chat.find({ GroupChat: false, members: req.user });
+    const myChats = await Chat.find({ groupChat: false, members: req.user });
     const allUsersFromMyChats = myChats.map((chat) => chat.members).flat();
 
     const allUserExceptMeAndMyFriends = await User.find({
@@ -343,7 +343,7 @@ const getNotifications = tryCatch(async (req, res, next) => {
 const getMyAllFriends = tryCatch(async (req, res, next) => {
     const { chatId } = req.query;
     // Need to select privacy to check it
-    const chats = await Chat.find({ members: req.user, GroupChat: false }).populate("members", "name avatar status privacy");
+    const chats = await Chat.find({ members: req.user, groupChat: false }).populate("members", "name avatar status privacy");
 
     const friends = chats
         .map(({ members }) => {

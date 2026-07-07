@@ -150,8 +150,7 @@ import {
 import { useAsyncMutation, useErrors } from "../../hooks/hook";
 import { setIsNewGroup } from "../../redux/reducers/misc";
 import toast from "react-hot-toast";
-import CloseIcon from "@mui/icons-material/Close";
-import SearchIcon from "@mui/icons-material/Search";
+import { Close as CloseIcon, Search as SearchIcon } from "@mui/icons-material";
 import UserItem from "../shared/UserItem";
 
 const NewGroup = () => {
@@ -162,22 +161,8 @@ const NewGroup = () => {
   const [newGroup, isLoadingNewGroup] = useAsyncMutation(useNewGroupMutation);
 
   const groupName = useInputValidation("");
-  const [searchQuery, setSearchQuery] = useState("");
   const [selectedMembers, setSelectedMembers] = useState([]);
-  const [filteredFriends, setFilteredFriends] = useState([]);
-
-  const MINIMUM_MEMBERS = 2; // Define constant for minimum members
-
-  // Filter friends based on search query
-  useEffect(() => {
-    if (data?.friends) {
-      setFilteredFriends(
-        data.friends.filter((friend) =>
-          friend.name.toLowerCase().includes(searchQuery.toLowerCase())
-        )
-      );
-    }
-  }, [data, searchQuery]);
+  const MINIMUM_MEMBERS = 1; // Allow creating groups with just 1 other person
 
   const errors = [
     {
@@ -199,28 +184,18 @@ const NewGroup = () => {
   const submitHandler = () => {
     if (!groupName.value.trim()) return toast.error("Group name is required");
 
-    // Updated to be consistent with MINIMUM_MEMBERS constant
     if (selectedMembers.length < MINIMUM_MEMBERS)
-      return toast.error(`Please select at least ${MINIMUM_MEMBERS + 1} members`);
+      return toast.error(`Please select at least ${MINIMUM_MEMBERS} friend(s)`);
 
     newGroup("Creating New Group...", {
       name: groupName.value.trim(),
       members: selectedMembers,
-    })
-      .then(() => {
-        toast.success("Group created successfully!");
-        closeHandler();
-      })
-      .catch((err) => {
-        toast.error("Failed to create group. Please try again.");
-      });
+    });
+    
+    closeHandler();
   };
 
   const closeHandler = () => {
-    // Reset form state when closing
-    groupName.setValue("");
-    setSelectedMembers([]);
-    setSearchQuery("");
     dispatch(setIsNewGroup(false));
   };
 
@@ -245,37 +220,25 @@ const NewGroup = () => {
           onChange={groupName.changeHandler}
           fullWidth
           autoFocus
-          error={groupName.error}
+          error={!!groupName.error}
           helperText={groupName.error ? "Group name is required" : ""}
         />
 
-        <TextField
-          label="Search Friends"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          fullWidth
-          InputProps={{
-            endAdornment: (
-              <InputAdornment position="end">
-                <SearchIcon />
-              </InputAdornment>
-            ),
-          }}
-        />
+
 
         <Stack>
           <Typography variant="body1" sx={{ mb: 1 }}>
             Members Selected: {selectedMembers.length}
-            {selectedMembers.length > 0 && 
-              ` (Need ${Math.max(0, MINIMUM_MEMBERS + 1 - selectedMembers.length)} more)`}
+            {selectedMembers.length < MINIMUM_MEMBERS && 
+              ` (Need ${MINIMUM_MEMBERS - selectedMembers.length} more)`}
           </Typography>
           
           {isLoading ? (
             <Stack alignItems="center" py={2}>
               <CircularProgress size={24} />
             </Stack>
-          ) : filteredFriends.length > 0 ? (
-            filteredFriends.map((friend) => (
+          ) : data?.friends?.length > 0 ? (
+            data.friends.map((friend) => (
               <UserItem
                 user={friend}
                 key={friend._id}
@@ -285,7 +248,7 @@ const NewGroup = () => {
             ))
           ) : (
             <Typography variant="body2" color="text.secondary" textAlign="center" py={2}>
-              No friends match your search
+              No friends available to add
             </Typography>
           )}
         </Stack>
@@ -302,7 +265,7 @@ const NewGroup = () => {
           <Button
             variant="contained"
             onClick={submitHandler}
-            disabled={isLoadingNewGroup || !groupName.value.trim() || selectedMembers.length <= MINIMUM_MEMBERS}
+            disabled={isLoadingNewGroup || !groupName.value.trim() || selectedMembers.length < MINIMUM_MEMBERS}
           >
             {isLoadingNewGroup ? <CircularProgress size={24} /> : "Create Group"}
           </Button>

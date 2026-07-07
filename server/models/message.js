@@ -62,6 +62,19 @@ const schema = new Schema(
          user: { type: Types.ObjectId, ref: "User", required: true },
          emoji: { type: String, required: true }
       }],
+
+      // Message Reply
+      replyTo: {
+         type: Types.ObjectId,
+         ref: "Message",
+         default: null
+      },
+      
+      // Read Receipts
+      readBy: [{
+         type: Types.ObjectId,
+         ref: "User"
+      }],
    },
    { timestamps: true, toJSON: { getters: true }, toObject: { getters: true } }
 );

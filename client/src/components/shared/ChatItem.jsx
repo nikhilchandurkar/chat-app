@@ -1,5 +1,5 @@
 import React, { memo } from "react";
-import { Box, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography, useTheme } from "@mui/material";
 import AvatarCard from "./AvatarCard";
 import { useDispatch } from "react-redux";
 import { setActiveChatId } from "../../redux/reducers/misc";
@@ -19,10 +19,13 @@ const ChatItem = ({
   memberNames,
 }) => {
   const dispatch = useDispatch();
-
+  const theme = useTheme();
+  
   const handleClick = (e) => {
     dispatch(setActiveChatId(_id));
   };
+
+  const isDarkMode = theme.palette.mode === 'dark';
 
   return (
     <Box
@@ -31,22 +34,22 @@ const ChatItem = ({
       sx={{ cursor: "pointer", padding: "0" }}
     >
       <motion.div
-        initial={{ opacity: 0, y: "-100%" }}
-        whileInView={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.1 * index }}
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.05 * index, duration: 0.3 }}
         style={{
           display: "flex",
           gap: "1rem",
           alignItems: "center",
-          backgroundColor: sameSender ? "#2d3748" : "transparent",
-          color: sameSender ? "white" : "black",
+          backgroundColor: sameSender ? theme.palette.primary.main : "transparent",
+          color: sameSender ? "#ffffff" : theme.palette.text.primary,
           position: "relative",
           padding: "1rem",
-          borderBottom: "1px solid rgba(0,0,0,0.1)",
+          borderBottom: `1px solid ${theme.palette.divider}`,
           transition: "background-color 0.2s",
         }}
         onMouseOver={(e) => {
-          if (!sameSender) e.currentTarget.style.backgroundColor = "rgba(0,0,0,0.04)";
+          if (!sameSender) e.currentTarget.style.backgroundColor = isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)";
         }}
         onMouseOut={(e) => {
           if (!sameSender) e.currentTarget.style.backgroundColor = "transparent";
@@ -55,7 +58,7 @@ const ChatItem = ({
         <AvatarCard avatar={avatar} name={name} />
 
         <Stack flexGrow={1}>
-          <Typography fontWeight={sameSender ? 600 : 400}>{name}</Typography>
+          <Typography fontWeight={sameSender ? 600 : 500}>{name}</Typography>
           <Stack direction="row" alignItems="center" gap="0.5rem">
             {isTyping ? (
               <Typography variant="caption" sx={{ color: "#48bb78", fontStyle: "italic", fontWeight: 600 }}>
