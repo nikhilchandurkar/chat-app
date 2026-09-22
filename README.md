@@ -1,5 +1,7 @@
 # 💬 Enterprise Real-Time Chat Platform
 
+[![CI/CD Deployment](https://github.com/nikhilchandurkar/chat-app/actions/workflows/deploy.yml/badge.svg)](https://github.com/nikhilchandurkar/chat-app/actions/workflows/deploy.yml)
+
 A scalable, multi-client real-time chat platform with **1 Web Client**, **1 Mobile App (React Native)**, and **2 Interchangeable Backends** (Node.js MERN and Django 5 Daphne ASGI).
 
 Designed for high concurrency, horizontal scalability, and low-resource hardware efficiency.
