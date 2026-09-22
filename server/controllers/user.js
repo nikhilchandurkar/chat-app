@@ -158,18 +158,32 @@ const forgotPassword = tryCatch(async (req, res, next) => {
     user.resetPasswordExpires = Date.now() + 60 * 60 * 1000; // 1 hour
     await user.save({ validateBeforeSave: false });
 
-    // Build production-ready reset URL
-    const clientUrl = process.env.CLIENT_URL || "http://localhost:5173";
+    // Build production-ready reset URL (prefer CLIENT_URL, then request origin, then fallback)
+    const clientUrl = process.env.CLIENT_URL || req.headers.origin || "https://nikhil-chats.chickenkiller.com";
     const resetUrl = `${clientUrl}/reset-password?token=${rawToken}&email=${encodeURIComponent(user.email)}`;
+
+    console.log(`[PASSWORD RESET] Token generated for ${user.email}. Reset URL: ${resetUrl}`);
 
     try {
         await sendResetEmail(user.email, resetUrl, user.name);
     } catch (err) {
+        console.error("[PASSWORD RESET ERROR] Failed to send email via SMTP:", {
+            message: err.message,
+            code: err.code,
+            command: err.command,
+            response: err.response,
+            stack: err.stack,
+        });
+
         // Rollback token if email fails
         user.resetPasswordToken = undefined;
         user.resetPasswordExpires = undefined;
         await user.save({ validateBeforeSave: false });
-        return next(new ErrorHandler("Email could not be sent. Please try again later.", 500));
+
+        return next(new ErrorHandler(
+            err.message || "Email could not be sent. Please check server SMTP configuration.",
+            500
+        ));
     }
 
     res.status(200).json({

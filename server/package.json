@@ -8,7 +8,9 @@
     "start": "node app.js",
     "dev": "nodemon app.js",
     "migrate": "node migrate.js",
-    "build": "npm i"
+    "build": "npm i",
+    "test": "node --test tests/**/*.test.js",
+    "lint": "node --check app.js migrate.js migrateAdmins.js utils/encryption.js utils/mailer.js utils/features.js"
   },
   "keywords": [],
   "author": "",

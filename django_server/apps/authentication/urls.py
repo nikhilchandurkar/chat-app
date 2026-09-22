@@ -1,0 +1,42 @@
+from django.urls import path
+from .views import (
+    NewUserView,
+    LoginView,
+    GetMyProfileView,
+    UpdateProfileView,
+    DeleteProfileView,
+    ChangePasswordView,
+    ForgotPasswordView,
+    ResetPasswordView,
+    UpdateStatusView,
+    UpdatePrivacyView,
+    LogoutView,
+    SearchUserView,
+    SendFriendRequestView,
+    AcceptFriendRequestView,
+    GetNotificationsView,
+    GetFriendsView,
+    ToggleStarView,
+    GetStarredMessagesView,
+)
+
+urlpatterns = [
+    path('newuser', NewUserView.as_view(), name='user-register'),
+    path('login', LoginView.as_view(), name='user-login'),
+    path('me', GetMyProfileView.as_view(), name='user-me'),
+    path('profile', UpdateProfileView.as_view(), name='user-profile-update'),
+    path('password', ChangePasswordView.as_view(), name='user-password-change'),
+    path('forgot-password', ForgotPasswordView.as_view(), name='user-forgot-password'),
+    path('reset-password', ResetPasswordView.as_view(), name='user-reset-password'),
+    path('status', UpdateStatusView.as_view(), name='user-status-update'),
+    path('privacy', UpdatePrivacyView.as_view(), name='user-privacy-update'),
+    path('logout', LogoutView.as_view(), name='user-logout'),
+    path('search', SearchUserView.as_view(), name='user-search'),
+    path('sendrequest', SendFriendRequestView.as_view(), name='user-send-request'),
+    path('acceptrequest', AcceptFriendRequestView.as_view(), name='user-accept-request'),
+    path('notifications', GetNotificationsView.as_view(), name='user-notifications'),
+    path('friends', GetFriendsView.as_view(), name='user-friends'),
+    path('star/<str:id>', ToggleStarView.as_view(), name='user-toggle-star'),
+    path('starred', GetStarredMessagesView.as_view(), name='user-starred'),
+]
+

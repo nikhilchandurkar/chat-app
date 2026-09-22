@@ -1,0 +1,157 @@
+
+version: '3.8'
+
+# ==============================================================================
+# Scalable Multi-Service Docker Compose Setup
+# Services can run together or independently:
+#   - Full Stack:           docker compose up -d
+#   - Independent DB:       docker compose up -d db
+#   - Independent Redis:    docker compose up -d redis
+#   - Independent Celery:   docker compose up -d celery_worker
+#   - Independent Daphne:   docker compose up -d web
+# ==============================================================================
+
+services:
+  # ─── PostgreSQL Database ────────────────────────────────────────────────────
+  # ─── 1. Independent PostgreSQL Database ─────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: chat_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chat_db}
+      POSTGRES_USER: ${POSTGRES_USER:-chat_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chat_password}
+    ports:
+      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chat_user} -d ${POSTGRES_DB:-chat_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - chat_network
+
+  # ─── Redis Cache & Channels Broker ──────────────────────────────────────────
+  # ─── 2. Independent Redis Cache & Channels Broker ───────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: chat_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - chat_network
+
+  # ─── Scalable Django Daphne ASGI Application Server ─────────────────────────
+  # ─── 3. Scalable Django Daphne ASGI Application Server ──────────────────────
+  web:
+    image: nikhil2523/chat-app-django:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chat_django_daphne
+    restart: unless-stopped
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py collectstatic --noinput &&
+             daphne -b 0.0.0.0 -p 8000 core.asgi:application"
+    ports:
+      - "8000:8000"
+      - "${PORT:-8000}:8000"
+    environment:
+      - DEBUG=False
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-chat-app-production-secret-key-321}
+      - ADMIN_SECRET_KEY=${ADMIN_SECRET_KEY:-chat_app_secret}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-chat_user}:${POSTGRES_PASSWORD:-chat_password}@db:5432/${POSTGRES_DB:-chat_db}
+      - REDIS_URL=redis://redis:6379/0
+      - USE_REDIS=True
+      - DATABASE_URL=${DATABASE_URL:-postgresql://chat_user:chat_password@db:5432/chat_db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - USE_REDIS=${USE_REDIS:-True}
+      - CLIENT_URL=${CLIENT_URL:-https://nikhil-chats.chickenkiller.com}
+      - EMAIL_HOST=smtp.gmail.com
+      - EMAIL_PORT=587
+      - EMAIL_SECURE=false
+      - EMAIL_HOST=${EMAIL_HOST:-smtp.gmail.com}
+      - EMAIL_PORT=${EMAIL_PORT:-587}
+      - EMAIL_SECURE=${EMAIL_SECURE:-false}
+      - EMAIL_USER=${EMAIL_USER}
+      - EMAIL_PASS=${EMAIL_PASS}
+      - MESSAGE_ENCRYPTION_KEY=${MESSAGE_ENCRYPTION_KEY:-12345678901234567890123456789012}
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_healthy
+        required: false
+    volumes:
+      - media_data:/app/media
+      - static_data:/app/staticfiles
+    networks:
+      - chat_network
+
+  # ─── Celery Background Task Worker (Async OTP & Email) ──────────────────────
+  # ─── 4. Independent Celery Background Task Worker (Async OTP & Email) ───────
+  celery_worker:
+    image: nikhil2523/chat-app-django:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: chat_celery_worker
+    restart: unless-stopped
+    command: celery -A core worker -l info
+    environment:
+      - DEBUG=False
+      - SECRET_KEY=${SECRET_KEY:-django-insecure-chat-app-production-secret-key-321}
+      - ADMIN_SECRET_KEY=${ADMIN_SECRET_KEY:-chat_app_secret}
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-chat_user}:${POSTGRES_PASSWORD:-chat_password}@db:5432/${POSTGRES_DB:-chat_db}
+      - REDIS_URL=redis://redis:6379/0
+      - USE_REDIS=True
+      - DATABASE_URL=${DATABASE_URL:-postgresql://chat_user:chat_password@db:5432/chat_db}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - USE_REDIS=${USE_REDIS:-True}
+      - CLIENT_URL=${CLIENT_URL:-https://nikhil-chats.chickenkiller.com}
+      - EMAIL_HOST=smtp.gmail.com
+      - EMAIL_PORT=587
+      - EMAIL_SECURE=false
+      - EMAIL_HOST=${EMAIL_HOST:-smtp.gmail.com}
+      - EMAIL_PORT=${EMAIL_PORT:-587}
+      - EMAIL_SECURE=${EMAIL_SECURE:-false}
+      - EMAIL_USER=${EMAIL_USER}
+      - EMAIL_PASS=${EMAIL_PASS}
+      - MESSAGE_ENCRYPTION_KEY=${MESSAGE_ENCRYPTION_KEY:-12345678901234567890123456789012}
+    depends_on:
+      db:
+        condition: service_healthy
+        required: false
+      redis:
+        condition: service_healthy
+        required: false
+    volumes:
+      - media_data:/app/media
+    networks:
+      - chat_network
+
+volumes:
+  postgres_data:
+  redis_data:
+  media_data:
+  static_data:
+
+networks:
+  chat_network:
+    driver: bridge

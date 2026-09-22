@@ -1,4 +1,5 @@
 import mongoose, { Schema, model, Types } from "mongoose";
+import { encrypt, decrypt } from "../utils/encryption.js";
 
 import crypto from 'crypto';
 
@@ -87,3 +88,4 @@ schema.index({ chat: 1, createdAt: -1 });
 schema.index({ sender: 1 });
 
 export const Message = mongoose.models.Message || model("Message", schema);
+export { encrypt, decrypt };

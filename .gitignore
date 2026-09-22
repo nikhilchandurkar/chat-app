@@ -15,3 +15,16 @@ server/media/1782785050021-123401688-pexels-optical-chemist-340351297-31332939 (
 deploy.ps1
 server_code.zip
 server/logs/2026-07-07.log
+
+# Python & Django Server
+**/__pycache__/
+*.py[cod]
+.venv/
+venv/
+**/db.sqlite3
+**/db.sqlite3-journal
+**/staticfiles/
+django_server/media/
+django_server/.env
+django_server/.env.production
+

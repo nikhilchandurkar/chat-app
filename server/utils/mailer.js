@@ -1,20 +1,47 @@
+
 import nodemailer from "nodemailer";
 
 /**
  * Reusable nodemailer transporter.
  * Reads SMTP credentials from environment variables.
- * Works with Gmail (App Password), SendGrid, Mailgun, etc.
+ * Supports Gmail (service: 'gmail' or SMTP), SendGrid, Mailgun, custom SMTP, etc.
  */
-const createTransporter = () =>
-    nodemailer.createTransport({
-        host: process.env.EMAIL_HOST || "smtp.gmail.com",
-        port: parseInt(process.env.EMAIL_PORT || "587"),
-        secure: process.env.EMAIL_SECURE === "true", // true for port 465
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
+const createTransporter = () => {
+    const user = process.env.EMAIL_USER?.trim();
+    // Google App Passwords are shown with spaces (e.g. "abcd efgh ijkl mnop") - remove spaces
+    const pass = process.env.EMAIL_PASS?.trim().replace(/\s+/g, "");
+    const host = process.env.EMAIL_HOST?.trim();
+    const service = process.env.EMAIL_SERVICE?.trim()?.toLowerCase();
+    const port = parseInt(process.env.EMAIL_PORT || "465");
+
+    if (!user || !pass) {
+        console.error("Mailer Error: EMAIL_USER or EMAIL_PASS environment variable is missing in server .env");
+        throw new Error("Email service is not configured on the server. Please set EMAIL_USER and EMAIL_PASS.");
+    }
+
+    // If service is explicitly 'gmail' or host is Gmail or user is a Gmail address without custom host
+    if (service === "gmail" || (!host && user.endsWith("@gmail.com")) || host === "smtp.gmail.com") {
+        return nodemailer.createTransport({
+            service: "gmail",
+            auth: { user, pass },
+            tls: {
+                rejectUnauthorized: false,
+            },
+        });
+    }
+
+    // Custom SMTP configuration
+    const isSecure = process.env.EMAIL_SECURE === "true" || port === 465;
+    return nodemailer.createTransport({
+        host: host || "smtp.gmail.com",
+        port: port,
+        secure: isSecure, // true for 465, false for other ports (587 uses STARTTLS)
+        auth: { user, pass },
+        tls: {
+            rejectUnauthorized: false,
         },
     });
+};
 
 /**
  * Send password reset email with a secure URL-based token.
@@ -23,10 +50,13 @@ const createTransporter = () =>
  * @param {string} userName - User's display name
  */
 export const sendResetEmail = async (toEmail, resetUrl, userName = "there") => {
+    const user = process.env.EMAIL_USER?.trim();
+    const fromAddress = process.env.EMAIL_FROM?.trim() || user;
+
     const transporter = createTransporter();
 
     const mailOptions = {
-        from: `"ChatApp" <${process.env.EMAIL_USER}>`,
+        from: `"ChatApp" <${fromAddress}>`,
         to: toEmail,
         subject: "Reset Your ChatApp Password",
         html: `

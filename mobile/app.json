@@ -1,0 +1,24 @@
+{
+  "expo": {
+    "name": "ChatApp",
+    "slug": "chat-app-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#6366f1"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.nikhil.chatapp"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#6366f1"
+      },
+      "package": "com.nikhil.chatapp"
+    }
+  }
+}
+

@@ -1,0 +1,201 @@
+name: Test, Build & Deploy (Migrate Node to Django Daphne)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  DOCKER_IMAGE_DJANGO: nikhil2523/chat-app-django
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME || 'nikhil2523' }}
+  DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+  MONGO_URI: ${{ secrets.MONGO_URI }}
+
+jobs:
+  # ─── 1. Quality Gate: Checks & Tests ────────────────────────────────────────
+  check_and_test:
+    name: Lint & System Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python Dependencies
+        run: |
+          cd django_server
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Django System Check
+        run: |
+          cd django_server
+          python manage.py check
+
+      - name: Validate Python Syntax Across Project
+        run: |
+          python -c "import ast, glob; [ast.parse(open(f, encoding='utf-8').read()) for f in glob.glob('django_server/**/*.py', recursive=True)]; print('All Python files have valid syntax!')"
+
+  # ─── 2. Build & Push Multi-Stage Django Daphne Image ────────────────────────
+  build_and_push:
+    name: Build & Push Django Daphne Docker Image
+    needs: check_and_test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Log into Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ env.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and Push Multi-Stage Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./django_server
+          file: ./django_server/Dockerfile
+          push: true
+          tags: |
+            ${{ env.DOCKER_IMAGE_DJANGO }}:latest
+            ${{ env.DOCKER_IMAGE_DJANGO }}:${{ github.sha }}
+
+  # ─── 3. Deploy to EC2 (172.31.13.39): Switch Node to Django Daphne ──────────
+  deploy:
+    name: Deploy to Self-Hosted Runner (172.31.13.39)
+    needs: build_and_push
+    runs-on: [self-hosted, linux]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Log into Docker Hub on Server
+        run: |
+          echo "${{ env.DOCKER_PASSWORD }}" | docker login -u "${{ env.DOCKER_USERNAME }}" --password-stdin
+
+      - name: Pull Latest Django Image
+        run: |
+          docker pull ${{ env.DOCKER_IMAGE_DJANGO }}:latest
+
+      - name: Ensure PostgreSQL 16 is Running
+        run: |
+          if ! docker ps --format '{{.Names}}' | grep -q '^chat_postgres$'; then
+            echo "Starting PostgreSQL 16 container..."
+            docker run -d \
+              --name chat_postgres \
+              --restart unless-stopped \
+              -p 5432:5432 \
+              -e POSTGRES_DB=chat_db \
+              -e POSTGRES_USER=chat_user \
+              -e POSTGRES_PASSWORD=chat_password \
+              -v /opt/chat-app/postgres_data:/var/lib/postgresql/data \
+              postgres:16-alpine
+            sleep 5
+          fi
+
+      - name: Ensure Redis 7 is Running
+        run: |
+          if ! docker ps --format '{{.Names}}' | grep -q '^chat_redis$'; then
+            echo "Starting Redis 7 container..."
+            docker run -d \
+              --name chat_redis \
+              --restart unless-stopped \
+              -p 6379:6379 \
+              -v /opt/chat-app/redis_data:/data \
+              redis:7-alpine redis-server --appendonly yes
+            sleep 3
+          fi
+
+      - name: Stop Old Node.js Containers
+        run: |
+          echo "Stopping legacy Node.js containers..."
+          if docker ps -a --format '{{.Names}}' | grep -q '^chat_app$'; then
+            docker stop chat_app || true
+            docker rm chat_app || true
+          fi
+          if docker ps -a --format '{{.Names}}' | grep -q '^nodejs-app-container$'; then
+            docker stop nodejs-app-container || true
+            docker rm nodejs-app-container || true
+          fi
+
+      - name: Run Django Migrations & MongoDB Data Import
+        run: |
+          echo "Applying migrations and importing MongoDB data to PostgreSQL..."
+          docker run --rm \
+            --network host \
+            -e DATABASE_URL="postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db" \
+            -e REDIS_URL="redis://127.0.0.1:6379/0" \
+            -e USE_REDIS="True" \
+            -e MONGO_URI="${{ env.MONGO_URI }}" \
+            ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
+            sh -c "python manage.py migrate --noinput && python manage.py migrate_mongo_to_postgres"
+
+      - name: Start Django Daphne ASGI Server (Port 3000 -> Nginx)
+        run: |
+          echo "Starting chat_django_daphne on port 3000..."
+          docker stop chat_django_daphne || true
+          docker rm chat_django_daphne || true
+          docker run -d \
+            --name chat_django_daphne \
+            --restart unless-stopped \
+            --network host \
+            -e PORT=3000 \
+            -e DEBUG=False \
+            -e SECRET_KEY='django-insecure-chat-app-production-secret-key-321' \
+            -e ADMIN_SECRET_KEY='chat_app_secret' \
+            -e DATABASE_URL='postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' \
+            -e REDIS_URL='redis://127.0.0.1:6379/0' \
+            -e USE_REDIS='True' \
+            -e CLIENT_URL='https://nikhil-chats.chickenkiller.com' \
+            -e EMAIL_HOST='smtp.gmail.com' \
+            -e EMAIL_PORT=587 \
+            -e EMAIL_SECURE=false \
+            -e EMAIL_USER="${{ secrets.EMAIL_USER || 'nikhilchandurkar24@gmail.com' }}" \
+            -e EMAIL_PASS="${{ secrets.EMAIL_PASS }}" \
+            -e MESSAGE_ENCRYPTION_KEY='12345678901234567890123456789012' \
+            -v /opt/chat-app/media:/app/media \
+            ${{ env.DOCKER_IMAGE_DJANGO }}:latest
+
+      - name: Start Celery Background Task Worker
+        run: |
+          echo "Starting chat_celery_worker..."
+          docker stop chat_celery_worker || true
+          docker rm chat_celery_worker || true
+          docker run -d \
+            --name chat_celery_worker \
+            --restart unless-stopped \
+            --network host \
+            -e DEBUG=False \
+            -e SECRET_KEY='django-insecure-chat-app-production-secret-key-321' \
+            -e ADMIN_SECRET_KEY='chat_app_secret' \
+            -e DATABASE_URL='postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' \
+            -e REDIS_URL='redis://127.0.0.1:6379/0' \
+            -e USE_REDIS='True' \
+            -e EMAIL_HOST='smtp.gmail.com' \
+            -e EMAIL_PORT=587 \
+            -e EMAIL_SECURE=false \
+            -e EMAIL_USER="${{ secrets.EMAIL_USER || 'nikhilchandurkar24@gmail.com' }}" \
+            -e EMAIL_PASS="${{ secrets.EMAIL_PASS }}" \
+            -v /opt/chat-app/media:/app/media \
+            ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
+            celery -A core worker -l info
+
+      - name: Verify Health Check on Port 3000
+        run: |
+          sleep 8
+          echo "Checking container health..."
+          docker ps --filter "name=chat_django_daphne" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          curl -f http://127.0.0.1:3000/hello || (docker logs chat_django_daphne && exit 1)
+          echo "✅ Django Daphne server is successfully responding on port 3000!"
+
+      - name: Clean up Dangling Images
+        run: docker image prune -f
