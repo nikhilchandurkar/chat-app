@@ -1,4 +1,4 @@
-name: Test, Build & Deploy (Migrate Node to Django Daphne)
+name: Production CI/CD Pipeline (Build, Test & Deploy)
 
 on:
   push:
@@ -10,17 +10,19 @@ env:
   DOCKER_IMAGE_DJANGO: nikhil2523/chat-app-django
   DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME || 'nikhil2523' }}
   DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-  MONGO_URI: ${{ secrets.MONGO_URI }}
+  CLIENT_URL: ${{ secrets.CLIENT_URL || 'https://nikhil-chats.chickenkiller.com' }}
+  VITE_SERVER: ${{ secrets.VITE_SERVER || 'https://nikhil-chats.chickenkiller.com' }}
 
 jobs:
-  # ─── 1. Quality Gate: Checks & Tests ────────────────────────────────────────
-  check_and_test:
-    name: Lint & System Checks
+  # ─── 1. Quality Gate: Backend Checks & Frontend Production Build ────────────
+  build_and_test:
+    name: Lint & Build Assets (Cloud Runner)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
+      # ── Backend Checks ──
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -33,19 +35,46 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Django System Check
+      - name: Run Django System Checks
         run: |
           cd django_server
           python manage.py check
 
       - name: Validate Python Syntax Across Project
         run: |
-          python -c "import ast, glob; [ast.parse(open(f, encoding='utf-8').read()) for f in glob.glob('django_server/**/*.py', recursive=True)]; print('All Python files have valid syntax!')"
+          python -c "import ast, glob; [ast.parse(open(f, encoding='utf-8').read()) for f in glob.glob('django_server/**/*.py', recursive=True)]; print('✅ All Python files have valid syntax!')"
+
+      # ── Frontend Production Build (Offloaded from 1GB EC2 to GitHub Cloud) ──
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "client/package-lock.json"
+
+      - name: Install Frontend Dependencies
+        run: |
+          cd client
+          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+
+      - name: Build React SPA
+        env:
+          VITE_SERVER: ${{ env.VITE_SERVER }}
+        run: |
+          cd client
+          npm run build
+
+      - name: Upload Frontend Static Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: client/dist/
+          retention-days: 7
 
   # ─── 2. Build & Push Multi-Stage Django Daphne Image ────────────────────────
   build_and_push:
-    name: Build & Push Django Daphne Docker Image
-    needs: check_and_test
+    name: Build & Push Docker Image (Cloud Runner)
+    needs: build_and_test
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     steps:
@@ -53,6 +82,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Log into Docker Hub
+        if: env.DOCKER_PASSWORD != ''
         uses: docker/login-action@v3
         with:
           username: ${{ env.DOCKER_USERNAME }}
@@ -61,35 +91,78 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and Push Multi-Stage Docker Image
+      - name: Build and Push Django Docker Image
         uses: docker/build-push-action@v5
         with:
           context: ./django_server
           file: ./django_server/Dockerfile
-          push: true
+          push: ${{ env.DOCKER_PASSWORD != '' }}
           tags: |
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest
             ${{ env.DOCKER_IMAGE_DJANGO }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  # ─── 3. Deploy to EC2 (172.31.13.39): Switch Node to Django Daphne ──────────
+  # ─── 3. Deploy to EC2 Self-Hosted Runner (16.113.127.132 / 172.31.13.39) ───
   deploy:
-    name: Deploy to Self-Hosted Runner (172.31.13.39)
-    needs: build_and_push
+    name: Deploy to EC2 Server
+    needs: [build_and_test, build_and_push]
     runs-on: [self-hosted, linux]
     if: github.ref == 'refs/heads/main'
     steps:
-      - name: Log into Docker Hub on Server
+      - name: Checkout Repository on Server
+        uses: actions/checkout@v4
+
+      - name: Setup Deployment Directories & Permissions
         run: |
-          echo "${{ env.DOCKER_PASSWORD }}" | docker login -u "${{ env.DOCKER_USERNAME }}" --password-stdin
+          echo "📁 Preparing application directories in /opt/chat-app..."
+          sudo mkdir -p /opt/chat-app/frontend /opt/chat-app/postgres_data /opt/chat-app/redis_data /opt/chat-app/media /opt/chat-app/logs
+          sudo chown -R $USER:$USER /opt/chat-app
+          sudo chmod -R 775 /opt/chat-app
+
+      - name: Download Frontend Build Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: /tmp/frontend_dist
+
+      - name: Deploy Frontend Files to /opt/chat-app/frontend
+        run: |
+          echo "🚀 Deploying React SPA static assets..."
+          rm -rf /opt/chat-app/frontend/*
+          cp -r /tmp/frontend_dist/* /opt/chat-app/frontend/
+          rm -rf /tmp/frontend_dist
+          echo "✅ Frontend deployed successfully!"
+
+      - name: Update & Reload Nginx Reverse Proxy
+        run: |
+          echo "🔄 Updating Nginx configuration..."
+          if [ -f "nginx.conf" ]; then
+            sudo cp nginx.conf /etc/nginx/sites-available/chatapp
+            sudo ln -sf /etc/nginx/sites-available/chatapp /etc/nginx/sites-enabled/chatapp
+            if sudo nginx -t; then
+              sudo systemctl reload nginx
+              echo "✅ Nginx reloaded successfully"
+            else
+              echo "⚠️ Nginx syntax check failed. Please inspect /etc/nginx/sites-available/chatapp"
+            fi
+          fi
+
+      - name: Log into Docker Hub (if password configured)
+        run: |
+          if [ -n "${{ env.DOCKER_PASSWORD }}" ]; then
+            echo "${{ env.DOCKER_PASSWORD }}" | docker login -u "${{ env.DOCKER_USERNAME }}" --password-stdin
+          fi
 
       - name: Pull Latest Django Image
         run: |
+          echo "📥 Pulling latest Django image from Docker Hub..."
           docker pull ${{ env.DOCKER_IMAGE_DJANGO }}:latest
 
-      - name: Ensure PostgreSQL 16 is Running
+      - name: Ensure PostgreSQL 16 Container is Running
         run: |
           if ! docker ps --format '{{.Names}}' | grep -q '^chat_postgres$'; then
-            echo "Starting PostgreSQL 16 container..."
+            echo "🐘 Starting PostgreSQL 16 container..."
             docker run -d \
               --name chat_postgres \
               --restart unless-stopped \
@@ -100,12 +173,14 @@ jobs:
               -v /opt/chat-app/postgres_data:/var/lib/postgresql/data \
               postgres:16-alpine
             sleep 5
+          else
+            echo "✅ PostgreSQL is already running."
           fi
 
-      - name: Ensure Redis 7 is Running
+      - name: Ensure Redis 7 Container is Running
         run: |
           if ! docker ps --format '{{.Names}}' | grep -q '^chat_redis$'; then
-            echo "Starting Redis 7 container..."
+            echo "⚡ Starting Redis 7 container..."
             docker run -d \
               --name chat_redis \
               --restart unless-stopped \
@@ -113,35 +188,35 @@ jobs:
               -v /opt/chat-app/redis_data:/data \
               redis:7-alpine redis-server --appendonly yes
             sleep 3
+          else
+            echo "✅ Redis is already running."
           fi
 
-      - name: Stop Old Node.js Containers
+      - name: Stop Legacy Node.js Containers (if still present)
         run: |
-          echo "Stopping legacy Node.js containers..."
-          if docker ps -a --format '{{.Names}}' | grep -q '^chat_app$'; then
-            docker stop chat_app || true
-            docker rm chat_app || true
-          fi
-          if docker ps -a --format '{{.Names}}' | grep -q '^nodejs-app-container$'; then
-            docker stop nodejs-app-container || true
-            docker rm nodejs-app-container || true
-          fi
+          for c in chat_app nodejs-app-container; do
+            if docker ps -a --format '{{.Names}}' | grep -q "^${c}$"; then
+              echo "Stopping old container $c..."
+              docker stop $c || true
+              docker rm $c || true
+            fi
+          done
 
-      - name: Run Django Migrations & MongoDB Data Import
+      - name: Apply Database Migrations
         run: |
-          echo "Applying migrations and importing MongoDB data to PostgreSQL..."
+          echo "⚡ Running Django migrations..."
           docker run --rm \
             --network host \
             -e DATABASE_URL="postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db" \
             -e REDIS_URL="redis://127.0.0.1:6379/0" \
             -e USE_REDIS="True" \
-            -e MONGO_URI="${{ env.MONGO_URI }}" \
+            -e MONGO_URI="${{ secrets.MONGO_URI }}" \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
-            sh -c "python manage.py migrate --noinput && python manage.py migrate_mongo_to_postgres"
+            sh -c "python manage.py migrate --noinput"
 
-      - name: Start Django Daphne ASGI Server (Port 3000 -> Nginx)
+      - name: Start / Update Django Daphne ASGI Server (Port 3000)
         run: |
-          echo "Starting chat_django_daphne on port 3000..."
+          echo "🚀 Restarting chat_django_daphne on port 3000..."
           docker stop chat_django_daphne || true
           docker rm chat_django_daphne || true
           docker run -d \
@@ -150,24 +225,25 @@ jobs:
             --network host \
             -e PORT=3000 \
             -e DEBUG=False \
-            -e SECRET_KEY='django-insecure-chat-app-production-secret-key-321' \
-            -e ADMIN_SECRET_KEY='chat_app_secret' \
+            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-321' }}' \
+            -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY || 'chat_app_secret' }}' \
             -e DATABASE_URL='postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS='True' \
-            -e CLIENT_URL='https://nikhil-chats.chickenkiller.com' \
+            -e CLIENT_URL='${{ env.CLIENT_URL }}' \
             -e EMAIL_HOST='smtp.gmail.com' \
             -e EMAIL_PORT=587 \
             -e EMAIL_SECURE=false \
-            -e EMAIL_USER="${{ secrets.EMAIL_USER || 'nikhilchandurkar24@gmail.com' }}" \
-            -e EMAIL_PASS="${{ secrets.EMAIL_PASS }}" \
-            -e MESSAGE_ENCRYPTION_KEY='12345678901234567890123456789012' \
+            -e EMAIL_USER='${{ secrets.EMAIL_USER || 'nikhilchandurkar24@gmail.com' }}' \
+            -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
+            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -v /opt/chat-app/media:/app/media \
+            -v /opt/chat-app/logs:/app/logs \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest
 
-      - name: Start Celery Background Task Worker
+      - name: Start / Update Celery Worker
         run: |
-          echo "Starting chat_celery_worker..."
+          echo "⚙️ Restarting chat_celery_worker..."
           docker stop chat_celery_worker || true
           docker rm chat_celery_worker || true
           docker run -d \
@@ -175,27 +251,47 @@ jobs:
             --restart unless-stopped \
             --network host \
             -e DEBUG=False \
-            -e SECRET_KEY='django-insecure-chat-app-production-secret-key-321' \
-            -e ADMIN_SECRET_KEY='chat_app_secret' \
+            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-321' }}' \
+            -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY || 'chat_app_secret' }}' \
             -e DATABASE_URL='postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS='True' \
             -e EMAIL_HOST='smtp.gmail.com' \
             -e EMAIL_PORT=587 \
             -e EMAIL_SECURE=false \
-            -e EMAIL_USER="${{ secrets.EMAIL_USER || 'nikhilchandurkar24@gmail.com' }}" \
-            -e EMAIL_PASS="${{ secrets.EMAIL_PASS }}" \
+            -e EMAIL_USER='${{ secrets.EMAIL_USER || 'nikhilchandurkar24@gmail.com' }}' \
+            -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
             -v /opt/chat-app/media:/app/media \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
             celery -A core worker -l info
 
-      - name: Verify Health Check on Port 3000
+      - name: Verify Backend & Frontend Health
         run: |
-          sleep 8
-          echo "Checking container health..."
+          echo "🏥 Verifying health check..."
+          sleep 6
           docker ps --filter "name=chat_django_daphne" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-          curl -f http://127.0.0.1:3000/hello || (docker logs chat_django_daphne && exit 1)
-          echo "✅ Django Daphne server is successfully responding on port 3000!"
+          
+          # Health check Daphne
+          for i in {1..10}; do
+            if curl -s -f http://127.0.0.1:3000/hello > /dev/null; then
+              echo "✅ Daphne backend is healthy and responding on port 3000!"
+              break
+            fi
+            echo "Waiting for Daphne to be ready ($i/10)..."
+            sleep 2
+          done
+          
+          # Final sanity check
+          curl -f http://127.0.0.1:3000/hello || (echo "❌ Daphne failed healthcheck! Recent logs:" && docker logs --tail 50 chat_django_daphne && exit 1)
+          
+          # Verify Frontend Files exist
+          if [ -f "/opt/chat-app/frontend/index.html" ]; then
+            echo "✅ Frontend index.html is present in /opt/chat-app/frontend/"
+          else
+            echo "⚠️ Frontend index.html is missing in /opt/chat-app/frontend/"
+          fi
 
       - name: Clean up Dangling Images
-        run: docker image prune -f
+        run: |
+          echo "🧹 Cleaning up dangling Docker images..."
+          docker image prune -f

@@ -28,3 +28,7 @@ django_server/media/
 django_server/.env
 django_server/.env.production
 
+
+# Claude Red
+Claude-Red/
+Claude-Red
