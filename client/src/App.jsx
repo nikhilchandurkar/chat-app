@@ -7,7 +7,7 @@ import ProtectRoute from "./components/auth/ProtectRoute";
 import { LayoutLoader } from "./components/layout/Loaders";
 import { server } from "./constants/config";
 import { userExists, userNotExists } from "./redux/reducers/auth";
-import { SocketProvider } from "./socket";
+import { SocketProvider } from "./socket.ts";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 
@@ -59,12 +59,15 @@ const App = () => {
       .catch(() => dispatch(userNotExists()));
   }, [dispatch]);
 
+  // Extract JWT token from Redux state for the WebSocket provider
+  const token = useSelector((state) => state.auth?.token);
+
   return loader ? (
     <LayoutLoader />
   ) : (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <SocketProvider>
+      <SocketProvider token={token}>
         <BrowserRouter>
         <Suspense fallback={<LayoutLoader />}>
           <Routes>

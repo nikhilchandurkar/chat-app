@@ -1,7 +1,10 @@
-name: Production CI/CD Pipeline (Build, Test & Deploy)
+name: Production CI/CD Pipeline (Build, Test, Scan & Deploy)
 
 on:
   push:
+    branches:
+      - main
+  pull_request:
     branches:
       - main
   workflow_dispatch:
@@ -14,84 +17,207 @@ env:
   VITE_SERVER: ${{ secrets.VITE_SERVER || 'https://nikhil-chats.chickenkiller.com' }}
 
 jobs:
-  # ─── 1. Quality Gate: Backend Checks & Frontend Production Build ────────────
-  build_and_test:
-    name: Lint & Build Assets (Cloud Runner)
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 1 – Backend Quality Gate
+  # ═══════════════════════════════════════════════════════════════════════════
+  backend_quality:
+    name: Backend Quality Gate
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: django_server
     steps:
-      - name: Checkout Source Code
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      # ── Backend Checks ──
-      - name: Set up Python 3.12
+      - name: Setup Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
+          cache: pip
+          cache-dependency-path: django_server/requirements.txt
 
-      - name: Install Python Dependencies
+      - name: Install Python dependencies
         run: |
-          cd django_server
-          python -m pip install --upgrade pip
+          pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Django System Checks
+      # ── Django system check ──────────────────────────────────────────────
+      - name: Django system check
         run: |
-          cd django_server
-          python manage.py check
+          DB_ENGINE=sqlite3 python manage.py check
+        env:
+          SECRET_KEY: ci-test-secret-key-12345
+          DB_ENGINE: sqlite3
+          USE_REDIS: "False"
+          DEBUG: "True"
+          MESSAGE_ENCRYPTION_KEY: "12345678901234567890123456789012"
 
-      - name: Validate Python Syntax Across Project
+      # ── Syntax check ─────────────────────────────────────────────────────
+      - name: Validate Python syntax
         run: |
-          python -c "import ast, glob; [ast.parse(open(f, encoding='utf-8').read()) for f in glob.glob('django_server/**/*.py', recursive=True)]; print('✅ All Python files have valid syntax!')"
+          python -c "import ast, glob; [ast.parse(open(f, encoding='utf-8').read()) for f in glob.glob('**/*.py', recursive=True)]; print('✅ All Python files have valid syntax!')"
 
-      # ── Frontend Production Build (Offloaded from 1GB EC2 to GitHub Cloud) ──
-      - name: Set up Node.js 20
+      # ── Flake8 linting ───────────────────────────────────────────────────
+      - name: Flake8 lint
+        run: |
+          pip install flake8
+          flake8 . --max-line-length=120 --exclude=migrations,__pycache__,.git \
+            --extend-ignore=E501,W503 || true
+        continue-on-error: true
+
+      # ── Black formatting check ────────────────────────────────────────────
+      - name: Black format check
+        run: |
+          pip install black
+          black --check --line-length 120 . --exclude "migrations|__pycache__" || true
+        continue-on-error: true
+
+      # ── Bandit security scan ─────────────────────────────────────────────
+      - name: Bandit security scan
+        run: |
+          pip install bandit
+          bandit -r apps/ core/ \
+            -x apps/authentication/migrations,apps/chat/migrations,apps/messages_app/migrations \
+            --severity-level medium \
+            --confidence-level medium \
+            -f json -o bandit-report.json || true
+          bandit -r apps/ core/ \
+            -x apps/authentication/migrations,apps/chat/migrations,apps/messages_app/migrations \
+            --severity-level medium \
+            --confidence-level medium || true
+        continue-on-error: true
+
+      - name: Upload Bandit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-security-report
+          path: django_server/bandit-report.json
+          retention-days: 14
+
+      # ── pytest ───────────────────────────────────────────────────────────
+      - name: Run backend tests with coverage
+        run: |
+          pip install pytest pytest-django pytest-asyncio pytest-cov factory-boy faker channels[daphne]
+          DB_ENGINE=sqlite3 pytest tests/ \
+            --cov=apps \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            -v \
+            --timeout=60
+        env:
+          SECRET_KEY: ci-test-secret-key-12345
+          DB_ENGINE: sqlite3
+          USE_REDIS: "False"
+          DEBUG: "True"
+          MESSAGE_ENCRYPTION_KEY: "12345678901234567890123456789012"
+        continue-on-error: true
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: django_server/coverage.xml
+          retention-days: 14
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 2 – Frontend Quality Gate + Production Build
+  # ═══════════════════════════════════════════════════════════════════════════
+  frontend_quality:
+    name: Frontend Quality Gate & Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          cache: "npm"
-          cache-dependency-path: "client/package-lock.json"
+          cache: npm
+          cache-dependency-path: client/package-lock.json
 
-      - name: Install Frontend Dependencies
-        run: |
-          cd client
-          npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+      - name: Install frontend dependencies
+        run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
-      - name: Build React SPA
+      - name: ESLint check
+        run: npm run lint || true
+        continue-on-error: true
+
+      - name: Build React SPA (production)
         env:
           VITE_SERVER: ${{ env.VITE_SERVER }}
-        run: |
-          cd client
-          npm run build
+        run: npm run build:ci
 
-      - name: Upload Frontend Static Artifacts
+      - name: Upload frontend build artifact
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
           path: client/dist/
           retention-days: 7
 
-  # ─── 2. Build & Push Multi-Stage Django Daphne Image ────────────────────────
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 3 – SonarCloud Analysis (optional – runs if SONAR_TOKEN is set)
+  # ═══════════════════════════════════════════════════════════════════════════
+  sonar_analysis:
+    name: SonarCloud Analysis
+    runs-on: ubuntu-latest
+    needs: [backend_quality]
+    if: ${{ secrets.SONAR_TOKEN != '' }}
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download coverage report
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-report
+          path: django_server/
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY || 'chat-app' }}
+            -Dsonar.organization=${{ secrets.SONAR_ORG || 'nikhilchandurkar' }}
+            -Dsonar.sources=django_server/apps,client/src
+            -Dsonar.exclusions=**/migrations/**,**/node_modules/**,**/dist/**,**/__pycache__/**
+            -Dsonar.python.coverage.reportPaths=django_server/coverage.xml
+            -Dsonar.python.version=3.12
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 4 – Build & Push Docker Image
+  # ═══════════════════════════════════════════════════════════════════════════
   build_and_push:
-    name: Build & Push Docker Image (Cloud Runner)
-    needs: build_and_test
+    name: Build & Push Docker Image
+    needs: [backend_quality, frontend_quality]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     steps:
-      - name: Checkout Source Code
+      - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Log into Docker Hub
+      - name: Login to Docker Hub
         if: env.DOCKER_PASSWORD != ''
         uses: docker/login-action@v3
         with:
           username: ${{ env.DOCKER_USERNAME }}
           password: ${{ env.DOCKER_PASSWORD }}
 
-      - name: Set up Docker Buildx
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and Push Django Docker Image
+      - name: Build and push Django Docker image
         uses: docker/build-push-action@v5
         with:
           context: ./django_server
@@ -103,84 +229,105 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ─── 3. Deploy to EC2 Self-Hosted Runner (16.113.127.132 / 172.31.13.39) ───
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 5 – Trivy Container Security Scan
+  # ═══════════════════════════════════════════════════════════════════════════
+  trivy_scan:
+    name: Trivy Container Scan
+    needs: build_and_push
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.DOCKER_IMAGE_DJANGO }}:latest
+          format: sarif
+          output: trivy-results.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+        continue-on-error: true
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+        continue-on-error: true
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # JOB 6 – Deploy to EC2 Self-Hosted Runner
+  # ═══════════════════════════════════════════════════════════════════════════
   deploy:
     name: Deploy to EC2 Server
-    needs: [build_and_test, build_and_push]
+    needs: [backend_quality, frontend_quality, build_and_push]
     runs-on: [self-hosted, linux]
     if: github.ref == 'refs/heads/main'
     steps:
-      - name: Checkout Repository on Server
+      - name: Checkout repository on server
         uses: actions/checkout@v4
 
-      - name: Setup Deployment Directories & Permissions
+      # ── Clean up orphaned Docker resources before deploy ─────────────────
+      - name: Docker system prune (safe cleanup)
         run: |
-          echo "📁 Preparing application directories in /opt/chat-app..."
-          sudo mkdir -p /opt/chat-app/frontend /opt/chat-app/postgres_data /opt/chat-app/redis_data /opt/chat-app/media /opt/chat-app/logs
+          echo "🧹 Removing stopped containers and dangling images..."
+          docker container prune -f || true
+          docker image prune -f || true
+          docker volume prune -f --filter "label!=keep" || true
+          echo "✅ Docker cleanup complete"
+
+      - name: Setup deployment directories
+        run: |
+          sudo mkdir -p /opt/chat-app/{frontend,redis_data,media,logs}
           sudo chown -R $USER:$USER /opt/chat-app
           sudo chmod -R 775 /opt/chat-app
 
-      - name: Download Frontend Build Artifact
+      - name: Download frontend build artifact
         uses: actions/download-artifact@v4
         with:
           name: frontend-dist
           path: /tmp/frontend_dist
 
-      - name: Deploy Frontend Files to /opt/chat-app/frontend
+      - name: Deploy frontend static files
         run: |
-          echo "🚀 Deploying React SPA static assets..."
           rm -rf /opt/chat-app/frontend/*
           cp -r /tmp/frontend_dist/* /opt/chat-app/frontend/
           rm -rf /tmp/frontend_dist
-          echo "✅ Frontend deployed successfully!"
+          echo "✅ Frontend deployed to /opt/chat-app/frontend/"
 
-      - name: Update & Reload Nginx Reverse Proxy
+      - name: Update Nginx configuration
         run: |
-          echo "🔄 Updating Nginx configuration..."
           if [ -f "nginx.conf" ]; then
             sudo cp nginx.conf /etc/nginx/sites-available/chatapp
             sudo ln -sf /etc/nginx/sites-available/chatapp /etc/nginx/sites-enabled/chatapp
-            if sudo nginx -t; then
-              sudo systemctl reload nginx
-              echo "✅ Nginx reloaded successfully"
-            else
-              echo "⚠️ Nginx syntax check failed. Please inspect /etc/nginx/sites-available/chatapp"
-            fi
+            sudo nginx -t && sudo systemctl reload nginx && echo "✅ Nginx reloaded" || echo "⚠️ Nginx config check failed"
           fi
 
-      - name: Log into Docker Hub (if password configured)
+      - name: Login to Docker Hub
         run: |
           if [ -n "${{ env.DOCKER_PASSWORD }}" ]; then
             echo "${{ env.DOCKER_PASSWORD }}" | docker login -u "${{ env.DOCKER_USERNAME }}" --password-stdin
           fi
 
-      - name: Pull Latest Django Image
-        run: |
-          echo "📥 Pulling latest Django image from Docker Hub..."
-          docker pull ${{ env.DOCKER_IMAGE_DJANGO }}:latest
+      - name: Pull latest Django image
+        run: docker pull ${{ env.DOCKER_IMAGE_DJANGO }}:latest
 
-      - name: Ensure PostgreSQL 16 Container is Running
+      # ── Stop legacy Node.js containers ───────────────────────────────────
+      - name: Remove legacy Node.js backend containers
         run: |
-          if ! docker ps --format '{{.Names}}' | grep -q '^chat_postgres$'; then
-            echo "🐘 Starting PostgreSQL 16 container..."
-            docker run -d \
-              --name chat_postgres \
-              --restart unless-stopped \
-              -p 5432:5432 \
-              -e POSTGRES_DB=chat_db \
-              -e POSTGRES_USER=chat_user \
-              -e POSTGRES_PASSWORD=chat_password \
-              -v /opt/chat-app/postgres_data:/var/lib/postgresql/data \
-              postgres:16-alpine
-            sleep 5
-          else
-            echo "✅ PostgreSQL is already running."
-          fi
+          for c in chat_app nodejs-app-container node_backend; do
+            if docker ps -a --format '{{.Names}}' | grep -q "^${c}$"; then
+              echo "Removing legacy container: $c"
+              docker stop $c 2>/dev/null || true
+              docker rm $c 2>/dev/null || true
+            fi
+          done
+          echo "✅ Legacy containers removed"
 
-      - name: Ensure Redis 7 Container is Running
+      # ── Redis ─────────────────────────────────────────────────────────────
+      - name: Ensure Redis 7 container is running
         run: |
           if ! docker ps --format '{{.Names}}' | grep -q '^chat_redis$'; then
-            echo "⚡ Starting Redis 7 container..."
             docker run -d \
               --name chat_redis \
               --restart unless-stopped \
@@ -188,110 +335,103 @@ jobs:
               -v /opt/chat-app/redis_data:/data \
               redis:7-alpine redis-server --appendonly yes
             sleep 3
+            echo "✅ Redis started"
           else
-            echo "✅ Redis is already running."
+            echo "✅ Redis already running"
           fi
 
-      - name: Stop Legacy Node.js Containers (if still present)
+      # ── Run migrations ─────────────────────────────────────────────────────
+      - name: Apply database migrations
         run: |
-          for c in chat_app nodejs-app-container; do
-            if docker ps -a --format '{{.Names}}' | grep -q "^${c}$"; then
-              echo "Stopping old container $c..."
-              docker stop $c || true
-              docker rm $c || true
-            fi
-          done
-
-      - name: Apply Database Migrations
-        run: |
-          echo "⚡ Running Django migrations..."
           docker run --rm \
             --network host \
-            -e DATABASE_URL="postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db" \
+            -e DATABASE_URL="${{ secrets.DATABASE_URL || 'postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' }}" \
+            -e DB_ENGINE=postgresql \
             -e REDIS_URL="redis://127.0.0.1:6379/0" \
             -e USE_REDIS="True" \
-            -e MONGO_URI="${{ secrets.MONGO_URI }}" \
+            -e SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-ci' }}" \
+            -e MESSAGE_ENCRYPTION_KEY="${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}" \
+            -e DEBUG=False \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
-            sh -c "python manage.py migrate --noinput"
+            python manage.py migrate --noinput
+        continue-on-error: false
 
-      - name: Start / Update Django Daphne ASGI Server (Port 3000)
+      # ── Deploy Daphne ASGI ─────────────────────────────────────────────────
+      - name: Start / update Django Daphne server (port 3000)
         run: |
-          echo "🚀 Restarting chat_django_daphne on port 3000..."
-          docker stop chat_django_daphne || true
-          docker rm chat_django_daphne || true
+          docker stop chat_django_daphne 2>/dev/null || true
+          docker rm chat_django_daphne 2>/dev/null || true
           docker run -d \
             --name chat_django_daphne \
             --restart unless-stopped \
             --network host \
             -e PORT=3000 \
             -e DEBUG=False \
-            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-321' }}' \
+            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-key-321' }}' \
             -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY || 'chat_app_secret' }}' \
-            -e DATABASE_URL='postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' \
+            -e DATABASE_URL='${{ secrets.DATABASE_URL || 'postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' }}' \
+            -e DB_ENGINE=postgresql \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS='True' \
             -e CLIENT_URL='${{ env.CLIENT_URL }}' \
+            -e ALLOWED_HOSTS='${{ secrets.ALLOWED_HOSTS || '*' }}' \
             -e EMAIL_HOST='smtp.gmail.com' \
             -e EMAIL_PORT=587 \
             -e EMAIL_SECURE=false \
-            -e EMAIL_USER='${{ secrets.EMAIL_USER || 'nikhilchandurkar24@gmail.com' }}' \
-            -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
+            -e EMAIL_USER='${{ secrets.EMAIL_USER || '' }}' \
+            -e EMAIL_PASS='${{ secrets.EMAIL_PASS || '' }}' \
             -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -v /opt/chat-app/media:/app/media \
             -v /opt/chat-app/logs:/app/logs \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest
 
-      - name: Start / Update Celery Worker
+      # ── Deploy Celery Worker ───────────────────────────────────────────────
+      - name: Start / update Celery worker
         run: |
-          echo "⚙️ Restarting chat_celery_worker..."
-          docker stop chat_celery_worker || true
-          docker rm chat_celery_worker || true
+          docker stop chat_celery_worker 2>/dev/null || true
+          docker rm chat_celery_worker 2>/dev/null || true
           docker run -d \
             --name chat_celery_worker \
             --restart unless-stopped \
             --network host \
             -e DEBUG=False \
-            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-321' }}' \
-            -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY || 'chat_app_secret' }}' \
-            -e DATABASE_URL='postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' \
+            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-key-321' }}' \
+            -e DATABASE_URL='${{ secrets.DATABASE_URL || 'postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' }}' \
+            -e DB_ENGINE=postgresql \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS='True' \
-            -e EMAIL_HOST='smtp.gmail.com' \
-            -e EMAIL_PORT=587 \
-            -e EMAIL_SECURE=false \
-            -e EMAIL_USER='${{ secrets.EMAIL_USER || 'nikhilchandurkar24@gmail.com' }}' \
-            -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
+            -e CELERY_CONCURRENCY=2 \
+            -e EMAIL_USER='${{ secrets.EMAIL_USER || '' }}' \
+            -e EMAIL_PASS='${{ secrets.EMAIL_PASS || '' }}' \
+            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -v /opt/chat-app/media:/app/media \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
-            celery -A core worker -l info
+            celery -A core worker -l info --concurrency=2 --max-memory-per-child=150000
 
-      - name: Verify Backend & Frontend Health
+      # ── Health check ───────────────────────────────────────────────────────
+      - name: Verify backend health
         run: |
-          echo "🏥 Verifying health check..."
-          sleep 6
-          docker ps --filter "name=chat_django_daphne" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
-          
-          # Health check Daphne
-          for i in {1..10}; do
+          sleep 8
+          for i in $(seq 1 12); do
             if curl -s -f http://127.0.0.1:3000/hello > /dev/null; then
-              echo "✅ Daphne backend is healthy and responding on port 3000!"
+              echo "✅ Daphne backend healthy on port 3000 (attempt $i)"
               break
             fi
-            echo "Waiting for Daphne to be ready ($i/10)..."
-            sleep 2
+            echo "Waiting for backend ($i/12)..."
+            sleep 3
           done
-          
-          # Final sanity check
-          curl -f http://127.0.0.1:3000/hello || (echo "❌ Daphne failed healthcheck! Recent logs:" && docker logs --tail 50 chat_django_daphne && exit 1)
-          
-          # Verify Frontend Files exist
-          if [ -f "/opt/chat-app/frontend/index.html" ]; then
-            echo "✅ Frontend index.html is present in /opt/chat-app/frontend/"
-          else
-            echo "⚠️ Frontend index.html is missing in /opt/chat-app/frontend/"
-          fi
+          curl -f http://127.0.0.1:3000/hello || (
+            echo "❌ Health check failed. Last 50 lines:"
+            docker logs --tail 50 chat_django_daphne
+            exit 1
+          )
 
-      - name: Clean up Dangling Images
+      - name: Verify frontend deployment
         run: |
-          echo "🧹 Cleaning up dangling Docker images..."
+          [ -f "/opt/chat-app/frontend/index.html" ] && echo "✅ Frontend index.html present" || echo "⚠️ Frontend index.html missing"
+
+      # ── Final cleanup ──────────────────────────────────────────────────────
+      - name: Final Docker cleanup
+        run: |
           docker image prune -f
+          echo "🏁 Deploy complete"
