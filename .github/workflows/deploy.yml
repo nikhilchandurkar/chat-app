@@ -324,36 +324,51 @@ jobs:
           done
           echo "✅ Legacy containers removed"
 
-      # ── PostgreSQL ────────────────────────────────────────────────────────
-      - name: Ensure PostgreSQL 16 container is running
+      # ── Remove old PostgreSQL container (switching to MySQL) ─────────────
+      - name: Remove legacy PostgreSQL container
         run: |
-          if ! docker ps --format '{{.Names}}' | grep -q '^chat_postgres$'; then
-            echo "🐘 PostgreSQL not running — starting..."
-            # Remove stopped container if it exists
-            docker rm chat_postgres 2>/dev/null || true
+          for c in chat_postgres; do
+            if docker ps -a --format '{{.Names}}' | grep -q "^${c}$"; then
+              echo "Removing legacy PostgreSQL container: $c"
+              docker stop $c 2>/dev/null || true
+              docker rm $c 2>/dev/null || true
+            fi
+          done
+          echo "✅ Legacy PostgreSQL removed"
+
+      # ── MySQL ──────────────────────────────────────────────────────────────
+      - name: Ensure MySQL 8 container is running
+        run: |
+          if ! docker ps --format '{{.Names}}' | grep -q '^chat_mysql$'; then
+            echo "🐬 MySQL not running — starting..."
+            docker rm chat_mysql 2>/dev/null || true
+            sudo mkdir -p /opt/chat-app/mysql_data
+            sudo chown -R 999:999 /opt/chat-app/mysql_data 2>/dev/null || true
             docker run -d \
-              --name chat_postgres \
+              --name chat_mysql \
               --restart unless-stopped \
-              -e POSTGRES_USER=chat_user \
-              -e POSTGRES_PASSWORD=chat_password \
-              -e POSTGRES_DB=chat_db \
-              -v /opt/chat-app/postgres_data:/var/lib/postgresql/data \
-              postgres:16-alpine
-            # Fix permissions on data dir
-            sudo chown -R 999:999 /opt/chat-app/postgres_data 2>/dev/null || true
-            sleep 8
-            echo "✅ PostgreSQL started"
+              -e MYSQL_DATABASE=chat_db \
+              -e MYSQL_USER=chat_user \
+              -e MYSQL_PASSWORD=chat_password \
+              -e MYSQL_ROOT_PASSWORD=chat_root_password \
+              -v /opt/chat-app/mysql_data:/var/lib/mysql \
+              mysql:8.0 \
+              --character-set-server=utf8mb4 \
+              --collation-server=utf8mb4_unicode_ci \
+              --default-authentication-plugin=mysql_native_password
+            sleep 15
+            echo "✅ MySQL started"
           else
-            echo "✅ PostgreSQL already running ($(docker inspect --format='{{.Id}}' chat_postgres | head -c 12))"
+            echo "✅ MySQL already running"
           fi
-          # Wait until PostgreSQL is actually accepting connections
-          for i in $(seq 1 15); do
-            if docker exec chat_postgres pg_isready -U chat_user -d chat_db -q 2>/dev/null; then
-              echo "✅ PostgreSQL accepting connections"
+          # Wait until MySQL is accepting connections
+          for i in $(seq 1 20); do
+            if docker exec chat_mysql mysqladmin ping -u chat_user -pchat_password --silent 2>/dev/null; then
+              echo "✅ MySQL accepting connections"
               break
             fi
-            echo "Waiting for PostgreSQL ($i/15)..."
-            sleep 2
+            echo "Waiting for MySQL ($i/20)..."
+            sleep 3
           done
 
       # ── Redis ─────────────────────────────────────────────────────────────
@@ -377,8 +392,12 @@ jobs:
         run: |
           docker run --rm \
             --network host \
-            -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
-            -e DB_ENGINE=postgresql \
+            -e DB_ENGINE=mysql \
+            -e MYSQL_DATABASE=chat_db \
+            -e MYSQL_USER=chat_user \
+            -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD }}' \
+            -e MYSQL_HOST=127.0.0.1 \
+            -e MYSQL_PORT=3306 \
             -e REDIS_URL="redis://127.0.0.1:6379/0" \
             -e USE_REDIS="True" \
             -e SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
@@ -401,8 +420,12 @@ jobs:
             -e DEBUG=False \
             -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY }}' \
             -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY }}' \
-            -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
-            -e DB_ENGINE=postgresql \
+            -e DB_ENGINE=mysql \
+            -e MYSQL_DATABASE=chat_db \
+            -e MYSQL_USER=chat_user \
+            -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD }}' \
+            -e MYSQL_HOST=127.0.0.1 \
+            -e MYSQL_PORT=3306 \
             -e DB_CONN_MAX_AGE=600 \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS='True' \
@@ -429,8 +452,12 @@ jobs:
             --network host \
             -e DEBUG=False \
             -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY }}' \
-            -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
-            -e DB_ENGINE=postgresql \
+            -e DB_ENGINE=mysql \
+            -e MYSQL_DATABASE=chat_db \
+            -e MYSQL_USER=chat_user \
+            -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD }}' \
+            -e MYSQL_HOST=127.0.0.1 \
+            -e MYSQL_PORT=3306 \
             -e DB_CONN_MAX_AGE=600 \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS='True' \

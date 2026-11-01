@@ -107,7 +107,7 @@ ASGI_APPLICATION = "core.asgi.application"
 #   CONN_HEALTH_CHECKS=True → Django pings before reuse, drops stale connections
 #   automatically (prevents "server closed the connection unexpectedly")
 
-DB_ENGINE = os.environ.get("DB_ENGINE", "postgresql").lower().strip()
+DB_ENGINE = os.environ.get("DB_ENGINE", "mysql").lower().strip()
 
 # 600s = 10 min. Safe default for a small EC2. Reduce if you hit
 # "too many connections" errors (lower = connections freed faster).
