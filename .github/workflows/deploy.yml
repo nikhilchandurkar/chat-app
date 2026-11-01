@@ -168,7 +168,7 @@ jobs:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
     needs: [backend_quality]
-    if: ${{ secrets.SONAR_TOKEN != '' }}
+    if: ${{ vars.SONAR_ENABLED == 'true' }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
