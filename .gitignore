@@ -32,3 +32,7 @@ django_server/.env.production
 # Claude Red
 Claude-Red/
 Claude-Red
+
+# Test coverage
+**/.coverage
+**/coverage.xml

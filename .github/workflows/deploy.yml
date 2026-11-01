@@ -13,8 +13,8 @@ env:
   DOCKER_IMAGE_DJANGO: nikhil2523/chat-app-django
   DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME || 'nikhil2523' }}
   DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-  CLIENT_URL: ${{ secrets.CLIENT_URL || 'https://nikhil-chats.chickenkiller.com' }}
-  VITE_SERVER: ${{ secrets.VITE_SERVER || 'https://nikhil-chats.chickenkiller.com' }}
+  CLIENT_URL: ${{ secrets.CLIENT_URL || 'http://16.113.127.132' }}
+  VITE_SERVER: ${{ secrets.VITE_SERVER || '' }}
 
 jobs:
   # ═══════════════════════════════════════════════════════════════════════════
@@ -395,13 +395,13 @@ jobs:
             -e DB_ENGINE=mysql \
             -e MYSQL_DATABASE=chat_db \
             -e MYSQL_USER=chat_user \
-            -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD }}' \
+            -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD || 'chat_password' }}' \
             -e MYSQL_HOST=127.0.0.1 \
             -e MYSQL_PORT=3306 \
             -e REDIS_URL="redis://127.0.0.1:6379/0" \
             -e USE_REDIS="True" \
-            -e SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
-            -e MESSAGE_ENCRYPTION_KEY="${{ secrets.MESSAGE_ENCRYPTION_KEY }}" \
+            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-321' }}' \
+            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -e DEBUG=False \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
             python manage.py migrate --noinput
@@ -418,25 +418,25 @@ jobs:
             --network host \
             -e PORT=3000 \
             -e DEBUG=False \
-            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY }}' \
-            -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY }}' \
+            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-321' }}' \
+            -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY || 'chat_app_secret' }}' \
             -e DB_ENGINE=mysql \
             -e MYSQL_DATABASE=chat_db \
             -e MYSQL_USER=chat_user \
-            -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD }}' \
+            -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD || 'chat_password' }}' \
             -e MYSQL_HOST=127.0.0.1 \
             -e MYSQL_PORT=3306 \
             -e DB_CONN_MAX_AGE=600 \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS='True' \
             -e CLIENT_URL='${{ env.CLIENT_URL }}' \
-            -e ALLOWED_HOSTS='${{ secrets.ALLOWED_HOSTS }}' \
+            -e ALLOWED_HOSTS='${{ secrets.ALLOWED_HOSTS || '*' }}' \
             -e EMAIL_HOST='smtp.gmail.com' \
             -e EMAIL_PORT=587 \
             -e EMAIL_SECURE=false \
             -e EMAIL_USER='${{ secrets.EMAIL_USER }}' \
             -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
-            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY }}' \
+            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -v /opt/chat-app/media:/app/media \
             -v /opt/chat-app/logs:/app/logs \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest
@@ -451,11 +451,11 @@ jobs:
             --restart unless-stopped \
             --network host \
             -e DEBUG=False \
-            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY }}' \
+            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-321' }}' \
             -e DB_ENGINE=mysql \
             -e MYSQL_DATABASE=chat_db \
             -e MYSQL_USER=chat_user \
-            -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD }}' \
+            -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD || 'chat_password' }}' \
             -e MYSQL_HOST=127.0.0.1 \
             -e MYSQL_PORT=3306 \
             -e DB_CONN_MAX_AGE=600 \
@@ -464,7 +464,7 @@ jobs:
             -e CELERY_CONCURRENCY=2 \
             -e EMAIL_USER='${{ secrets.EMAIL_USER }}' \
             -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
-            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY }}' \
+            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -v /opt/chat-app/media:/app/media \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
             celery -A core worker -l info --concurrency=2 --max-memory-per-child=150000

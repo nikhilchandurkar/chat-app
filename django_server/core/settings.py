@@ -233,7 +233,25 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:5173",
     "http://127.0.0.1:3000",
+    "http://16.113.127.132",
+    "https://16.113.127.132",
+    "https://nikhil-chats.chickenkiller.com",
 ]
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://16.113.127.132",
+    "https://16.113.127.132",
+    "https://nikhil-chats.chickenkiller.com",
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:3000",
+]
+if _client_url and _client_url not in CSRF_TRUSTED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS.append(_client_url)
+for _origin in _extra_origins.split():
+    if _origin not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(_origin)
 if _client_url and _client_url not in CORS_ALLOWED_ORIGINS:
     CORS_ALLOWED_ORIGINS.append(_client_url)
 
@@ -344,8 +362,8 @@ if not DEBUG:
     SECURE_HSTS_PRELOAD = True
     # Only enable SSL redirects if behind HTTPS
     SECURE_SSL_REDIRECT = os.environ.get("FORCE_SSL_REDIRECT", "False").lower() == "true"
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+    SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
+    CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 
