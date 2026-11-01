@@ -228,6 +228,8 @@ CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOW_CREDENTIALS = True
 
 _client_url = os.environ.get("CLIENT_URL", "http://localhost:5173")
+_extra_origins = os.environ.get("EXTRA_CORS_ORIGINS", "")
+
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://localhost:3000",
@@ -237,6 +239,11 @@ CORS_ALLOWED_ORIGINS = [
     "https://16.113.127.132",
     "https://nikhil-chats.chickenkiller.com",
 ]
+if _client_url and _client_url not in CORS_ALLOWED_ORIGINS:
+    CORS_ALLOWED_ORIGINS.append(_client_url)
+for _origin in _extra_origins.split():
+    if _origin not in CORS_ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(_origin)
 
 CSRF_TRUSTED_ORIGINS = [
     "http://16.113.127.132",
@@ -252,14 +259,6 @@ if _client_url and _client_url not in CSRF_TRUSTED_ORIGINS:
 for _origin in _extra_origins.split():
     if _origin not in CSRF_TRUSTED_ORIGINS:
         CSRF_TRUSTED_ORIGINS.append(_origin)
-if _client_url and _client_url not in CORS_ALLOWED_ORIGINS:
-    CORS_ALLOWED_ORIGINS.append(_client_url)
-
-# Allow extra CORS origins from env (space-separated)
-_extra_origins = os.environ.get("EXTRA_CORS_ORIGINS", "")
-for _origin in _extra_origins.split():
-    if _origin not in CORS_ALLOWED_ORIGINS:
-        CORS_ALLOWED_ORIGINS.append(_origin)
 
 # ─── Django REST Framework ────────────────────────────────────────────────────
 
