@@ -38,7 +38,8 @@ const Login = () => {
         { username: username.value, password: password.value },
         { withCredentials: true, headers: { "Content-Type": "application/json" } }
       );
-      dispatch(userExists(data.user));
+      // Pass full response so reducer can extract both user + token
+      dispatch(userExists(data));
       toast.success(data.message, { id: toastId });
     } catch (error) {
       toast.error(error?.response?.data?.message || "Something Went Wrong", { id: toastId });
@@ -66,7 +67,7 @@ const Login = () => {
         formData,
         { withCredentials: true, headers: { "Content-Type": "multipart/form-data" } }
       );
-      dispatch(userExists(data.user));
+      dispatch(userExists(data));
       toast.success(data.message, { id: toastId });
     } catch (error) {
       toast.error(error?.response?.data?.message || "Something Went Wrong", { id: toastId });
