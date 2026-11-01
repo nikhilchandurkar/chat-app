@@ -408,6 +408,14 @@ class GetChatMessagesView(APIView):
 
     def get(self, request, id):
         chat = get_object_or_404(Chat, id=id)
+
+        # Security: only members can read messages
+        if not chat.members.filter(id=request.user.id).exists():
+            return Response(
+                {"success": False, "message": "You are not a member of this chat"},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         from apps.messages_app.models import Message
 
         messages_qs = Message.objects.filter(chat=chat).select_related("sender").order_by("-created_at")

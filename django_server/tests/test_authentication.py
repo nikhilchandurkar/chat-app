@@ -1,24 +1,35 @@
 """
 Authentication tests: registration, login, JWT, OTP, password management.
+
+URL map (from urls.py):
+  POST /api/v1/user/newuser          register
+  POST /api/v1/user/login            login
+  POST /api/v1/user/logout           logout
+  GET  /api/v1/user/me               profile
+  PUT  /api/v1/user/password         change password
+  POST /api/v1/user/forgot-password  forgot password
+  POST /api/v1/user/reset-password   reset password
+  GET  /api/v1/user/search           search users
+  PUT  /api/v1/user/sendrequest      send friend request
+  PUT  /api/v1/user/acceptrequest    accept friend request
+  GET  /api/v1/user/notifications    pending requests
 """
 
 import pytest
-from django.urls import reverse
-
 
 pytestmark = [pytest.mark.auth, pytest.mark.django_db]
 
 
-# ──────────────────────────── Registration ────────────────────────────────────
+# ─── Registration ─────────────────────────────────────────────────────────────
 
 class TestRegistration:
-    url = "/api/v1/auth/new"
+    url = "/api/v1/user/newuser"
 
     def test_register_success(self, client):
         resp = client.post(self.url, {
             "name": "Alice",
-            "username": "alice",
-            "email": "alice@example.com",
+            "username": "alice_reg",
+            "email": "alice_reg@example.com",
             "password": "SecurePass1!",
         }, content_type="application/json")
         assert resp.status_code == 201
@@ -40,7 +51,7 @@ class TestRegistration:
     def test_register_duplicate_email(self, client, user):
         resp = client.post(self.url, {
             "name": "Dup2",
-            "username": "dup2",
+            "username": "dup2_reg",
             "email": user.email,
             "password": "SecurePass1!",
         }, content_type="application/json")
@@ -49,23 +60,21 @@ class TestRegistration:
     def test_register_short_password(self, client):
         resp = client.post(self.url, {
             "name": "Bob",
-            "username": "bob_short",
-            "email": "bob@example.com",
+            "username": "bob_short_reg",
+            "email": "bob_short@example.com",
             "password": "abc",
         }, content_type="application/json")
         assert resp.status_code == 400
 
     def test_register_missing_fields(self, client):
-        resp = client.post(self.url, {
-            "name": "NoPass",
-        }, content_type="application/json")
+        resp = client.post(self.url, {"name": "NoPass"}, content_type="application/json")
         assert resp.status_code == 400
 
 
-# ──────────────────────────── Login ──────────────────────────────────────────
+# ─── Login ────────────────────────────────────────────────────────────────────
 
 class TestLogin:
-    url = "/api/v1/auth/login"
+    url = "/api/v1/user/login"
 
     def test_login_by_username(self, client, user):
         resp = client.post(self.url, {
@@ -93,7 +102,7 @@ class TestLogin:
 
     def test_login_nonexistent_user(self, client):
         resp = client.post(self.url, {
-            "username": "nobody",
+            "username": "nobody_at_all",
             "password": "Whatever1!",
         }, content_type="application/json")
         assert resp.status_code == 401
@@ -103,7 +112,7 @@ class TestLogin:
         assert resp.status_code == 400
 
 
-# ──────────────────────────── My Profile ─────────────────────────────────────
+# ─── My Profile ───────────────────────────────────────────────────────────────
 
 class TestMyProfile:
     url = "/api/v1/user/me"
@@ -120,21 +129,21 @@ class TestMyProfile:
         assert resp.status_code == 401
 
 
-# ──────────────────────────── Logout ─────────────────────────────────────────
+# ─── Logout ───────────────────────────────────────────────────────────────────
 
 class TestLogout:
-    url = "/api/v1/auth/logout"
+    url = "/api/v1/user/logout"
 
-    def test_logout_clears_cookie(self, auth_client):
+    def test_logout_returns_200(self, auth_client):
         resp = auth_client.post(self.url)
         assert resp.status_code == 200
-        # Cookie should be cleared (max-age=0 or deleted)
+        assert resp.json()["success"] is True
 
 
-# ──────────────────────────── Change Password ────────────────────────────────
+# ─── Change Password ──────────────────────────────────────────────────────────
 
 class TestChangePassword:
-    url = "/api/v1/user/change-password"
+    url = "/api/v1/user/password"
 
     def test_change_password_success(self, auth_client):
         resp = auth_client.put(self.url, {
@@ -159,29 +168,25 @@ class TestChangePassword:
         assert resp.status_code == 400
 
 
-# ──────────────────────────── Forgot / Reset Password ────────────────────────
+# ─── Forgot / Reset Password ──────────────────────────────────────────────────
 
 class TestForgotPassword:
-    url = "/api/v1/auth/forgot-password"
+    url = "/api/v1/user/forgot-password"
 
     def test_forgot_password_existing_email(self, client, user):
-        resp = client.post(self.url, {
-            "email": user.email,
-        }, content_type="application/json")
+        resp = client.post(self.url, {"email": user.email}, content_type="application/json")
         # Always 200 to prevent email enumeration
         assert resp.status_code == 200
         assert resp.json()["success"] is True
 
     def test_forgot_password_nonexistent_email(self, client):
-        resp = client.post(self.url, {
-            "email": "nobody@example.com",
-        }, content_type="application/json")
+        resp = client.post(self.url, {"email": "nobody@example.com"}, content_type="application/json")
         # Must NOT reveal whether account exists
         assert resp.status_code == 200
         assert resp.json()["success"] is True
 
 
-# ──────────────────────────── Search Users ───────────────────────────────────
+# ─── Search Users ─────────────────────────────────────────────────────────────
 
 class TestSearchUsers:
     url = "/api/v1/user/search"
@@ -203,11 +208,11 @@ class TestSearchUsers:
         assert resp.status_code == 401
 
 
-# ──────────────────────────── Friend Requests ────────────────────────────────
+# ─── Friend Requests ──────────────────────────────────────────────────────────
 
 class TestFriendRequests:
-    send_url = "/api/v1/user/send-request"
-    accept_url = "/api/v1/user/accept-request"
+    send_url = "/api/v1/user/sendrequest"
+    accept_url = "/api/v1/user/acceptrequest"
     notifications_url = "/api/v1/user/notifications"
 
     def test_send_friend_request(self, auth_client, user2):
@@ -229,7 +234,6 @@ class TestFriendRequests:
         assert resp.status_code == 400
 
     def test_get_notifications(self, auth_client, user, user2):
-        # user2 sends a request to user
         from apps.authentication.models import Request
         req = Request.objects.create(sender=user2, receiver=user)
         resp = auth_client.get(self.notifications_url)
