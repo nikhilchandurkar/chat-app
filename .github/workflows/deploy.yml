@@ -324,6 +324,38 @@ jobs:
           done
           echo "✅ Legacy containers removed"
 
+      # ── PostgreSQL ────────────────────────────────────────────────────────
+      - name: Ensure PostgreSQL 16 container is running
+        run: |
+          if ! docker ps --format '{{.Names}}' | grep -q '^chat_postgres$'; then
+            echo "🐘 PostgreSQL not running — starting..."
+            # Remove stopped container if it exists
+            docker rm chat_postgres 2>/dev/null || true
+            docker run -d \
+              --name chat_postgres \
+              --restart unless-stopped \
+              -e POSTGRES_USER=chat_user \
+              -e POSTGRES_PASSWORD=chat_password \
+              -e POSTGRES_DB=chat_db \
+              -v /opt/chat-app/postgres_data:/var/lib/postgresql/data \
+              postgres:16-alpine
+            # Fix permissions on data dir
+            sudo chown -R 999:999 /opt/chat-app/postgres_data 2>/dev/null || true
+            sleep 8
+            echo "✅ PostgreSQL started"
+          else
+            echo "✅ PostgreSQL already running ($(docker inspect --format='{{.Id}}' chat_postgres | head -c 12))"
+          fi
+          # Wait until PostgreSQL is actually accepting connections
+          for i in $(seq 1 15); do
+            if docker exec chat_postgres pg_isready -U chat_user -d chat_db -q 2>/dev/null; then
+              echo "✅ PostgreSQL accepting connections"
+              break
+            fi
+            echo "Waiting for PostgreSQL ($i/15)..."
+            sleep 2
+          done
+
       # ── Redis ─────────────────────────────────────────────────────────────
       - name: Ensure Redis 7 container is running
         run: |
