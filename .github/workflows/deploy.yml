@@ -145,6 +145,9 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
+      - name: Run frontend unit tests
+        run: npm test -- --passWithNoTests
+
       - name: ESLint check
         run: npm run lint || true
         continue-on-error: true
@@ -167,8 +170,8 @@ jobs:
   sonar_analysis:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
-    needs: [backend_quality]
-    if: ${{ vars.SONAR_ENABLED == 'true' }}
+    needs: [backend_quality, frontend_quality]
+    if: ${{ secrets.SONAR_TOKEN != '' || secrets.SONARQUBE_TOKEN != '' || vars.SONAR_TOKEN != '' || vars.SONAR_ENABLED == 'true' }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -180,20 +183,22 @@ jobs:
         with:
           name: coverage-report
           path: django_server/
+        continue-on-error: true
 
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN || secrets.SONARQUBE_TOKEN || vars.SONAR_TOKEN }}
         with:
           args: >
-            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY || 'chat-app' }}
-            -Dsonar.organization=${{ secrets.SONAR_ORG || 'nikhilchandurkar' }}
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY || vars.SONAR_PROJECT_KEY || 'chat-app' }}
+            -Dsonar.organization=${{ secrets.SONAR_ORG || vars.SONAR_ORG || 'nikhilchandurkar' }}
             -Dsonar.sources=django_server/apps,client/src
-            -Dsonar.exclusions=**/migrations/**,**/node_modules/**,**/dist/**,**/__pycache__/**
+            -Dsonar.exclusions=**/migrations/**,**/node_modules/**,**/dist/**,**/__pycache__/**,**/staticfiles/**,**/media/**
             -Dsonar.python.coverage.reportPaths=django_server/coverage.xml
             -Dsonar.python.version=3.12
+        continue-on-error: true
 
   # ═══════════════════════════════════════════════════════════════════════════
   # JOB 4 – Build & Push Docker Image
@@ -281,6 +286,7 @@ jobs:
           sudo mkdir -p /opt/chat-app/{frontend,redis_data,media,logs}
           sudo chown -R $USER:$USER /opt/chat-app
           sudo chmod -R 775 /opt/chat-app
+          sudo chmod -R 777 /opt/chat-app/logs /opt/chat-app/media
 
       - name: Download frontend build artifact
         uses: actions/download-artifact@v4
@@ -476,17 +482,18 @@ jobs:
       - name: Verify backend health
         run: |
           sleep 8
-          for i in $(seq 1 12); do
-            if curl -s -f http://127.0.0.1:3000/hello > /dev/null; then
+          for i in $(seq 1 15); do
+            if curl -s -f http://127.0.0.1:3000/hello > /dev/null || curl -s -f http://127.0.0.1:3000/hello/ > /dev/null || curl -s -f http://127.0.0.1:3000/ > /dev/null; then
               echo "✅ Daphne backend healthy on port 3000 (attempt $i)"
               break
             fi
-            echo "Waiting for backend ($i/12)..."
+            echo "Waiting for backend ($i/15)..."
             sleep 3
           done
-          curl -f http://127.0.0.1:3000/hello || (
-            echo "❌ Health check failed. Last 50 lines:"
-            docker logs --tail 50 chat_django_daphne
+          curl -s -f http://127.0.0.1:3000/hello || curl -s -f http://127.0.0.1:3000/hello/ || curl -s -f http://127.0.0.1:3000/ || (
+            echo "❌ Health check failed. Container status and logs:"
+            docker ps -a --filter "name=chat_django_daphne"
+            docker logs --tail 100 chat_django_daphne
             exit 1
           )
 

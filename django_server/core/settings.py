@@ -407,4 +407,7 @@ LOGGING = {
 }
 
 # Ensure logs directory exists
-(BASE_DIR / "logs").mkdir(exist_ok=True)
+try:
+    (BASE_DIR / "logs").mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass

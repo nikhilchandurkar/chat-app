@@ -1,38 +1,56 @@
+# Dependencies
+**/node_modules/
 
-**/node_modules
+# Environment Variables & Secrets (CRITICAL SECURITY)
 **/.env
-.vercel
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.keystore
+*.jks
+id_rsa*
+id_ed25519*
 chat_app.pem
+
+# Deployment & Build Archives
 chat_app_latest.tar
 frontend_dist.zip
-ls
-client/.env.development
-client/.env.production
-server/.env.development
-server/.env.production
-server/media/1782784044959-283192692-pexels-optical-chemist-340351297-31332939 (1).jpg
-server/media/1782785050021-123401688-pexels-optical-chemist-340351297-31332939 (1).jpg
-deploy.ps1
 server_code.zip
-server/logs/2026-07-07.log
+deploy.ps1
+.vercel
 
-# Python & Django Server
+# Databases & Local Runtime Storage
+**/db.sqlite3
+**/db.sqlite3-journal
+**/mysql_data/
+**/postgres_data/
+**/redis_data/
+
+# Python & Django
 **/__pycache__/
 *.py[cod]
 .venv/
 venv/
-**/db.sqlite3
-**/db.sqlite3-journal
+env/
 **/staticfiles/
-django_server/media/
-django_server/.env
-django_server/.env.production
 
+# Media Uploads & Logs
+**/media/*
+!**/media/.gitkeep
+*.log
+**/logs/*
+!**/logs/.gitkeep
 
 # Claude Red
 Claude-Red/
 Claude-Red
 
-# Test coverage
+# Test Coverage & Tooling
 **/.coverage
 **/coverage.xml
+**/coverage/
+.pytest_cache/

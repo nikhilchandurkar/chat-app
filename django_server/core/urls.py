@@ -3,19 +3,21 @@ from django.urls import path, include
 from django.conf import settings
 from django.conf.urls.static import static
 from django.http import JsonResponse
-
-def root_view(request):
-    return JsonResponse("hello its chat app API", safe=False)
-
-def hello_view(request):
-    return JsonResponse("hello from nikki", safe=False)
-
 from django.views.static import serve
 from django.urls import re_path
+
+def root_view(request):
+    return JsonResponse({"status": "ok", "message": "hello its chat app API"}, safe=False)
+
+def hello_view(request):
+    return JsonResponse({"status": "ok", "message": "hello from nikki"}, safe=False)
 
 urlpatterns = [
     path('', root_view, name='root'),
     path('hello', hello_view, name='hello'),
+    path('hello/', hello_view, name='hello_slash'),
+    path('health', root_view, name='health'),
+    path('health/', root_view, name='health_slash'),
     path('admin/', admin.site.urls),
     path('api/v1/auth/', include('apps.authentication.urls_auth')),
     path('api/v1/user/', include('apps.authentication.urls')),
