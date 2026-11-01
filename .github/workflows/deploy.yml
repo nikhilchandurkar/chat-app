@@ -345,12 +345,12 @@ jobs:
         run: |
           docker run --rm \
             --network host \
-            -e DATABASE_URL="${{ secrets.DATABASE_URL || 'postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' }}" \
+            -e DATABASE_URL="${{ secrets.DATABASE_URL }}" \
             -e DB_ENGINE=postgresql \
             -e REDIS_URL="redis://127.0.0.1:6379/0" \
             -e USE_REDIS="True" \
-            -e SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-ci' }}" \
-            -e MESSAGE_ENCRYPTION_KEY="${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}" \
+            -e SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
+            -e MESSAGE_ENCRYPTION_KEY="${{ secrets.MESSAGE_ENCRYPTION_KEY }}" \
             -e DEBUG=False \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
             python manage.py migrate --noinput
@@ -367,20 +367,21 @@ jobs:
             --network host \
             -e PORT=3000 \
             -e DEBUG=False \
-            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-key-321' }}' \
-            -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY || 'chat_app_secret' }}' \
-            -e DATABASE_URL='${{ secrets.DATABASE_URL || 'postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' }}' \
+            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY }}' \
+            -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY }}' \
+            -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
             -e DB_ENGINE=postgresql \
+            -e DB_CONN_MAX_AGE=600 \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS='True' \
             -e CLIENT_URL='${{ env.CLIENT_URL }}' \
-            -e ALLOWED_HOSTS='${{ secrets.ALLOWED_HOSTS || '*' }}' \
+            -e ALLOWED_HOSTS='${{ secrets.ALLOWED_HOSTS }}' \
             -e EMAIL_HOST='smtp.gmail.com' \
             -e EMAIL_PORT=587 \
             -e EMAIL_SECURE=false \
-            -e EMAIL_USER='${{ secrets.EMAIL_USER || '' }}' \
-            -e EMAIL_PASS='${{ secrets.EMAIL_PASS || '' }}' \
-            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
+            -e EMAIL_USER='${{ secrets.EMAIL_USER }}' \
+            -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
+            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY }}' \
             -v /opt/chat-app/media:/app/media \
             -v /opt/chat-app/logs:/app/logs \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest
@@ -395,15 +396,16 @@ jobs:
             --restart unless-stopped \
             --network host \
             -e DEBUG=False \
-            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-key-321' }}' \
-            -e DATABASE_URL='${{ secrets.DATABASE_URL || 'postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db' }}' \
+            -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY }}' \
+            -e DATABASE_URL='${{ secrets.DATABASE_URL }}' \
             -e DB_ENGINE=postgresql \
+            -e DB_CONN_MAX_AGE=600 \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS='True' \
             -e CELERY_CONCURRENCY=2 \
-            -e EMAIL_USER='${{ secrets.EMAIL_USER || '' }}' \
-            -e EMAIL_PASS='${{ secrets.EMAIL_PASS || '' }}' \
-            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
+            -e EMAIL_USER='${{ secrets.EMAIL_USER }}' \
+            -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
+            -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY }}' \
             -v /opt/chat-app/media:/app/media \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
             celery -A core worker -l info --concurrency=2 --max-memory-per-child=150000

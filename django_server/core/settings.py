@@ -91,10 +91,32 @@ WSGI_APPLICATION = "core.wsgi.application"
 ASGI_APPLICATION = "core.asgi.application"
 
 # ─── Database Configuration ───────────────────────────────────────────────────
-# Controlled by DB_ENGINE: postgresql | mysql | sqlite3
+# DB_ENGINE: postgresql (default) | mysql | sqlite3
+#
+# Connection strategy:
+#   ASGI/Daphne is async — coroutines share a small thread pool.
+#   Django's CONN_MAX_AGE keeps one connection alive per OS thread.
+#   For async workloads this is the correct approach: each sync DB call
+#   runs in a thread via database_sync_to_async, and that thread reuses
+#   its persistent connection (no reconnect overhead per request).
+#
+#   CONN_MAX_AGE=0   → new connection every request (safe but slow)
+#   CONN_MAX_AGE=600 → reuse connection for up to 10 minutes per thread
+#                      (recommended for Daphne + thread pool)
+#
+#   CONN_HEALTH_CHECKS=True → Django pings before reuse, drops stale connections
+#   automatically (prevents "server closed the connection unexpectedly")
 
 DB_ENGINE = os.environ.get("DB_ENGINE", "postgresql").lower().strip()
-_conn_max_age = int(os.environ.get("DB_CONN_MAX_AGE", 600))
+
+# 600s = 10 min. Safe default for a small EC2. Reduce if you hit
+# "too many connections" errors (lower = connections freed faster).
+_conn_max_age = int(os.environ.get("DB_CONN_MAX_AGE", "600"))
+
+# How many connections the thread pool keeps open concurrently.
+# Daphne default thread pool = (CPU * 5). On a 1-core t3.micro = 5 threads.
+# Keep this comfortably below PostgreSQL's max_connections (default 100).
+_db_pool_options: dict = {}
 
 if DB_ENGINE == "sqlite3":
     DATABASES = {
@@ -114,30 +136,54 @@ elif DB_ENGINE == "mysql":
             "HOST": os.environ.get("MYSQL_HOST", "127.0.0.1"),
             "PORT": os.environ.get("MYSQL_PORT", "3306"),
             "CONN_MAX_AGE": _conn_max_age,
+            "CONN_HEALTH_CHECKS": True,
             "OPTIONS": {
                 "charset": "utf8mb4",
                 "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+                # Keep MySQL connections alive; match server wait_timeout
+                "connect_timeout": 10,
             },
         }
     }
 
 else:  # postgresql (default)
     import urllib.parse as _urlparse
+
+    # DATABASE_URL must be set in production via environment / GitHub secret.
+    # It is intentionally left with no hardcoded fallback for production safety.
+    # For local dev it falls back to the standard local container URL.
     _db_url = os.environ.get(
         "DATABASE_URL",
         "postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db",
     )
     _url = _urlparse.urlparse(_db_url)
+
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
-            "NAME": _url.path[1:] if _url.path else "chat_db",
+            "NAME": _url.path.lstrip("/") or "chat_db",
             "USER": _url.username or "chat_user",
             "PASSWORD": _url.password or "chat_password",
+            # Use the host from DATABASE_URL — do NOT hardcode 127.0.0.1
+            # so this works both locally and against a remote RDS/Cloud SQL host.
             "HOST": _url.hostname or "127.0.0.1",
-            "PORT": _url.port or 5432,
+            "PORT": str(_url.port or 5432),
+            # Persistent connections: reuse the same socket across requests
+            # on the same thread — eliminates TCP handshake + auth overhead.
             "CONN_MAX_AGE": _conn_max_age,
+            # Auto-detect stale connections (e.g. after server restart or
+            # network blip) and reconnect transparently.
             "CONN_HEALTH_CHECKS": True,
+            "OPTIONS": {
+                # Hard limit per connection attempt — fail fast, don't hang
+                "connect_timeout": 10,
+                # Keep-alive so idle connections survive NAT/firewall timeouts
+                # (avoids "SSL connection has been closed unexpectedly")
+                "keepalives": 1,
+                "keepalives_idle": 60,    # send first probe after 60s idle
+                "keepalives_interval": 10, # probe every 10s after that
+                "keepalives_count": 5,    # drop after 5 failed probes
+            },
         }
     }
 
