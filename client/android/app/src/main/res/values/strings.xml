@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Nikhil Chat</string>
+    <string name="title_activity_main">Nikhil Chat</string>
+    <string name="package_name">com.nikhil.chatapp</string>
+    <string name="custom_url_scheme">com.nikhil.chatapp</string>
+</resources>

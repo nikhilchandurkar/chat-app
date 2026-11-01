@@ -12,9 +12,16 @@
     "test": "vitest --run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "android:init": "npm run build:ci && npx cap add android",
+    "android:sync": "npm run build:ci && npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:run": "npm run build:ci && npx cap sync android && npx cap run android",
+    "android:apk": "npm run build:ci && npx cap sync android && cd android && gradlew assembleDebug"
   },
   "dependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/icons-material": "^5.18.0",
@@ -35,6 +42,7 @@
     "react-router-dom": "^6.30.4"
   },
   "devDependencies": {
+    "@capacitor/cli": "^6.2.0",
     "@playwright/test": "^1.49.1",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
