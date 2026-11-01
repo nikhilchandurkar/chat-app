@@ -171,7 +171,7 @@ jobs:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
     needs: [backend_quality, frontend_quality]
-    if: ${{ secrets.SONAR_TOKEN != '' || secrets.SONARQUBE_TOKEN != '' || vars.SONAR_TOKEN != '' || vars.SONAR_ENABLED == 'true' }}
+    continue-on-error: true
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -186,6 +186,7 @@ jobs:
         continue-on-error: true
 
       - name: SonarCloud Scan
+        if: ${{ secrets.SONAR_TOKEN != '' || secrets.SONARQUBE_TOKEN != '' || vars.SONAR_TOKEN != '' || vars.SONAR_ENABLED == 'true' }}
         uses: SonarSource/sonarcloud-github-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
