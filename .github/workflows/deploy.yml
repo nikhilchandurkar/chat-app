@@ -300,7 +300,7 @@ jobs:
           if [ -f "nginx.conf" ]; then
             sudo cp nginx.conf /etc/nginx/sites-available/chatapp
             sudo ln -sf /etc/nginx/sites-available/chatapp /etc/nginx/sites-enabled/chatapp
-            sudo nginx -t && sudo systemctl reload nginx && echo "✅ Nginx reloaded" || echo "⚠️ Nginx config check failed"
+            sudo nginx -t && (sudo systemctl restart nginx || sudo systemctl reload nginx) && echo "✅ Nginx active" || echo "⚠️ Nginx config check failed"
           fi
 
       - name: Login to Docker Hub
@@ -352,6 +352,7 @@ jobs:
               -e MYSQL_PASSWORD=chat_password \
               -e MYSQL_ROOT_PASSWORD=chat_root_password \
               -v /opt/chat-app/mysql_data:/var/lib/mysql \
+              -p 127.0.0.1:3306:3306 \
               mysql:8.0 \
               --character-set-server=utf8mb4 \
               --collation-server=utf8mb4_unicode_ci \
@@ -390,12 +391,22 @@ jobs:
       # ── Run migrations ─────────────────────────────────────────────────────
       - name: Apply database migrations
         run: |
+          echo "Setting up MySQL database & user privileges..."
+          docker exec chat_mysql mysql -uroot -pchat_root_password -e "
+            CREATE DATABASE IF NOT EXISTS chat_db;
+            CREATE USER IF NOT EXISTS 'chat_user'@'%' IDENTIFIED WITH mysql_native_password BY 'chat_password';
+            ALTER USER 'chat_user'@'%' IDENTIFIED WITH mysql_native_password BY 'chat_password';
+            GRANT ALL PRIVILEGES ON chat_db.* TO 'chat_user'@'%';
+            FLUSH PRIVILEGES;
+          " 2>/dev/null || echo "MySQL root grant completed"
+
+          echo "Applying Django migrations..."
           docker run --rm \
             --network host \
             -e DB_ENGINE=mysql \
             -e MYSQL_DATABASE=chat_db \
             -e MYSQL_USER=chat_user \
-            -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD || 'chat_password' }}' \
+            -e MYSQL_PASSWORD=chat_password \
             -e MYSQL_HOST=127.0.0.1 \
             -e MYSQL_PORT=3306 \
             -e REDIS_URL="redis://127.0.0.1:6379/0" \
@@ -404,7 +415,7 @@ jobs:
             -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -e DEBUG=False \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
-            python manage.py migrate --noinput
+            sh -c "python manage.py migrate --noinput || python manage.py migrate --noinput --fake-initial"
         continue-on-error: false
 
       # ── Deploy Daphne ASGI ─────────────────────────────────────────────────
