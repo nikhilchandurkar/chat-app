@@ -7,10 +7,15 @@ from django.views.static import serve
 from django.urls import re_path
 
 def root_view(request):
+    return JsonResponse("hello its chat app API", safe=False)
     return JsonResponse({"status": "ok", "message": "hello its chat app API"}, safe=False)
 
 def hello_view(request):
+    return JsonResponse("hello from nikki", safe=False)
     return JsonResponse({"status": "ok", "message": "hello from nikki"}, safe=False)
+
+from django.views.static import serve
+from django.urls import re_path
 
 urlpatterns = [
     path('', root_view, name='root'),

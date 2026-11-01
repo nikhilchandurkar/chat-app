@@ -10,3 +10,4 @@ describe("Frontend configuration", () => {
     expect(server.endsWith("/")).toBe(false);
   });
 });
+
