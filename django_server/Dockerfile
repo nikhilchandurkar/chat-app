@@ -16,9 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     gcc \
+    pkg-config \
+    default-libmysqlclient-dev \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
+# Install all deps. mysqlclient compiles fine now that pkg-config + libmariadb are present.
 RUN pip install --prefix=/install -r requirements.txt
 
 # ------------------------------------------------------------------------------
@@ -36,6 +39,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    libmariadb3 \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
