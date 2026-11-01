@@ -1,5 +1,4 @@
-
-
-export const server = import.meta.env.VITE_SERVER;
-// export const server ='https://chat-app-api-nikhilchandurkars-projects.vercel.app/'
-export const server = (import.meta.env.VITE_SERVER || "").replace(/\/$/, "");
+export const server = (
+  (typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_SERVER) ||
+  ""
+).replace(/\/$/, "");
