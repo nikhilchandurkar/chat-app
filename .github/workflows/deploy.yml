@@ -90,6 +90,9 @@ jobs:
           cache: pip
           cache-dependency-path: django_server/requirements.txt
 
+      - name: Install system libraries for MySQL
+        run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev pkg-config gcc
+
       - name: Install dependencies
         run: |
           pip install --upgrade pip
@@ -270,6 +273,9 @@ jobs:
           cache: pip
           cache-dependency-path: django_server/requirements.txt
 
+      - name: Install system libraries for MySQL
+        run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev pkg-config gcc
+
       - name: Install pip-audit
         run: pip install pip-audit
 
@@ -371,6 +377,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: django_server/requirements.txt
+
+      - name: Install system libraries for MySQL
+        run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev pkg-config gcc
 
       - name: Install all dependencies (including test)
         run: |
