@@ -142,3 +142,4 @@ echo "=========================================================="
 echo "🎉 Server Stack is UP & RUNNING!"
 echo "=========================================================="
 docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+
