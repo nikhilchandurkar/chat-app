@@ -6,8 +6,8 @@
   "scripts": {
     "start": "expo start",
     "android": "expo start --android",
-    "build:apk": "eas build -p android --profile preview",
-    "build:aab": "eas build -p android --profile production",
+    "build:apk": "npx eas-cli build -p android --profile preview",
+    "build:aab": "npx eas-cli build -p android --profile production",
     "prebuild": "expo prebuild"
   },
   "dependencies": {
