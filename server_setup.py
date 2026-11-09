@@ -181,9 +181,9 @@ map $http_upgrade $connection_upgrade {{
 }}
 
 server {{
-    listen 80;
-    listen [::]:80;
-    server_name 16.113.127.132 _;
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
 
     # Security headers
     add_header X-Content-Type-Options  nosniff          always;

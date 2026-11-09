@@ -22,7 +22,7 @@ env:
   DOCKER_IMAGE_DJANGO: nikhil2523/chat-app-django
   DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME || 'nikhil2523' }}
   DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-  CLIENT_URL: ${{ secrets.CLIENT_URL || 'http://16.113.127.132' }}
+  CLIENT_URL: ${{ secrets.CLIENT_URL || 'http://localhost' }}
   VITE_SERVER: ${{ secrets.VITE_SERVER || '' }}
   SONAR_TOKEN: ${{ secrets.SONAR_TOKEN || secrets.SONARQUBE_TOKEN || vars.SONAR_TOKEN }}
   PYTHON_VERSION: "3.12"
@@ -651,7 +651,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment:
       name: production
-      url: http://16.113.127.132
+      url: ${{ secrets.CLIENT_URL || 'http://localhost' }}
     steps:
       - name: Checkout repository on server
         uses: actions/checkout@v4
@@ -928,7 +928,7 @@ jobs:
           echo "💾 Disk usage after deploy:"
           df -h /
           echo ""
-          echo "🏁 Deploy complete — http://16.113.127.132"
+          echo "🏁 Deploy complete — ${{ secrets.CLIENT_URL || 'http://localhost' }}"
 
       - name: Final Docker image prune
         run: docker image prune -f || true
