@@ -16,8 +16,8 @@ class PreviewLinkView(APIView):
         if not target_url:
             return Response({"success": False, "message": "URL parameter is required"}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Check cache
-        cache_key = f"link_preview:{hashlib.md5(target_url.encode()).hexdigest()}"
+        # Check cache (SHA-256 for secure cache key hashing)
+        cache_key = f"link_preview:{hashlib.sha256(target_url.encode()).hexdigest()}"
         cached_data = cache.get(cache_key)
         if cached_data:
             return Response({"success": True, "preview": cached_data})
