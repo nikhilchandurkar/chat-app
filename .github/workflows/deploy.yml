@@ -834,7 +834,7 @@ jobs:
             -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-change-me-321' }}' \
             -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY || 'chat_app_admin_secret' }}' \
             -e DB_ENGINE=mysql \
-            -e MYSQL_DATABASE=chat_db \
+            -e MYSQL_DATABASE='${{ secrets.MYSQL_DATABASE || 'chat_db' }}' \
             -e MYSQL_USER=chat_user \
             -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD || 'chat_password' }}' \
             -e MYSQL_HOST=127.0.0.1 \
@@ -879,7 +879,7 @@ jobs:
             -e DEBUG=False \
             -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-change-me-321' }}' \
             -e DB_ENGINE=mysql \
-            -e MYSQL_DATABASE=chat_db \
+            -e MYSQL_DATABASE='${{ secrets.MYSQL_DATABASE || 'chat_db' }}' \
             -e MYSQL_USER=chat_user \
             -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD || 'chat_password' }}' \
             -e MYSQL_HOST=127.0.0.1 \
