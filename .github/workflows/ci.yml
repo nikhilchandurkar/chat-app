@@ -37,6 +37,24 @@ jobs:
           pip install -r requirements.txt
           pip install bandit ruff
 
+      - name: Grant MySQL Test Database Privileges
+        run: |
+          python - << 'EOF'
+          import time, pymysql
+          for i in range(15):
+              try:
+                  conn = pymysql.connect(host='127.0.0.1', port=3306, user='root', password='rootpassword')
+                  cur = conn.cursor()
+                  cur.execute("GRANT ALL PRIVILEGES ON *.* TO 'chat_user'@'%' WITH GRANT OPTION;")
+                  cur.execute("FLUSH PRIVILEGES;")
+                  conn.close()
+                  print("✅ Successfully granted full test privileges to chat_user")
+                  break
+              except Exception as e:
+                  print(f"Waiting for MySQL... ({e})")
+                  time.sleep(2)
+          EOF
+
       - name: Django System Checks
         run: |
           cd django_server
