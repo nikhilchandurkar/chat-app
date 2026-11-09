@@ -32,8 +32,15 @@ export default defineConfig({
       output: {
         // Fine-grained code splitting — each chunk cached independently
         manualChunks(id) {
-          // Core React runtime — tiny, cached forever
-          if (id.includes("node_modules/react/") || id.includes("node_modules/react-dom/")) {
+          // Core React runtime & React internals — grouped together to prevent circular chunk dependencies
+          if (
+            id.includes("node_modules/react/") ||
+            id.includes("node_modules/react-dom/") ||
+            id.includes("node_modules/scheduler/") ||
+            id.includes("node_modules/react-is/") ||
+            id.includes("node_modules/use-sync-external-store/") ||
+            id.includes("node_modules/prop-types/")
+          ) {
             return "vendor-react";
           }
           // Router
