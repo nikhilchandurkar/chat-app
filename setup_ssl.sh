@@ -81,3 +81,4 @@ echo "🎉 SSL Setup Complete!"
 echo "🌐 Your app is live at: https://$DOMAIN"
 echo "WSS WebSockets live at: wss://$DOMAIN/ws/chat/"
 echo "============================================================"
+
