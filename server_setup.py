@@ -32,6 +32,7 @@ DIRS               = [
     f"{BASE_DIR}/redis_data",
     f"{BASE_DIR}/media",
     f"{BASE_DIR}/logs",
+    "/var/www/certbot",
 ]
 
 NGINX_CONF_SRC     = os.path.expanduser("~/actions-runner/_work/chat-app/chat-app/nginx.conf")
@@ -169,7 +170,33 @@ def step_redis():
 
 def step_nginx():
     section("5. Nginx configuration")
-    # Write optimized nginx config for IP-based access (no SSL yet)
+    run("sudo mkdir -p /var/www/certbot && sudo chmod 755 /var/www/certbot")
+
+    # Detect if SSL certificate already exists
+    r = run("sudo find /etc/letsencrypt/live -name 'fullchain.pem' 2>/dev/null | head -n 1", check=False, capture=True)
+    cert_path = r.stdout.strip()
+
+    if cert_path:
+        domain = cert_path.split("/")[-2]
+        ok(f"Active SSL certificate detected for domain: {domain}")
+        ssl_src = "nginx_ssl.conf"
+        if not os.path.exists(ssl_src):
+            ssl_src = os.path.expanduser("~/actions-runner/_work/chat-app/chat-app/nginx_ssl.conf")
+        if os.path.exists(ssl_src):
+            with open(ssl_src, "r") as f:
+                ssl_conf = f.read().replace("DOMAIN_PLACEHOLDER", domain)
+            conf_path = "/tmp/chatapp_nginx_ssl.conf"
+            with open(conf_path, "w") as f:
+                f.write(ssl_conf)
+            run(f"sudo cp {conf_path} {NGINX_SITE}")
+            run(f"sudo ln -sf {NGINX_SITE} {NGINX_ENABLED}")
+            run("sudo rm -f /etc/nginx/sites-enabled/default", check=False)
+            if run("sudo nginx -t", check=False, capture=True).returncode == 0:
+                run("sudo systemctl reload nginx")
+                ok(f"Nginx SSL configuration active for https://{domain}")
+                return
+
+    # Write optimized nginx config for IP-based or initial challenge access
     nginx_conf = f"""# ── Rate limiting ──────────────────────────────────────────────
 limit_req_zone  $binary_remote_addr zone=api:10m rate=10r/s;
 limit_req_zone  $binary_remote_addr zone=auth:5m  rate=3r/s;
@@ -192,6 +219,12 @@ server {{
 
     # Max upload size
     client_max_body_size 25M;
+
+    # ── Let's Encrypt ACME Challenge ──────────────────────────────────────
+    location /.well-known/acme-challenge/ {{
+        root /var/www/certbot;
+        try_files $uri =404;
+    }}
 
     # ── React SPA (static files served directly by Nginx, no container) ──
     root  {BASE_DIR}/frontend;
@@ -264,6 +297,7 @@ server {{
     if r.returncode == 0:
         run("sudo systemctl reload nginx")
         ok("Nginx configured and reloaded")
+        warn("Running in HTTP mode. To enable free SSL on a subdomain, run: sudo python3 setup_ssl.py")
     else:
         warn(f"Nginx config test failed:\n{r.stderr}")
 

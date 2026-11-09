@@ -709,16 +709,24 @@ jobs:
       # ── Nginx config ───────────────────────────────────────────────────────
       - name: Update Nginx configuration
         run: |
-          if [ -f "nginx.conf" ]; then
+          sudo mkdir -p /var/www/certbot
+          CERT_PATH=$(sudo find /etc/letsencrypt/live -name "fullchain.pem" 2>/dev/null | head -n 1)
+          if [ -n "$CERT_PATH" ] && [ -f "nginx_ssl.conf" ]; then
+            DOMAIN=$(echo "$CERT_PATH" | awk -F'/' '{print $(NF-1)}')
+            echo "🔒 Found active SSL certificate for domain: $DOMAIN — deploying HTTPS Nginx configuration"
+            sed "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" nginx_ssl.conf | sudo tee /etc/nginx/sites-available/chatapp > /dev/null
+          elif [ -f "nginx.conf" ]; then
+            echo "🌐 No SSL certificate detected — deploying HTTP Nginx configuration"
             sudo cp nginx.conf /etc/nginx/sites-available/chatapp
-            sudo ln -sf /etc/nginx/sites-available/chatapp /etc/nginx/sites-enabled/chatapp
-            sudo rm -f /etc/nginx/sites-enabled/default
-            if sudo nginx -t 2>&1; then
-              sudo systemctl restart nginx && echo "✅ Nginx restarted" || sudo systemctl reload nginx
-            else
-              echo "❌ Nginx config invalid — keeping previous config"
-              sudo nginx -t
-            fi
+          fi
+          sudo ln -sf /etc/nginx/sites-available/chatapp /etc/nginx/sites-enabled/chatapp
+          sudo rm -f /etc/nginx/sites-enabled/default
+          if sudo nginx -t 2>&1; then
+            sudo systemctl reload nginx && echo "✅ Nginx reloaded" || (sudo systemctl restart nginx && echo "✅ Nginx restarted")
+          else
+            echo "❌ Tested configuration failed, rolling back to base nginx.conf"
+            sudo cp nginx.conf /etc/nginx/sites-available/chatapp
+            sudo nginx -t && sudo systemctl reload nginx
           fi
 
       # ── Docker Hub login ───────────────────────────────────────────────────

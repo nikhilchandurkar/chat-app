@@ -32,7 +32,8 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") or os.environ.get("SECRET_KEY")
 DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() in ("true", "1", "yes")
 
 # Allowed Hosts
-ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
+raw_allowed_hosts = os.environ.get("DJANGO_ALLOWED_HOSTS") or os.environ.get("ALLOWED_HOSTS") or "*"
+ALLOWED_HOSTS = [h.strip() for h in raw_allowed_hosts.split(",") if h.strip()]
 
 # Application definition
 INSTALLED_APPS = [
@@ -174,11 +175,41 @@ CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://localhost(:[0-9]+)?$",
     r"^http://127\.0\.0\.1(:[0-9]+)?$",
-    r"^https://.*\.chickenkiller\.com$",
-    r"^https://.*\.vercel\.app$",
+    r"^https?://.*\.chickenkiller\.com$",
+    r"^https?://.*\.duckdns\.org$",
+    r"^https?://.*\.vercel\.app$",
 ]
-if os.environ.get("PUBLIC_DOMAIN"):
-    CORS_ALLOWED_ORIGIN_REGEXES.append(rf"^https://.*{re.escape(os.environ.get('PUBLIC_DOMAIN'))}$" if 're' in globals() else rf"^https://.*{os.environ.get('PUBLIC_DOMAIN')}$")
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+client_url = os.environ.get("CLIENT_URL", "").strip().rstrip("/")
+if client_url:
+    if client_url not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(client_url)
+    if client_url not in CORS_ALLOWED_ORIGINS:
+        CORS_ALLOWED_ORIGINS.append(client_url)
+
+public_domain = os.environ.get("PUBLIC_DOMAIN", "").strip()
+if public_domain:
+    for scheme in ("http://", "https://"):
+        origin = f"{scheme}{public_domain}"
+        if origin not in CSRF_TRUSTED_ORIGINS:
+            CSRF_TRUSTED_ORIGINS.append(origin)
+        if origin not in CORS_ALLOWED_ORIGINS:
+            CORS_ALLOWED_ORIGINS.append(origin)
+    CORS_ALLOWED_ORIGIN_REGEXES.append(rf"^https?://.*{re.escape(public_domain)}$")
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -207,6 +238,10 @@ SECURE_BROWSER_XSS_FILTER = True
 SECURE_CONTENT_TYPE_NOSNIFF = True
 X_FRAME_OPTIONS = "DENY"
 SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
+USE_X_FORWARDED_PORT = True
+
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
     SESSION_COOKIE_SECURE = True
