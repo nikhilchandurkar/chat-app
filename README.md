@@ -2,6 +2,7 @@
 
 [![CI Pipeline](https://github.com/nikhilchandurkar/chat-app/actions/workflows/ci.yml/badge.svg)](https://github.com/nikhilchandurkar/chat-app/actions/workflows/ci.yml)
 [![Security VAPT Scan](https://github.com/nikhilchandurkar/chat-app/actions/workflows/security.yml/badge.svg)](https://github.com/nikhilchandurkar/chat-app/actions/workflows/security.yml)
+[![Live App](https://img.shields.io/badge/Live-chat--nikkiii.duckdns.org-236B4A?style=flat&logo=nginx)](https://chat-nikkiii.duckdns.org)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![Django 5.1](https://img.shields.io/badge/django-5.1-green.svg)](https://www.djangoproject.com/)
 [![MySQL 8+](https://img.shields.io/badge/mysql-8.0+-orange.svg)](https://www.mysql.com/)
