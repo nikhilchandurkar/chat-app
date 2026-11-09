@@ -61,7 +61,7 @@ certbot certonly --webroot \
 
 # 5. Apply HTTPS Nginx config
 echo "⚙️ Applying HTTPS Nginx configuration..."
-sed "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" nginx_ssl.conf > /etc/nginx/sites-available/chatapp
+sed -e "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" -e "s/chat-nikkiii.duckdns.org/$DOMAIN/g" nginx_ssl.conf > /etc/nginx/sites-available/chatapp
 ln -sf /etc/nginx/sites-available/chatapp /etc/nginx/sites-enabled/chatapp
 rm -f /etc/nginx/sites-enabled/default
 

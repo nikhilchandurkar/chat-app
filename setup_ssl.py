@@ -158,7 +158,7 @@ def main():
     if not template_content:
         err_exit("nginx_ssl.conf template not found! Please run from the chat-app repository root.")
 
-    ssl_conf = template_content.replace("DOMAIN_PLACEHOLDER", domain)
+    ssl_conf = template_content.replace("DOMAIN_PLACEHOLDER", domain).replace("chat-nikkiii.duckdns.org", domain)
     target_site = "/etc/nginx/sites-available/chatapp"
     with open(target_site, "w") as f:
         f.write(ssl_conf)

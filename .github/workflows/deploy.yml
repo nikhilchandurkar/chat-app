@@ -509,7 +509,9 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ env.DOCKER_IMAGE_DJANGO }}
+          images: |
+            nikhil2523/chat-app
+            nikhil2523/chat-app-django
           tags: |
             type=ref,event=branch
             type=sha,prefix=sha-
@@ -715,7 +717,7 @@ jobs:
           if [ -n "$CERT_PATH" ] && [ -f "nginx_ssl.conf" ]; then
             DOMAIN=$(echo "$CERT_PATH" | awk -F'/' '{print $(NF-1)}')
             echo "🔒 Found active SSL certificate for domain: $DOMAIN — deploying HTTPS Nginx configuration"
-            sed "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" nginx_ssl.conf | sudo tee /etc/nginx/sites-available/chatapp > /dev/null
+            sed -e "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" -e "s/chat-nikkiii.duckdns.org/$DOMAIN/g" nginx_ssl.conf | sudo tee /etc/nginx/sites-available/chatapp > /dev/null
           elif [ -f "nginx.conf" ]; then
             echo "🌐 No SSL certificate detected — deploying HTTP Nginx configuration"
             sudo cp nginx.conf /etc/nginx/sites-available/chatapp
@@ -740,8 +742,9 @@ jobs:
       # ── Pull latest image ─────────────────────────────────────────────────
       - name: Pull latest Django image
         run: |
-          docker pull ${{ env.DOCKER_IMAGE_DJANGO }}:latest
-          echo "✅ Image pulled: ${{ env.DOCKER_IMAGE_DJANGO }}:latest"
+          docker pull nikhil2523/chat-app:latest || docker pull ${{ env.DOCKER_IMAGE_DJANGO }}:latest
+          docker tag nikhil2523/chat-app:latest ${{ env.DOCKER_IMAGE_DJANGO }}:latest 2>/dev/null || true
+          echo "✅ Image ready: ${{ env.DOCKER_IMAGE_DJANGO }}:latest"
 
       # ── Remove legacy containers ───────────────────────────────────────────
       - name: Remove legacy containers (Node.js / PostgreSQL)
