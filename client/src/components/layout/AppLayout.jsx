@@ -4,7 +4,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useErrors, useSocketEvents } from '../../hooks/hook';
 import { useMyChatsQuery, useGetNotificationsQuery } from '../../redux/api/api';
 import { getSocket } from '../../socket.jsx';
-import { NEW_REQUEST, ONLINE_USERS, NEW_MESSAGE_ALERT, START_TYPING, STOP_TYPING, REFETCH_CHATS } from '../../constants/events';
+import { NEW_REQUEST, ONLINE_USERS, NEW_MESSAGE, NEW_MESSAGE_ALERT, START_TYPING, STOP_TYPING, REFETCH_CHATS, ALERT } from '../../constants/events';
 import ChatList from '../specific/ChatList';
 import Profile from '../specific/Profile';
 import Header from './Header';
