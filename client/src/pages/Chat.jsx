@@ -309,17 +309,43 @@ const Chat = ({ chatId, user }) => {
   const unreadCount = unreadIndex !== null ? allMessages.length - unreadIndex : 0;
 
   const chat = chatDetails?.data?.chat;
-  const isRestricted = chat?.restrictedMessages;
-  const isCreator = chat?.creator?.toString() === user?._id?.toString();
-  const isAdmin = chat?.admins?.includes(user?._id?.toString()) || isCreator;
+  const isGroupChat = Boolean(chat?.groupChat);
+  const isRestricted = isGroupChat && Boolean(chat?.restrictedMessages);
+  const isCreator =
+    chat?.creator?.toString() === user?._id?.toString() ||
+    chat?.creator?.toString() === user?.id?.toString();
+  const isAdmin =
+    isCreator ||
+    chat?.admins?.includes(user?._id?.toString()) ||
+    chat?.admins?.includes(user?.id?.toString());
   const canSendMessages = !isRestricted || isAdmin;
 
-  return chatDetails.isLoading ? <Skeleton /> : (
-    <>
+  return chatDetails.isLoading ? (
+    <Skeleton variant="rectangular" height="100%" width="100%" />
+  ) : (
+    <Box
+      sx={{
+        height: "100%",
+        width: "100%",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        position: "relative",
+      }}
+    >
       {/* Pinned messages banner */}
       <PinnedMessages chatId={chatId} onScrollToMessage={handleScrollToMessage} />
 
-      <Box sx={{ position: "relative", height: "90%", display: "flex", flexDirection: "column" }}>
+      <Box
+        sx={{
+          position: "relative",
+          flex: 1,
+          minHeight: 0,
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
         {/* Search overlay */}
         {showSearch && (
           <ChatSearch chatId={chatId} onScrollToMessage={handleScrollToMessage} onClose={() => setShowSearch(false)} />
@@ -330,7 +356,7 @@ const Chat = ({ chatId, user }) => {
           <Tooltip title="Search messages">
             <IconButton 
               onClick={() => setShowSearch((s) => !s)} 
-              sx={{ bgcolor: showSearch ? "primary.main" : "rgba(255,255,255,0.8)", color: showSearch ? "white" : "inherit", "&:hover": { bgcolor: "rgba(255,255,255,1)", color: "primary.main" } }}
+              sx={{ bgcolor: showSearch ? "primary.main" : "rgba(255,255,255,0.85)", color: showSearch ? "white" : "inherit", boxShadow: 1, "&:hover": { bgcolor: "rgba(255,255,255,1)", color: "primary.main" } }}
             >
               <SearchIcon />
             </IconButton>
@@ -338,7 +364,7 @@ const Chat = ({ chatId, user }) => {
           <Tooltip title="Group Info & Media">
             <IconButton 
               onClick={() => setShowInfo(true)} 
-              sx={{ bgcolor: "rgba(255,255,255,0.8)", "&:hover": { bgcolor: "rgba(255,255,255,1)" } }}
+              sx={{ bgcolor: "rgba(255,255,255,0.85)", boxShadow: 1, "&:hover": { bgcolor: "rgba(255,255,255,1)" } }}
             >
               <InfoIcon color="primary" />
             </IconButton>
@@ -351,7 +377,7 @@ const Chat = ({ chatId, user }) => {
           boxSizing="border-box"
           padding="1rem"
           spacing="0.75rem"
-          bgcolor="rgba(247,247,247,1)"
+          bgcolor={isDark ? "#171A18" : "#F7F8F6"}
           flex={1}
           sx={{ overflowX: "hidden", overflowY: "auto" }}
         >
@@ -387,7 +413,7 @@ const Chat = ({ chatId, user }) => {
       {/* Emoji Picker Popup */}
       {showEmoji && canSendMessages && (
         <ClickAwayListener onClickAway={() => setShowEmoji(false)}>
-          <Box sx={{ position: "absolute", bottom: "70px", left: "16px", zIndex: 200 }}>
+          <Box sx={{ position: "absolute", bottom: "75px", left: "16px", zIndex: 200 }}>
             <Suspense fallback={null}>
               <EmojiPicker onEmojiClick={onEmojiClick} height={380} width={320} previewConfig={{ showPreview: false }} />
             </Suspense>
@@ -395,13 +421,24 @@ const Chat = ({ chatId, user }) => {
         </ClickAwayListener>
       )}
 
-      {/* Input bar */}
+      {/* Input bar - Always pinned at bottom */}
       {canSendMessages ? (
-        <Box sx={{ height: "10%", display: "flex", flexDirection: "column", justifyContent: "flex-end", position: "relative" }}>
+        <Box
+          sx={{
+            flexShrink: 0,
+            width: "100%",
+            display: "flex",
+            flexDirection: "column",
+            borderTop: "1px solid",
+            borderColor: isDark ? "#343B36" : "#E3E6E1",
+            bgcolor: isDark ? "#1E2320" : "#FFFFFF",
+            zIndex: 5,
+          }}
+        >
           {replyingTo && (
-            <Box sx={{ px: 2, py: 1, bgcolor: "rgba(0,0,0,0.05)", borderTop: "1px solid rgba(0,0,0,0.1)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Box sx={{ px: 2, py: 1, bgcolor: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)", borderBottom: "1px solid", borderColor: "divider", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <Box sx={{ overflow: "hidden" }}>
-                <Typography variant="caption" color="primary" fontWeight="bold">Replying to {replyingTo.sender?.name}</Typography>
+                <Typography variant="caption" color="primary" fontWeight="bold">Replying to {replyingTo.sender?.name || "User"}</Typography>
                 <Typography variant="body2" sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{replyingTo.content}</Typography>
               </Box>
               <IconButton size="small" onClick={() => setReplyingTo(null)}>
@@ -411,64 +448,66 @@ const Chat = ({ chatId, user }) => {
           )}
           <form
             onSubmit={submitHandler}
-            style={{ display: "flex", alignItems: "center", height: "100%" }}
+            style={{ display: "flex", alignItems: "center", width: "100%" }}
           >
-          <Stack direction="row" height="100%" padding="1rem" alignItems="center" position="relative" flex={1} gap={0.5}>
-          {/* Emoji button */}
-          <Tooltip title="Emoji">
-            <IconButton onClick={() => setShowEmoji((s) => !s)} sx={{ color: showEmoji ? "primary.main" : "text.secondary" }}>
-              <EmojiIcon />
-            </IconButton>
-          </Tooltip>
+            <Stack direction="row" width="100%" px={2} py={1.5} alignItems="center" position="relative" flex={1} gap={1}>
+              {/* Emoji button */}
+              <Tooltip title="Emoji">
+                <IconButton onClick={() => setShowEmoji((s) => !s)} sx={{ color: showEmoji ? "primary.main" : "text.secondary" }}>
+                  <EmojiIcon />
+                </IconButton>
+              </Tooltip>
 
-          {/* Attach file */}
-          <IconButton onClick={handleFileOpen} sx={{ color: "secondary.main", rotate: "-30deg" }}>
-            <AttachFileIcon />
-          </IconButton>
+              {/* Attach file */}
+              <Tooltip title="Attach File">
+                <IconButton onClick={handleFileOpen} sx={{ color: "secondary.main", rotate: "-30deg" }}>
+                  <AttachFileIcon />
+                </IconButton>
+              </Tooltip>
 
-          {/* Text input */}
-          <input
-            value={message}
-            onChange={messageOnChange}
-            placeholder="Type a message..."
-            style={{
-              flex: 1,
-              height: "42px",
-              border: isDark ? "1px solid #343B36" : "1px solid #E3E6E1",
-              outline: "none",
-              padding: "0 1rem",
-              borderRadius: "8px",
-              backgroundColor: isDark ? "#202522" : "#FFFFFF",
-              fontSize: "0.95rem",
-              color: isDark ? "#F1F3F0" : "#202421",
-              minWidth: "0"
-            }}
-          />
+              {/* Text input */}
+              <input
+                value={message}
+                onChange={messageOnChange}
+                placeholder="Type a message..."
+                style={{
+                  flex: 1,
+                  height: "44px",
+                  border: isDark ? "1px solid #343B36" : "1px solid #E3E6E1",
+                  outline: "none",
+                  padding: "0 1rem",
+                  borderRadius: "8px",
+                  backgroundColor: isDark ? "#202522" : "#FFFFFF",
+                  fontSize: "0.95rem",
+                  color: isDark ? "#F1F3F0" : "#202421",
+                  minWidth: "0",
+                }}
+              />
 
-          {/* Voice recorder */}
-          <VoiceRecorder chatId={chatId} />
+              {/* Voice recorder */}
+              <VoiceRecorder chatId={chatId} />
 
-          {/* Send */}
-          <IconButton
-            type="submit"
-            aria-label="Send message"
-            sx={{
-              bgcolor: "#236B4A",
-              color: "#FFFFFF",
-              borderRadius: "8px",
-              width: "42px",
-              height: "42px",
-              padding: "0.5rem",
-              "&:hover": { bgcolor: "#1B573C" },
-            }}
-          >
-            <SendIcon sx={{ fontSize: "1.2rem" }} />
-          </IconButton>
-        </Stack>
-      </form>
-      </Box>
+              {/* Send */}
+              <IconButton
+                type="submit"
+                aria-label="Send message"
+                sx={{
+                  bgcolor: "#236B4A",
+                  color: "#FFFFFF",
+                  borderRadius: "8px",
+                  width: "44px",
+                  height: "44px",
+                  flexShrink: 0,
+                  "&:hover": { bgcolor: "#1B573C" },
+                }}
+              >
+                <SendIcon sx={{ fontSize: "1.2rem" }} />
+              </IconButton>
+            </Stack>
+          </form>
+        </Box>
       ) : (
-        <Box sx={{ height: "10%", display: "flex", alignItems: "center", justifyContent: "center", bgcolor: "rgba(0,0,0,0.05)" }}>
+        <Box sx={{ flexShrink: 0, py: 2, px: 3, display: "flex", alignItems: "center", justifyContent: "center", bgcolor: "action.hover", borderTop: "1px solid", borderColor: "divider" }}>
           <Typography variant="body2" color="text.secondary">
             Only admins can send messages in this group.
           </Typography>
@@ -484,7 +523,7 @@ const Chat = ({ chatId, user }) => {
         chatId={chatId} 
         isGroupChat={chatDetails?.data?.chat?.groupChat} 
       />
-    </>
+    </Box>
   );
 };
 

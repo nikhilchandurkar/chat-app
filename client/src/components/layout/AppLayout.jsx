@@ -198,7 +198,9 @@ const AppLayout = () => (WrappedComponent) => {
               sx={{ 
                 height: "100%",
                 bgcolor: 'background.default',
-                overflowY: "auto",
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
               }}
             >
               <WrappedComponent {...props}

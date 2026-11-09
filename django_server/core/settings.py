@@ -271,7 +271,14 @@ if os.environ.get("USE_REDIS", "False").lower() in ("true", "1"):
     CHANNEL_LAYERS = {
         "default": {
             "BACKEND": "channels_redis.core.RedisChannelLayer",
-            "CONFIG": {"hosts": [REDIS_URL]},
+            "CONFIG": {
+                "hosts": [
+                    {
+                        "address": REDIS_URL,
+                        "socket_timeout": 30,
+                    }
+                ],
+            },
         },
     }
 else:
