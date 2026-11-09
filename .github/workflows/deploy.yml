@@ -467,6 +467,7 @@ jobs:
       - name: Build React SPA (production)
         env:
           VITE_SERVER: ${{ env.VITE_SERVER }}
+          VITE_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
         run: npm run build:ci
 
       - name: Verify build output
@@ -845,6 +846,8 @@ jobs:
             -e EMAIL_SECURE=false \
             -e EMAIL_USER='${{ secrets.EMAIL_USER }}' \
             -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
+            -e GOOGLE_CLIENT_ID='${{ secrets.GOOGLE_CLIENT_ID }}' \
+            -e GOOGLE_CLIENT_SECRET='${{ secrets.GOOGLE_CLIENT_SECRET }}' \
             -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -v /opt/chat-app/media:/app/media \
             -v /opt/chat-app/logs:/app/logs \
@@ -884,6 +887,8 @@ jobs:
             -e CELERY_CONCURRENCY=2 \
             -e EMAIL_USER='${{ secrets.EMAIL_USER }}' \
             -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
+            -e GOOGLE_CLIENT_ID='${{ secrets.GOOGLE_CLIENT_ID }}' \
+            -e GOOGLE_CLIENT_SECRET='${{ secrets.GOOGLE_CLIENT_SECRET }}' \
             -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -v /opt/chat-app/media:/app/media \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
