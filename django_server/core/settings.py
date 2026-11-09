@@ -126,11 +126,11 @@ else:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.mysql",
-            "NAME": os.environ.get("DATABASE_NAME", "chat_db"),
-            "USER": os.environ.get("DATABASE_USER", "chat_user"),
-            "PASSWORD": os.environ.get("DATABASE_PASSWORD", "chat_password"),
-            "HOST": os.environ.get("DATABASE_HOST", "127.0.0.1"),
-            "PORT": int(os.environ.get("DATABASE_PORT", 3306)),
+            "NAME": os.environ.get("DATABASE_NAME") or os.environ.get("MYSQL_DATABASE", "chat_db"),
+            "USER": os.environ.get("DATABASE_USER") or os.environ.get("MYSQL_USER", "chat_user"),
+            "PASSWORD": os.environ.get("DATABASE_PASSWORD") or os.environ.get("MYSQL_PASSWORD", "chat_password"),
+            "HOST": os.environ.get("DATABASE_HOST") or os.environ.get("MYSQL_HOST", "127.0.0.1"),
+            "PORT": int(os.environ.get("DATABASE_PORT") or os.environ.get("MYSQL_PORT", 3306)),
             "OPTIONS": {
                 "charset": "utf8mb4",
                 "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
