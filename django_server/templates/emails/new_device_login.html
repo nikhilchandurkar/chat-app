@@ -1,0 +1,32 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<span class="badge" style="background-color: #fef3c7; color: #92400e;">NEW DEVICE LOGIN</span>
+<h1>New Login Detected</h1>
+<p>Hello {{ user_name|default:"there" }},</p>
+<p>Your {{ app_name|default:"ChatApp" }} account was just accessed from a new device or session with the following details:</p>
+
+<table style="width: 100%; border-collapse: collapse; margin: 20px 0; font-size: 14px;">
+  <tr style="border-bottom: 1px solid #f1f5f9;">
+    <td style="padding: 10px 0; color: #64748b; font-weight: 500;">Device / Platform:</td>
+    <td style="padding: 10px 0; color: #0f172a; font-weight: 600;">{{ platform|default:"Web Browser" }}</td>
+  </tr>
+  <tr style="border-bottom: 1px solid #f1f5f9;">
+    <td style="padding: 10px 0; color: #64748b; font-weight: 500;">IP Address:</td>
+    <td style="padding: 10px 0; color: #0f172a; font-family: monospace;">{{ ip_address|default:"Unknown" }}</td>
+  </tr>
+  <tr style="border-bottom: 1px solid #f1f5f9;">
+    <td style="padding: 10px 0; color: #64748b; font-weight: 500;">Time:</td>
+    <td style="padding: 10px 0; color: #0f172a;">{{ timestamp }}</td>
+  </tr>
+  <tr>
+    <td style="padding: 10px 0; color: #64748b; font-weight: 500;">User Agent:</td>
+    <td style="padding: 10px 0; color: #0f172a; font-size: 13px;">{{ user_agent|truncatechars:70 }}</td>
+  </tr>
+</table>
+
+<div class="alert-box">
+  <strong>Wasn't you?</strong> If you did not sign in recently, someone else may have gained access to your account. Open Account Settings immediately and click <em>"Revoke All Other Sessions"</em>.
+</div>
+{% endblock %}
+

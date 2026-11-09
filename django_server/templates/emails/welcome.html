@@ -1,0 +1,21 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<span class="badge" style="background-color: #dcfce7; color: #166534;">WELCOME</span>
+<h1>Welcome to {{ app_name|default:"ChatApp" }}!</h1>
+<p>Hello {{ user_name }},</p>
+<p>Welcome to our high-performance, private, end-to-end messaging platform. Your account has been registered and verified.</p>
+
+<div class="info-box">
+  <strong>Key Security & Privacy Features:</strong>
+  <ul style="margin: 8px 0 0 0; padding-left: 20px;">
+    <li>AES-256 encrypted chat history</li>
+    <li>Passwordless authentication with single-use cryptographic tokens</li>
+    <li>Self-hosted private streaming file transfers</li>
+    <li>Configurable disappearing messages and privacy controls</li>
+  </ul>
+</div>
+
+<p>You can manage your connected devices, sessions, and privacy settings anytime from the settings panel.</p>
+{% endblock %}
+

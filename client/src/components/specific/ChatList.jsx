@@ -2,6 +2,37 @@ import { Stack, Typography } from "@mui/material";
 import React from "react";
 import ChatItem from "../shared/ChatItem";
 
+const checkIsOnline = (members, onlineUsers) => {
+  if (!members || !onlineUsers) return false;
+  return members.some((member) => {
+    const memberId =
+      typeof member === "object" && member !== null
+        ? String(member._id || member.id || member.user_id || "")
+        : String(member || "");
+    if (!memberId) return false;
+
+    if (Array.isArray(onlineUsers)) {
+      return onlineUsers.some((u) => {
+        if (typeof u === "object" && u !== null) {
+          return String(u.user_id || u.id || u._id || "") === memberId;
+        }
+        return String(u) === memberId;
+      });
+    }
+    if (onlineUsers instanceof Set) {
+      return onlineUsers.has(memberId);
+    }
+    if (typeof onlineUsers === "object") {
+      if (onlineUsers.user_id || onlineUsers.id) {
+        const uId = String(onlineUsers.user_id || onlineUsers.id);
+        return uId === memberId && onlineUsers.status !== "offline";
+      }
+      return Boolean(onlineUsers[memberId]);
+    }
+    return false;
+  });
+};
+
 const ChatList = ({
   w = "100%",
   chats = [],
@@ -15,15 +46,13 @@ const ChatList = ({
     <Stack width={w} direction={"column"} overflow={"auto"} height={"100%"}>
       {chats?.length > 0 ? (
         chats.map((data, index) => {
-          const { avatar, _id,name, groupChat, members, memberNames } = data;
-          const newMessageAlert = newMessagesAlert.find(
-            ({ chatId }) => chatId === _id
-          );
+          const { avatar, _id, name, groupChat, members, memberNames } = data;
+          const newMessageAlert = Array.isArray(newMessagesAlert)
+            ? newMessagesAlert.find(({ chatId: alertChatId }) => alertChatId === _id)
+            : undefined;
 
-          const isOnline = members?.some((member) =>
-            onlineUsers.includes(member)
-          );
-          const isTyping = typingChats.includes(_id);
+          const isOnline = checkIsOnline(members, onlineUsers);
+          const isTyping = Array.isArray(typingChats) ? typingChats.includes(_id) : false;
 
           return (
             <ChatItem

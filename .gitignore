@@ -25,6 +25,9 @@ venv/
 **/db.sqlite3-journal
 **/staticfiles/
 django_server/media/
+django_server/storage/
+storage/
 django_server/.env
 django_server/.env.production
+*.log
 

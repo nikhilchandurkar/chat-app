@@ -1,17 +1,35 @@
 from django.urls import path
 from .views import (
-    SearchMessagesView,
+    SendMessageView,
+    GetMessagesView,
     EditMessageView,
+    DeleteMessageView,
+    DeleteMessageForMeView,
     ReactMessageView,
     ForwardMessageView,
-    GetMediaView,
+    SearchMessagesView,
+    GetChatMediaView,
 )
 
 urlpatterns = [
-    path('search/<str:chat_id>', SearchMessagesView.as_view(), name='message-search'),
-    path('react/<str:id>', ReactMessageView.as_view(), name='message-react'),
-    path('forward', ForwardMessageView.as_view(), name='message-forward'),
-    path('media/<str:chat_id>', GetMediaView.as_view(), name='message-media'),
-    path('<str:id>', EditMessageView.as_view(), name='message-edit-delete'),
+    path("send", SendMessageView.as_view(), name="message-send"),
+    path("send/", SendMessageView.as_view(), name="message-send-slash"),
+    path("forward", ForwardMessageView.as_view(), name="message-forward"),
+    path("forward/", ForwardMessageView.as_view(), name="message-forward-slash"),
+    path("search/<str:chat_id>", SearchMessagesView.as_view(), name="message-search"),
+    path("search/<str:chat_id>/", SearchMessagesView.as_view(), name="message-search-slash"),
+    path("media/<str:chat_id>", GetChatMediaView.as_view(), name="message-media"),
+    path("media/<str:chat_id>/", GetChatMediaView.as_view(), name="message-media-slash"),
+    path("react/<str:id>", ReactMessageView.as_view(), name="message-react-prefix"),
+    path("react/<str:id>/", ReactMessageView.as_view(), name="message-react-prefix-slash"),
+    path("<str:id>/react", ReactMessageView.as_view(), name="message-react"),
+    path("<str:id>/react/", ReactMessageView.as_view(), name="message-react-slash"),
+    path("<str:id>/delete-for-me", DeleteMessageForMeView.as_view(), name="message-delete-for-me"),
+    path("<str:id>/delete-for-me/", DeleteMessageForMeView.as_view(), name="message-delete-for-me-slash"),
+    path("<str:id>", EditMessageView.as_view(), name="message-edit"),
+    path("<str:id>/", EditMessageView.as_view(), name="message-edit-slash"),
+    path("delete/<str:id>", DeleteMessageView.as_view(), name="message-delete-for-everyone"),
+    path("delete/<str:id>/", DeleteMessageView.as_view(), name="message-delete-for-everyone-slash"),
+    path("chat/<str:id>", GetMessagesView.as_view(), name="message-chat-list"),
+    path("chat/<str:id>/", GetMessagesView.as_view(), name="message-chat-list-slash"),
 ]
-

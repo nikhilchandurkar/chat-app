@@ -1,0 +1,8 @@
+Hello {{ user_name }},
+
+The {{ provider|title }} login provider has been disconnected from your {{ app_name|default:"ChatApp" }} account.
+
+You can still log in using your registered email address with single-use verification codes.
+
+— The {{ app_name|default:"ChatApp" }} Security Team
+

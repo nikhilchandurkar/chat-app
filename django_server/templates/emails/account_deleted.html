@@ -1,0 +1,15 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<span class="badge" style="background-color: #f1f5f9; color: #475569;">ACCOUNT CLOSED</span>
+<h1>Account Deletion Confirmation</h1>
+<p>Hello {{ user_name }},</p>
+<p>Your {{ app_name|default:"ChatApp" }} account and associated personal data have been scheduled for deletion or deactivated per your request.</p>
+
+<div class="info-box">
+  All active sessions have been revoked and your credentials have been invalidated.
+</div>
+
+<p>Thank you for using {{ app_name|default:"ChatApp" }}. If this deletion was requested in error, please reach out immediately.</p>
+{% endblock %}
+

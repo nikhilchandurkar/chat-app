@@ -7,18 +7,56 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "backgroundColor": "#6366f1"
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#236B4A"
     },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.nikhil.chatapp"
     },
     "android": {
+      "package": "com.nikhil.chatapp",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "backgroundColor": "#6366f1"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#236B4A"
       },
-      "package": "com.nikhil.chatapp"
+      "permissions": [
+        "INTERNET",
+        "ACCESS_NETWORK_STATE",
+        "RECORD_AUDIO",
+        "READ_EXTERNAL_STORAGE",
+        "WRITE_EXTERNAL_STORAGE",
+        "POST_NOTIFICATIONS",
+        "VIBRATE",
+        "RECEIVE_BOOT_COMPLETED"
+      ],
+      "notification": {
+        "icon": "./assets/icon.png",
+        "color": "#236B4A",
+        "androidMode": "default"
+      }
+    },
+    "plugins": [
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#236B4A"
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow ChatApp to access your microphone for recording voice notes."
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "chat-app-mobile-self-hosted"
+      }
     }
   }
 }
-

@@ -30,8 +30,10 @@ const ForwardMessageDialog = lazy(() => import("../dialogs/ForwardMessageDialog"
 
 const COMMON_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
-const MessageComponent = ({ message, onEdit, onDelete, onReply, chatId, isGroupAdmin }) => {
+const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId, isGroupAdmin }) => {
   const { user } = useSelector((state) => state.auth);
+  const { themeMode } = useSelector((state) => state.misc);
+  const isDark = themeMode === "dark";
 
   const { _id, sender, content, attachments = [], createdAt, isDeleted, isEdited, replyTo, readBy = [] } = message;
   const sameSender = sender?._id === user?._id;
@@ -112,7 +114,10 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, chatId, isGroupA
 
   const handleReact = async (emoji) => {
     try {
-      await reactMessageMutation({ messageId: _id, emoji });
+      const res = await reactMessageMutation({ messageId: _id, emoji });
+      if (res.data?.success && res.data?.reactions) {
+        onReact?.(_id, res.data.reactions);
+      }
     } catch (error) {
       toast.error("Failed to react");
     }
@@ -128,11 +133,25 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, chatId, isGroupA
     onReply?.(message);
   };
 
-  // Group reactions by emoji
-  const reactionCounts = message.reactions?.reduce((acc, curr) => {
-    acc[curr.emoji] = (acc[curr.emoji] || 0) + 1;
+  // Group reactions by emoji (supporting both .emoji and .reaction shapes)
+  const reactionCounts = (Array.isArray(message.reactions) ? message.reactions : []).reduce((acc, curr) => {
+    const em = typeof curr === "string" ? curr : (curr?.emoji || curr?.reaction);
+    if (em) {
+      acc[em] = (acc[em] || 0) + 1;
+    }
     return acc;
-  }, {}) || {};
+  }, {});
+
+  const currentUserId = String(user?._id || user?.id || "");
+  const myReactedEmojis = new Set(
+    (Array.isArray(message.reactions) ? message.reactions : [])
+      .filter((r) => {
+        const uid = String(r?.user_id || r?.userId || r?.user || "");
+        return uid && uid === currentUserId;
+      })
+      .map((r) => (typeof r === "string" ? r : (r?.emoji || r?.reaction)))
+      .filter(Boolean)
+  );
 
   return (
     <>
@@ -155,24 +174,29 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, chatId, isGroupA
       >
         <Box
           sx={{
-            background: sameSender ? "linear-gradient(135deg, #007AFF 0%, #0056b3 100%)" : "white",
-            color: sameSender ? "white" : "black",
-            borderRadius: sameSender ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
-            padding: "0.6rem 1rem",
+            backgroundColor: sameSender 
+              ? (isDark ? "#24382D" : "#E8F3ED") 
+              : (isDark ? "#202522" : "#FFFFFF"),
+            color: isDark ? "#F1F3F0" : "#202421",
+            borderRadius: sameSender ? "12px 12px 2px 12px" : "12px 12px 12px 2px",
+            border: sameSender 
+              ? `1px solid ${isDark ? "#324D3E" : "#D0E4D8"}` 
+              : `1px solid ${isDark ? "#343B36" : "#E3E6E1"}`,
+            padding: "0.55rem 0.9rem",
             position: "relative",
-            boxShadow: sameSender ? "0 4px 10px rgba(0, 122, 255, 0.2)" : "0 2px 8px rgba(0,0,0,0.05)",
+            boxShadow: isDark ? "none" : "0 1px 3px rgba(32, 36, 33, 0.04)",
           }}
         >
           {/* Sender name for group chats */}
           {!sameSender && sender?.name && (
-            <Typography color={lightBlue} fontWeight="600" variant="caption" sx={{ display: "block", mb: 0.3 }}>
+            <Typography sx={{ color: isDark ? "#4B9B70" : "#236B4A" }} fontWeight="600" variant="caption" display="block" mb={0.3}>
               {sender.name}
             </Typography>
           )}
 
           {/* Tombstone */}
           {isDeleted ? (
-            <Typography variant="body2" sx={{ fontStyle: "italic", color: sameSender ? "rgba(255,255,255,0.5)" : "text.disabled" }}>
+            <Typography variant="body2" sx={{ fontStyle: "italic", color: isDark ? "#A6AEA8" : "#737A75" }}>
               🚫 This message was deleted
             </Typography>
           ) : editMode ? (
@@ -187,7 +211,7 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, chatId, isGroupA
                 multiline
                 maxRows={4}
                 onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleEditSubmit(); } if (e.key === "Escape") setEditMode(false); }}
-                sx={{ "& .MuiInputBase-root": { color: sameSender ? "white" : "black", fontSize: "0.9rem" } }}
+                sx={{ "& .MuiInputBase-root": { color: isDark ? "#F1F3F0" : "#202421", fontSize: "0.9rem" } }}
               />
               {isEditing ? <CircularProgress size={16} /> : (
                 <>
@@ -201,11 +225,11 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, chatId, isGroupA
               {/* Quoted Message Block */}
               {replyTo && (
                 <Box sx={{
-                  bgcolor: sameSender ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.05)",
-                  p: 1, mb: 1, borderRadius: 1,
-                  borderLeft: sameSender ? "4px solid rgba(255,255,255,0.5)" : "4px solid primary.main"
+                  bgcolor: isDark ? "rgba(255,255,255,0.06)" : "rgba(35, 107, 74, 0.06)",
+                  p: 0.8, mb: 0.8, borderRadius: 1,
+                  borderLeft: `3px solid ${isDark ? "#4B9B70" : "#236B4A"}`
                 }}>
-                  <Typography variant="caption" fontWeight="bold" sx={{ color: sameSender ? "white" : "primary.main" }}>
+                  <Typography variant="caption" fontWeight="bold" sx={{ color: isDark ? "#4B9B70" : "#236B4A" }}>
                     {replyTo.sender?.name || "Unknown"}
                   </Typography>
                   <Typography variant="body2" sx={{ opacity: 0.9, overflow: "hidden", textOverflow: "ellipsis", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
@@ -215,20 +239,20 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, chatId, isGroupA
               )}
 
               {/* Message content */}
-              {content && <Typography variant="body2" sx={{ wordBreak: "break-word", lineHeight: 1.5 }}>{content}</Typography>}
+              {content && <Typography variant="body2" sx={{ wordBreak: "break-word", lineHeight: 1.5, color: isDark ? "#F1F3F0" : "#202421" }}>{content}</Typography>}
 
               {/* Link Preview */}
               {content && <LinkPreview content={content} />}
 
               {/* Attachments */}
-              {attachments?.length > 0 && attachments.map((attachment) => {
-                const url = attachment.url;
+              {attachments?.length > 0 && attachments.map((attachment, idx) => {
+                const url = typeof attachment === "string" ? attachment : (attachment.url || attachment.path || "");
+                if (!url) return null;
                 const file = fileFormat(url);
+                const name = typeof attachment === "object" ? attachment.name : "";
                 return (
-                  <Box key={url} sx={{ mt: 0.5 }}>
-                    <a href={url} target="_blank" rel="noopener noreferrer" download={`attachment_${url}`} style={{ color: "inherit" }}>
-                      {RenderAttachment(file, url)}
-                    </a>
+                  <Box key={url + idx} sx={{ mt: 0.5 }}>
+                    <RenderAttachment file={file} url={url} name={name} />
                   </Box>
                 );
               })}
@@ -238,18 +262,18 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, chatId, isGroupA
           {/* Timestamp + edited tag + read receipts */}
           <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.3, justifyContent: "flex-end" }}>
             {isEdited && !isDeleted && (
-              <Typography variant="caption" sx={{ color: sameSender ? "rgba(255,255,255,0.5)" : "text.disabled", fontSize: "0.6rem" }}>
+              <Typography variant="caption" sx={{ color: isDark ? "#A6AEA8" : "#737A75", fontSize: "0.6rem" }}>
                 (edited)
               </Typography>
             )}
-            <Typography variant="caption" sx={{ color: sameSender ? "rgba(255,255,255,0.55)" : "text.secondary", fontSize: "0.65rem" }}>
+            <Typography variant="caption" sx={{ color: isDark ? "#A6AEA8" : "#737A75", fontSize: "0.65rem" }}>
               {timeAgo}
             </Typography>
             {sameSender && !isDeleted && (
               <DoneAllIcon 
                 sx={{ 
                   fontSize: "1rem", 
-                  color: readBy.length > 0 ? "#4ade80" : "rgba(255,255,255,0.6)", // Green for read, faint white for delivered
+                  color: readBy.length > 0 ? "#27834A" : (isDark ? "#A6AEA8" : "#737A75"),
                   ml: 0.2
                 }} 
               />
@@ -259,21 +283,39 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, chatId, isGroupA
           {/* Render grouped reactions below message */}
           {Object.keys(reactionCounts).length > 0 && (
             <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 0.5 }}>
-              {Object.entries(reactionCounts).map(([emoji, count]) => (
-                <Box
-                  key={emoji}
-                  onClick={() => handleReact(emoji)}
-                  sx={{
-                    display: "inline-flex", alignItems: "center", gap: 0.5,
-                    backgroundColor: sameSender ? "rgba(255,255,255,0.2)" : "rgba(0,0,0,0.05)",
-                    borderRadius: "12px", padding: "2px 6px", cursor: "pointer",
-                    "&:hover": { backgroundColor: sameSender ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.1)" }
-                  }}
-                >
-                  <Typography variant="caption" sx={{ fontSize: "0.8rem" }}>{emoji}</Typography>
-                  <Typography variant="caption" sx={{ fontSize: "0.7rem", fontWeight: "bold" }}>{count}</Typography>
-                </Box>
-              ))}
+              {Object.entries(reactionCounts).map(([emoji, count]) => {
+                const hasReacted = myReactedEmojis.has(emoji);
+                return (
+                  <Box
+                    key={emoji}
+                    onClick={() => handleReact(emoji)}
+                    sx={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 0.5,
+                      backgroundColor: hasReacted
+                        ? (isDark ? "rgba(75, 155, 112, 0.25)" : "rgba(35, 107, 74, 0.16)")
+                        : (isDark ? "rgba(255,255,255,0.08)" : "rgba(35, 107, 74, 0.08)"),
+                      border: hasReacted
+                        ? `1.5px solid ${isDark ? "#4B9B70" : "#236B4A"}`
+                        : `1px solid ${isDark ? "#343B36" : "#D0E4D8"}`,
+                      borderRadius: "6px",
+                      padding: "1px 6px",
+                      cursor: "pointer",
+                      transition: "all 0.15s ease",
+                      "&:hover": {
+                        backgroundColor: isDark ? "rgba(255,255,255,0.14)" : "rgba(35, 107, 74, 0.2)",
+                        transform: "scale(1.05)",
+                      }
+                    }}
+                  >
+                    <Typography variant="caption" sx={{ fontSize: "0.85rem" }}>{emoji}</Typography>
+                    <Typography variant="caption" sx={{ fontSize: "0.72rem", fontWeight: hasReacted ? "700" : "500", color: hasReacted ? (isDark ? "#4B9B70" : "#236B4A") : "inherit" }}>
+                      {count}
+                    </Typography>
+                  </Box>
+                );
+              })}
             </Box>
           )}
         </Box>

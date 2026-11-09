@@ -1,0 +1,15 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<span class="badge" style="background-color: #fee2e2; color: #991b1b;">SECURITY ALERT</span>
+<h1>{{ alert_title|default:"Security Notice" }}</h1>
+<p>Hello {{ user_name }},</p>
+<p>{{ alert_message }}</p>
+
+<div class="alert-box">
+  <strong>Action Required:</strong> If you suspect unauthorized activity, please review your active sessions and devices in your account settings immediately.
+</div>
+
+<p>Timestamp: <strong>{{ timestamp }}</strong><br>IP Address: <strong>{{ ip_address|default:"Not recorded" }}</strong></p>
+{% endblock %}
+

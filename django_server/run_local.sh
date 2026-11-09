@@ -1,30 +1,37 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Local Development Startup Script for Linux / macOS
+# Local Development Startup Script for Linux / macOS (MySQL 8+)
 # ==============================================================================
 set -e
 
 echo "=========================================================="
-echo "  Starting Scalable Django Daphne ASGI Chat Server (Local)"
+echo "  Starting Django Daphne ASGI Chat Server (MySQL 8+)"
 echo "=========================================================="
 
 # 1. Virtual Environment
-if [ ! -d ".venv" ]; then
-    echo "[1/4] Creating virtual environment (.venv)..."
-    python3 -m venv .venv
+if [ -d "venv" ]; then
+    source venv/bin/activate
+elif [ -d ".venv" ]; then
+    source .venv/bin/activate
+else
+    echo "[1/4] Creating virtual environment (venv)..."
+    python3 -m venv venv
+    source venv/bin/activate
 fi
 
-# 2. Activate Virtual Environment
-echo "[2/4] Activating virtual environment..."
-source .venv/bin/activate
+# 2. Database Defaults (MySQL 8+)
+export DATABASE_NAME="${DATABASE_NAME:-chat_db}"
+export DATABASE_USER="${DATABASE_USER:-chat_user}"
+export DATABASE_PASSWORD="${DATABASE_PASSWORD:-chat_password}"
+export DATABASE_HOST="${DATABASE_HOST:-127.0.0.1}"
+export DATABASE_PORT="${DATABASE_PORT:-3306}"
 
 # 3. Install Requirements
-echo "[3/4] Installing dependencies..."
+echo "[2/4] Checking dependencies..."
 pip install -r requirements.txt --quiet
 
 # 4. Run Migrations
-echo "[4/4] Running database migrations..."
-python manage.py makemigrations authentication chat messages_app preview
+echo "[3/4] Running MySQL database migrations..."
 python manage.py migrate
 
 echo ""

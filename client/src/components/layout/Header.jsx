@@ -8,6 +8,9 @@ import {
   DarkMode as DarkModeIcon,
   LightMode as LightModeIcon,
   AccountCircle as AccountCircleIcon,
+  Palette as PaletteIcon,
+  Speed as SpeedIcon,
+  Wifi as WifiIcon,
 } from "@mui/icons-material";
 import {
   AppBar,
@@ -28,12 +31,13 @@ import { server } from '../../constants/config';
 import { userExists } from "../../redux/reducers/auth";
 import { setIsMobile, setIsMobileProfile, setIsNotification, setIsSearch, setIsNewGroup, resetNotificationCount, setActiveChatId, toggleTheme } from "../../redux/reducers/misc";
 
-
 const SearchDialog = lazy(() => import("../specific/Search"));
 const NotificationsDialog = lazy(() => import("../specific/Notifications"));
 const NewGroupsDialog = lazy(() => import("../specific/NewGroup"));
 const StarredMessages = lazy(() => import("../specific/StarredMessages"));
-
+const AppearanceSettingsDialog = lazy(() => import("../dialogs/AppearanceSettingsDialog"));
+const DevicePerformanceDialog = lazy(() => import("../dialogs/DevicePerformanceDialog"));
+const ConnectivityOfflineDialog = lazy(() => import("../dialogs/ConnectivityOfflineDialog"));
 
 const Header = ({ unreadMessagesCount = 0 }) => {
   const navigate = useNavigate();
@@ -42,6 +46,9 @@ const Header = ({ unreadMessagesCount = 0 }) => {
   const { isSearch, isNotification, isNewGroup, notificationCount, themeMode } = useSelector(state => state.misc);
 
   const [showStarred, setShowStarred] = useState(false);
+  const [showAppearance, setShowAppearance] = useState(false);
+  const [showPerformance, setShowPerformance] = useState(false);
+  const [showConnectivity, setShowConnectivity] = useState(false);
 
   const handleMobile = () => dispatch(setIsMobile(true));
   const openMobileProfile = () => dispatch(setIsMobileProfile(true));
@@ -73,10 +80,9 @@ const Header = ({ unreadMessagesCount = 0 }) => {
           elevation={0}
           position="fixed" 
           sx={{ 
-            backgroundColor: themeMode === "dark" ? "rgba(28, 28, 30, 0.75)" : "rgba(255, 255, 255, 0.75)",
-            backdropFilter: "blur(12px)",
-            color: themeMode === "dark" ? "#ffffff" : "#000000",
-            borderBottom: `1px solid ${themeMode === "dark" ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.1)"}`,
+            backgroundColor: themeMode === "dark" ? "#202522" : "#FFFFFF",
+            color: themeMode === "dark" ? "#F1F3F0" : "#202421",
+            borderBottom: `1px solid ${themeMode === "dark" ? "#343B36" : "#E3E6E1"}`,
             zIndex: 1200
           }}
         >
@@ -111,6 +117,9 @@ const Header = ({ unreadMessagesCount = 0 }) => {
               <IconBtn title="Search" icon={<SearchIcon />} onClick={openSearch} />
               <IconBtn title="New Group" icon={<AddIcon />} onClick={addNewGroup} />
               <IconBtn title="Starred Messages" icon={<StarIcon />} onClick={() => setShowStarred(true)} />
+              <IconBtn title="Appearance & Experience" icon={<PaletteIcon />} onClick={() => setShowAppearance(true)} />
+              <IconBtn title="Device & Performance" icon={<SpeedIcon />} onClick={() => setShowPerformance(true)} />
+              <IconBtn title="Connectivity & Offline" icon={<WifiIcon />} onClick={() => setShowConnectivity(true)} />
               <IconBtn 
                 title={themeMode === 'dark' ? "Light Mode" : "Dark Mode"} 
                 icon={themeMode === 'dark' ? <LightModeIcon /> : <DarkModeIcon />} 
@@ -143,6 +152,18 @@ const Header = ({ unreadMessagesCount = 0 }) => {
 
       <Suspense fallback={null}>
         <StarredMessages open={showStarred} onClose={() => setShowStarred(false)} />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <AppearanceSettingsDialog open={showAppearance} onClose={() => setShowAppearance(false)} />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <DevicePerformanceDialog open={showPerformance} onClose={() => setShowPerformance(false)} />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <ConnectivityOfflineDialog open={showConnectivity} onClose={() => setShowConnectivity(false)} />
       </Suspense>
     </>
   );

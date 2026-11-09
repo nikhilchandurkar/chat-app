@@ -9,71 +9,101 @@ import { STORAGE_KEYS } from "./src/config";
 import LoginScreen from "./src/screens/LoginScreen";
 import ChatListScreen from "./src/screens/ChatListScreen";
 import ChatRoomScreen from "./src/screens/ChatRoomScreen";
+import ProfileScreen from "./src/screens/ProfileScreen";
+import SettingsScreen from "./src/screens/SettingsScreen";
+import AppearanceScreen from "./src/screens/AppearanceScreen";
+import DevicePerformanceScreen from "./src/screens/DevicePerformanceScreen";
+import ConnectivityScreen from "./src/screens/ConnectivityScreen";
+import NearbyChatScreen from "./src/screens/NearbyChatScreen";
+import { registerForNativeFCM } from "./src/services/notifications";
 
 const Stack = createStackNavigator();
 
 export default function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [initialRoute, setInitialRoute] = useState(null);
 
   useEffect(() => {
-    const checkAuth = async () => {
+    const checkAuthAndInit = async () => {
       try {
         const token = await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
-        setIsAuthenticated(!!token);
+        if (token) {
+          registerForNativeFCM().catch(() => {});
+          setInitialRoute("ChatList");
+        } else {
+          setInitialRoute("Login");
+        }
       } catch (e) {
-        setIsAuthenticated(false);
-      } finally {
-        setLoading(false);
+        setInitialRoute("Login");
       }
     };
-    checkAuth();
+    checkAuthAndInit();
   }, []);
 
-  if (loading) {
+  if (!initialRoute) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" color="#4f46e5" />
+      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#F7F7F5" }}>
+        <ActivityIndicator size="large" color="#236B4A" />
       </View>
     );
   }
 
   return (
     <NavigationContainer>
-      <StatusBar style="auto" />
-      <Stack.Navigator>
-        {!isAuthenticated ? (
-          <Stack.Screen name="Login" options={{ headerShown: false }}>
-            {(props) => (
-              <LoginScreen
-                {...props}
-                onLoginSuccess={() => setIsAuthenticated(true)}
-              />
-            )}
-          </Stack.Screen>
-        ) : (
-          <>
-            <Stack.Screen name="ChatList" options={{ headerShown: false }}>
-              {(props) => (
-                <ChatListScreen
-                  {...props}
-                  onLogout={() => setIsAuthenticated(false)}
-                />
-              )}
-            </Stack.Screen>
-            <Stack.Screen
-              name="ChatRoom"
-              component={ChatRoomScreen}
-              options={({ route }) => ({
-                headerBackTitleVisible: false,
-                headerTintColor: "#4f46e5",
-                headerTitleStyle: { fontWeight: "bold" },
-              })}
-            />
-          </>
-        )}
+      <StatusBar style="dark" />
+      <Stack.Navigator
+        initialRouteName={initialRoute}
+        screenOptions={{
+          headerStyle: { backgroundColor: "#FFFFFF", elevation: 1, shadowOpacity: 0.05 },
+          headerTintColor: "#236B4A",
+          headerTitleStyle: { fontWeight: "700", color: "#202421" },
+        }}
+      >
+        <Stack.Screen
+          name="Login"
+          component={LoginScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="ChatList"
+          component={ChatListScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="ChatRoom"
+          component={ChatRoomScreen}
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="Profile"
+          component={ProfileScreen}
+          options={{ title: "Profile & Privacy" }}
+        />
+        <Stack.Screen
+          name="Settings"
+          component={SettingsScreen}
+          options={{ title: "Application Settings" }}
+        />
+        <Stack.Screen
+          name="Appearance"
+          component={AppearanceScreen}
+          options={{ title: "Appearance & Experience" }}
+        />
+        <Stack.Screen
+          name="DevicePerformance"
+          component={DevicePerformanceScreen}
+          options={{ title: "Device & Performance" }}
+        />
+        <Stack.Screen
+          name="Connectivity"
+          component={ConnectivityScreen}
+          options={{ title: "Connectivity & Outbox" }}
+        />
+        <Stack.Screen
+          name="NearbyChat"
+          component={NearbyChatScreen}
+          options={{ title: "Nearby Direct Chat" }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );
 }
-

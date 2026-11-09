@@ -1,0 +1,16 @@
+Hello {{ user_name }},
+
+Welcome to {{ app_name|default:"ChatApp" }}!
+
+Your account has been registered and verified.
+
+Key Security & Privacy Features:
+- AES-256 encrypted chat history
+- Passwordless authentication with single-use cryptographic tokens
+- Self-hosted private streaming file transfers
+- Configurable disappearing messages and privacy controls
+
+Manage your connected devices and privacy anytime from the settings panel.
+
+— The {{ app_name|default:"ChatApp" }} Team
+

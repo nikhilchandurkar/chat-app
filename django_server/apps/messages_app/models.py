@@ -1,11 +1,13 @@
 import uuid
 import os
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from django.db import models
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 
 from apps.authentication.models import User
-from apps.chat.models import Chat
+from apps.chat.models import Conversation
 
 
 def get_encryption_key():
@@ -46,20 +48,18 @@ def decrypt_message(text: str) -> str:
         return "[Encrypted Message - Unable to Decrypt]"
 
 
-# Dedicated ThreadPoolExecutor for offloading CPU-bound AES crypto from Daphne async event loop
-from concurrent.futures import ThreadPoolExecutor
-import asyncio
-
 CRYPTO_EXECUTOR = ThreadPoolExecutor(
     max_workers=min(32, (os.cpu_count() or 1) * 2 + 4),
     thread_name_prefix="crypto_worker"
 )
+
 
 async def async_encrypt_message(text: str) -> str:
     if not text:
         return text
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(CRYPTO_EXECUTOR, encrypt_message, text)
+
 
 async def async_decrypt_message(text: str) -> str:
     if not text:
@@ -69,16 +69,46 @@ async def async_decrypt_message(text: str) -> str:
 
 
 class Message(models.Model):
+    MESSAGE_TYPE_CHOICES = [
+        ("text", "Text"),
+        ("image", "Image"),
+        ("video", "Video"),
+        ("audio", "Audio"),
+        ("voice", "Voice Message"),
+        ("document", "Document"),
+        ("system", "System"),
+    ]
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("sent", "Sent"),
+        ("delivered", "Delivered"),
+        ("read", "Read"),
+    ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    sender = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sent_messages")
-    chat = models.ForeignKey(Chat, on_delete=models.CASCADE, related_name="messages")
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name="messages"
+    )
+    sender = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="sent_messages"
+    )
+    client_message_id = models.CharField(max_length=128, blank=True, default="", db_index=True)
+    message_type = models.CharField(max_length=20, choices=MESSAGE_TYPE_CHOICES, default="text")
     content = models.TextField(blank=True, default="")
     attachments = models.JSONField(default=list, blank=True)
     reply_to = models.JSONField(null=True, blank=True)
     reactions = models.JSONField(default=list, blank=True)
     is_edited = models.BooleanField(default=False)
     is_deleted = models.BooleanField(default=False)
+    status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="sent")
     read_by = models.JSONField(default=list, blank=True)
+    scheduled_for = models.DateTimeField(null=True, blank=True)
+    expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -86,8 +116,19 @@ class Message(models.Model):
         db_table = "messages"
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["chat", "-created_at"]),
+            models.Index(fields=["conversation", "-created_at"]),
+            models.Index(fields=["client_message_id"]),
+            models.Index(fields=["sender", "-created_at"]),
+            models.Index(fields=["conversation", "expires_at"]),
         ]
+
+    @property
+    def chat(self):
+        return self.conversation
+
+    @chat.setter
+    def chat(self, value):
+        self.conversation = value
 
     def save(self, *args, **kwargs):
         if self.content and not self.content.startswith("ENC:"):
@@ -101,5 +142,101 @@ class Message(models.Model):
         return decrypt_message(self.content)
 
     def __str__(self):
-        return f"Msg {self.id} from {self.sender.username} in {self.chat.name}"
+        return f"Msg {self.id} by {self.sender.username} in {self.conversation_id}"
 
+
+class MessageEdit(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="edits")
+    old_content = models.TextField()
+    edited_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "message_edits"
+        ordering = ["-edited_at"]
+
+
+class MessageReceipt(models.Model):
+    RECEIPT_TYPE_CHOICES = [
+        ("delivered", "Delivered"),
+        ("read", "Read"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="receipts")
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    status = models.CharField(max_length=15, choices=RECEIPT_TYPE_CHOICES)
+    timestamp = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "message_receipts"
+        unique_together = ("message", "user", "status")
+        indexes = [
+            models.Index(fields=["message", "status"]),
+            models.Index(fields=["user", "timestamp"]),
+        ]
+
+
+class MessageReaction(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="reaction_records")
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    reaction = models.CharField(max_length=32)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "message_reactions"
+        unique_together = ("message", "user")
+
+
+class MessageAttachment(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="attachment_records")
+    file_path = models.CharField(max_length=500)
+    file_name = models.CharField(max_length=255)
+    file_type = models.CharField(max_length=50)
+    file_size = models.BigIntegerField()
+    mime_type = models.CharField(max_length=120)
+    thumbnail_path = models.CharField(max_length=500, blank=True, default="")
+    duration = models.FloatField(null=True, blank=True)
+    checksum_sha256 = models.CharField(max_length=64, blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "message_attachments"
+
+
+class StarredMessage(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="user_starred_messages")
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="message_stars")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "starred_messages"
+        unique_together = ("user", "message")
+        indexes = [
+            models.Index(fields=["user", "-created_at"]),
+        ]
+
+
+class ScheduledMessage(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    message = models.OneToOneField(Message, on_delete=models.CASCADE, related_name="scheduled_details")
+    scheduled_at = models.DateTimeField(db_index=True)
+    is_processed = models.BooleanField(default=False, db_index=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "scheduled_messages"
+
+
+class DeletedMessageForUser(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="user_deletions")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="deleted_messages")
+    deleted_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "deleted_messages_for_user"
+        unique_together = ("message", "user")

@@ -1,31 +1,39 @@
 const fileFormat = (url = "") => {
+    if (!url) return "unknown";
     // Strip query parameters or fragments
     const cleanUrl = url.split(/[?#]/)[0];
-    
     const fileExt = cleanUrl.split(".").pop().toLowerCase();
 
     if (!fileExt) {
         return "unknown";
     }
 
-    if (fileExt === "mp4" || fileExt === "webm" || fileExt === "ogg") {
+    if (["mp4", "webm", "ogg", "mov", "mkv", "avi", "m4v"].includes(fileExt)) {
         return "video";
     }
 
-    if (fileExt === "mp3" || fileExt === "wav") {
+    if (["mp3", "wav", "m4a", "aac", "ogg", "flac", "wma"].includes(fileExt)) {
         return "audio";
     }
 
-    if (fileExt === "png" || fileExt === "jpg" || fileExt === "jpeg" || fileExt === "gif") {
+    if (["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "ico", "jfif"].includes(fileExt)) {
         return "image";
+    }
+
+    if (["pdf"].includes(fileExt)) {
+        return "pdf";
     }
 
     return "file";
 };
 
-const transformImage = (url = "", width = 100) => {
-    // You could add actual image transformation logic here, for now returning the URL
-    return `${url}?width=${width}`;
+const transformImage = (url = "", width = 200) => {
+    if (!url) return "";
+    // If Cloudinary URL, can inject width, otherwise return clean URL
+    if (url.includes("cloudinary.com")) {
+        return url.replace("/upload/", `/upload/dpr_auto,w_${width}/`);
+    }
+    return url;
 };
 
 export { fileFormat, transformImage };

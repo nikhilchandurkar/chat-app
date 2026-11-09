@@ -1,0 +1,14 @@
+Hello {{ user_name|default:"there" }},
+
+Your {{ app_name|default:"ChatApp" }} account was just accessed from a new device:
+
+- Device / Platform: {{ platform|default:"Web Browser" }}
+- IP Address: {{ ip_address|default:"Unknown" }}
+- Time: {{ timestamp }}
+- User Agent: {{ user_agent }}
+
+IF THIS WASN'T YOU:
+If you did not sign in recently, someone else may have gained access to your account. Open your account settings and revoke all active sessions immediately.
+
+— The {{ app_name|default:"ChatApp" }} Security Team
+

@@ -1,0 +1,18 @@
+[Unit]
+Description=ChatApp Outbox & Redis Streams Publisher Worker
+After=network.target mysql.service redis-server.service chat-asgi.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/srv/chatapp/django_server
+EnvironmentFile=/srv/chatapp/django_server/.env
+ExecStart=/srv/chatapp/django_server/venv/bin/python manage.py run_outbox_worker
+Restart=always
+RestartSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+

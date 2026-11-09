@@ -9,7 +9,7 @@ const Dashboard = ({ chatId, user }) => {
     const { activeChatId, isNotification } = useSelector((state) => state.misc);
 
     if (isNotification) return <Notifications />;
-    if (activeChatId) return <Chat chatId={activeChatId} user={user} />;
+    if (activeChatId) return <Chat key={activeChatId} chatId={activeChatId} user={user} />;
     
     return <Home />;
 };

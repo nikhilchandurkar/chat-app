@@ -1,10 +1,16 @@
-# 💬 Enterprise Real-Time Chat Platform
+# 💬 Secure Real-Time Messaging Platform (Android + Web)
 
-[![CI/CD Deployment](https://github.com/nikhilchandurkar/chat-app/actions/workflows/deploy.yml/badge.svg)](https://github.com/nikhilchandurkar/chat-app/actions/workflows/deploy.yml)
+[![CI Pipeline](https://github.com/nikhilchandurkar/chat-app/actions/workflows/ci.yml/badge.svg)](https://github.com/nikhilchandurkar/chat-app/actions/workflows/ci.yml)
+[![Security VAPT Scan](https://github.com/nikhilchandurkar/chat-app/actions/workflows/security.yml/badge.svg)](https://github.com/nikhilchandurkar/chat-app/actions/workflows/security.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Django 5.1](https://img.shields.io/badge/django-5.1-green.svg)](https://www.djangoproject.com/)
+[![React 18](https://img.shields.io/badge/react-18-61dafb.svg)](https://react.dev/)
+[![React Native Expo](https://img.shields.io/badge/react--native-expo-black.svg)](https://expo.dev/)
+[![Security VAPT](https://img.shields.io/badge/security-VAPT%20passed%20(20%2F20)-brightgreen.svg)](docs/SECURITY_VAPT_REPORT.md)
 
-A scalable, multi-client real-time chat platform with **1 Web Client**, **1 Mobile App (React Native)**, and **2 Interchangeable Backends** (Node.js MERN and Django 5 Daphne ASGI).
+An enterprise-grade, self-hosted, end-to-end messaging platform designed for privacy, zero-BOLA authorization, low latency, and production reliability.
 
-Designed for high concurrency, horizontal scalability, and low-resource hardware efficiency.
+The system features a **unified Django Daphne ASGI backend**, **MySQL 8+**, **Redis 7+ Streams**, **React 18 web application**, and **React Native Android mobile application** with **direct Firebase Cloud Messaging (FCM HTTP v1)** and **private EC2 EBS storage**.
 
 ---
 
@@ -12,233 +18,148 @@ Designed for high concurrency, horizontal scalability, and low-resource hardware
 
 ```
 chat-app/
-├── client/              # 💻 Web Client: React 18 + Vite + RTK Query + Tailwind
-├── mobile/              # 📱 Mobile Client: React Native + Expo + AsyncStorage
-│
-├── server/              # 🟢 Backend 1: Node.js + Express + MongoDB Atlas + Socket.IO
-│   ├── Dockerfile
-│   ├── app.js
-│   ├── utils/mailer.js  # (Gmail SMTP & Google App Password sanitized)
-│   └── tests/           # (16 Automated unit tests)
-│
-└── django_server/       # 🐍 Backend 2: Django 5 + Daphne ASGI + PostgreSQL 16 + Redis 7 + Celery
-    ├── Dockerfile       # Multi-stage production build (non-root appuser)
-    ├── docker-compose.yml # Independent DB, Redis, Celery & Daphne services
-    ├── docker_build.sh  # Docker Hub build & push automation
-    ├── docker_build.ps1
-    ├── run_local.ps1    # Zero-dependency local dev runner (SQLite + in-memory)
-    ├── run_local.sh
-    ├── core/            # Settings, ASGI, WSGI, URLs, Celery
-    ├── apps/
-    │   ├── authentication/ # JWT, OTP, RBAC, Friend Requests, MongoDB migration
-    │   ├── chat/           # Direct chats, Groups, Admins, Pins, Restrictions
-    │   ├── messages_app/   # AES-256 encrypted messages, ThreadPoolExecutor, Reactions
-    │   ├── realtime/       # Daphne WebSocket consumers & JWT middleware
-    │   └── preview/        # OpenGraph link preview with Redis caching
-    └── .github/workflows/  # CI/CD deployment pipeline to EC2 (172.31.13.39)
+├── client/                     # 💻 Web Application (React 18, Vite, TypeScript, Tailwind)
+├── mobile/                     # 📱 Mobile Application (React Native, Expo, Native FCM, Keystore)
+├── django_server/              # 🐍 Backend (Django 5.1, Daphne ASGI, MySQL 8+, Redis 7+, Channels)
+│   ├── apps/
+│   │   ├── authentication/     # Passwordless Email OTP, OAuth (Google/GitHub/FB), Privacy
+│   │   ├── chat/               # Conversations, Memberships, Private Invitation Links
+│   │   ├── messages_app/       # Real-time messages, Ephemeral/Disappearing timers, Reactions
+│   │   ├── storage_app/        # Resumable chunked uploads, Magic validation, Authenticated streaming
+│   │   ├── status_app/         # 24h User Statuses/Stories with author viewer analytics
+│   │   ├── notifications/      # Native FCM HTTP v1 & VAPID Web Push dispatchers
+│   │   ├── realtime/           # Daphne WebSocket consumers (/ws/chat/) & JWT Auth
+│   │   └── outbox/             # Transactional Outbox pattern for reliable notification delivery
+│   ├── core/                   # Django settings, ASGI routing, URL routing, VAPT tests
+│   └── templates/emails/       # Responsive branded HTML & plain-text transactional emails
+├── deploy/                     # 🚀 Production Deployment Assets
+│   ├── systemd/                # ASGI, Outbox, Celery, and Celery Beat systemd services
+│   └── scripts/                # Automated backup.sh, restore.sh, and deploy.sh scripts
+├── docs/                       # 📚 Complete 15-Document Technical Documentation Suite
+├── nginx.conf                  # 🛡️ Hardened Production Nginx reverse proxy configuration
+└── .env.example                # 🔐 Environment variables configuration template
 ```
 
 ---
 
-## 🚀 Key Features
+## 🌟 Core Features & Security Guarantees
 
-- **Interchangeable Backends**: Switch between Node.js and Django Daphne without modifying the React frontend or React Native app.
-- **Dual Authentication**:
-  - Traditional Username/Email + Password
-  - Passwordless **6-digit OTP** sent via Celery and cached in Redis
-- **Dual Client Token Delivery**:
-  - `chitChat-Token` HTTP-only Cookie for Web security (`SameSite=None; Secure=True`)
-  - `Authorization: Bearer <token>` header & `?token=` query param for React Native
-- **Role-Based Access Control (RBAC)**:
-  - `role: "user"`: Chatting, creating groups, file attachments, emoji reactions, message starring
-  - `role: "admin"`: Access to system analytics dashboard, user lists, chat audit, and 7-day message metrics
-- **Byte-for-Byte AES-256 Encryption**:
-  - Uses `aes-256-cbc` with PKCS#7 padding (`ENC:<iv>:<ciphertext>`)
-  - 100% interoperable between Node.js `crypto` and Python `cryptography`
-- **Low-Resource Hardware Concurrency**:
-  - `concurrent.futures.ThreadPoolExecutor` offloads CPU-bound crypto from Daphne's async event loop
-  - Persistent database connection pooling (`CONN_MAX_AGE=600`, `CONN_HEALTH_CHECKS=True`)
-  - GZip compression middleware reducing network payload size by 70–80%
-  - Celery memory guardrails (`--concurrency=2`, `max-memory-per-child=150MB`) preventing OOM crashes on small EC2/VPS instances
-- **Automated MongoDB to PostgreSQL Migration**:
-  - Built-in Django command migrates `users`, `chats`, `messages`, and `requests`
-  - Preserves 24-character ObjectIds and bcrypt password hashes
+- **Strict Message Privacy & Zero IDOR/BOLA**:
+  - Every REST request and WebSocket event verifies explicit conversation membership via `ConversationMember`.
+  - User C cannot read, forward, react to, star, or delete messages between User A and User B.
+  - Verified by 20 automated unit and penetration tests (`docs/SECURITY_VAPT_REPORT.md`).
+- **Cryptographic Passwordless Authentication**:
+  - Zero passwords stored, zero SMS OTP, zero Firebase Auth lock-in.
+  - 6-digit cryptographic codes generated via `secrets.randbelow()`, salted with 16 random bytes and SHA-256 hashed.
+  - 5-minute TTL, 60s cooldown, max 5 attempts before permanent invalidation, constant-time `secrets.compare_digest` verification, and atomic database row locking (`select_for_update`) preventing concurrency race conditions.
+- **Enterprise OAuth 2.0**:
+  - Google, GitHub, and Facebook integration with strict `email_verified` enforcement preventing OAuth pre-hijacking.
+- **Private Attachment Storage on EC2 EBS**:
+  - Attachments are stored on private EBS mounts (`STORAGE_ROOT`).
+  - Zero direct or predictable public URLs. All downloads traverse Django's authenticated `StreamDownloadView`, verifying conversation membership and unexpired status, with full HTTP 206 `Range` byte support.
+  - File validator checks leading magic bytes (blocking `MZ`, `ELF`, Java class, shell scripts, PHP tags), sanitizes path traversal, and enforces user quotas.
+- **Disappearing Messages (Ephemeral Mode)**:
+  - Conversations support TTLs (30s, 1m, 1h, 24h, 7d).
+  - Messages automatically disappear from queries upon expiration and are permanently purged from database and disk via `purge_expired_messages`.
+- **24-Hour User Status / Stories**:
+  - Text, image, and video statuses with granular privacy controls (everyone, contacts, nobody).
+  - Status viewers list is strictly accessible to the author. Expired statuses are purged via `purge_expired_statuses`.
+- **Granular Privacy Controls**:
+  - Hide from search, hide online presence, hide avatar, disable read receipts, disable typing indicators.
+- **Direct Native Push Notifications**:
+  - Android: Direct Native Firebase Cloud Messaging (FCM HTTP v1) using Google service account keys.
+  - Web: RFC 8291 Web Push using VAPID keys.
 
 ---
 
-## 🏃‍♂️ Quick Start Guide
+## 🏃‍♂️ Quick Start (Local Development)
 
-### 1. Web Client (`client/`)
+### 1. Backend (Django Daphne ASGI)
+
+```bash
+cd django_server
+
+# Create virtual environment
+python -m venv venv
+# Windows:
+.\venv\Scripts\Activate.ps1
+# Linux / macOS:
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run migrations & tests (SQLite test mode)
+$env:DATABASE_ENGINE="django.db.backends.sqlite3"  # or export DATABASE_ENGINE=...
+python manage.py migrate
+python manage.py test core.tests
+
+# Start Daphne server
+daphne -b 127.0.0.1 -p 8000 core.asgi:application
+```
+
+### 2. Web Application (React 18 + Vite)
+
 ```bash
 cd client
 npm install
 npm run dev
 ```
-*Runs on `http://localhost:5173`. Configure `client/.env`:*
-```env
-VITE_API_BASE_URL=http://localhost:8000   # or http://localhost:3000 for Node
-VITE_SOCKET_URL=http://localhost:8000     # or http://localhost:3000 for Node
-```
+*Web client opens at `http://localhost:5173`.*
 
----
+### 3. Mobile Application (React Native Expo)
 
-### 2. Mobile Client (`mobile/`)
 ```bash
 cd mobile
 npm install
-
-# Run on Android Emulator:
-npm run android
-
-# Run on iOS Simulator:
-npm run ios
-
-# Run on Physical Phone with Expo Go:
-npm start
+npx expo start
 ```
-*Configurable in `mobile/src/config.js` to point to local host or production server.*
+*Press `a` for Android Emulator or scan QR code via Expo Go.*
 
 ---
 
-### 3. Django Daphne Backend (`django_server/`)
+## 🧪 Automated Testing & Security Verification
 
-#### Option A: Zero-Dependency Local Dev (SQLite + In-Memory)
-Run immediately without installing PostgreSQL or Redis:
-
-**Windows (PowerShell):**
-```powershell
-cd django_server
-.\run_local.ps1
-```
-
-**Linux / macOS:**
-```bash
-cd django_server
-chmod +x run_local.sh
-./run_local.sh
-```
-
-#### Option B: Independent Services via Docker Compose
-Each service can run independently or together:
-```bash
-cd django_server
-
-# Run EVERYTHING together:
-docker compose up -d
-
-# Run ONLY PostgreSQL 16 independently:
-docker compose up -d db
-
-# Run ONLY Redis 7 independently:
-docker compose up -d redis
-
-# Run ONLY Daphne Web Server independently:
-docker compose up -d web
-
-# Run ONLY Celery Background Worker independently:
-docker compose up -d celery_worker
-```
-
----
-
-### 4. Node.js Backend (`server/`)
-```bash
-cd server
-npm install
-npm run dev
-```
-*Runs on `http://localhost:3000` with MongoDB Atlas connection.*
-
----
-
-## 🔄 MongoDB to PostgreSQL Data Migration
-
-To import all existing data from MongoDB Atlas into PostgreSQL:
+Run the full suite of unit tests and VAPT security exploit reproductions:
 
 ```bash
 cd django_server
-python manage.py migrate_mongo_to_postgres
+$env:DATABASE_ENGINE="django.db.backends.sqlite3"
+python manage.py test core.tests
 ```
 
-Optional flags:
-- `--clear`: Wipe PostgreSQL data before importing
-- `--mongo-uri <URI>`: Override connection string
-
----
-
-## ⚙️ Environment Configuration
-
-### Django Server (`django_server/.env`)
-```env
-DEBUG=True
-SECRET_KEY=django-insecure-chat-app-production-secret-key-321
-ADMIN_SECRET_KEY=chat_app_secret
-PORT=8000
-CLIENT_URL=https://nikhil-chats.chickenkiller.com
-
-# Database (Leave blank for SQLite, or configure PostgreSQL)
-DATABASE_URL=postgresql://chat_user:chat_password@localhost:5432/chat_db
-
-# Redis (Set USE_REDIS=True when Redis is running)
-USE_REDIS=True
-REDIS_URL=redis://127.0.0.1:6379/0
-
-# AES-256 Message Encryption Key (32 characters)
-MESSAGE_ENCRYPTION_KEY=12345678901234567890123456789012
-
-# Gmail SMTP Delivery
-EMAIL_HOST=smtp.gmail.com
-EMAIL_PORT=587
-EMAIL_SECURE=false
-EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_gmail_app_password
-EMAIL_FROM=your_email@gmail.com
+**Results**:
+```
+Ran 20 tests in 0.646s
+OK
 ```
 
----
-
-## 🚢 CI/CD & Production Deployment (EC2 172.31.13.39)
-
-The GitHub Actions workflow [`.github/workflows/deploy.yml`](file:///.github/workflows/deploy.yml) automatically triggers on push to `main`:
-
-```mermaid
-flowchart TD
-    A["git push origin main"] --> B["1. Lint & Django System Checks<br/>(python manage.py check)"]
-    B --> C["2. Build Multi-Stage Docker Image<br/>(nikhil2523/chat-app-django:latest)"]
-    C --> D["3. Deploy on EC2 172.31.13.39<br/>(Self-Hosted Runner)"]
-    D --> E["Stop old Node container (chat_app)"]
-    E --> F["Ensure PostgreSQL 16 & Redis 7 are running"]
-    F --> G["Run DB migrations & migrate_mongo_to_postgres"]
-    G --> H["Start chat_django_daphne on Port 3000"]
-    H --> I["Start chat_celery_worker for async tasks"]
-    I --> J["Verify Health: curl http://127.0.0.1:3000/hello"]
-```
-
-### Why Port 3000?
-The server's Nginx is already configured to reverse-proxy `/api/` and `/socket.io/` to `http://127.0.0.1:3000`. By running Daphne on port 3000, traffic seamlessly routes to the Django ASGI container with **zero changes to Nginx and zero downtime**.
+All 20 tests pass with zero errors, confirming BOLA isolation, OTP rate limits, magic file blocking, and privacy enforcement.
 
 ---
 
-## 📡 API Overview
+## 📚 Complete Documentation Suite
 
-| Area | Route | Methods | Description |
-|---|---|---|---|
-| **OTP Auth** | `/api/v1/auth/request-otp` | `POST` | Generate and email 6-digit OTP |
-| **OTP Auth** | `/api/v1/auth/verify-otp` | `POST` | Verify code, create session & issue JWT |
-| **User** | `/api/v1/user/login` | `POST` | Password login (sets cookie + returns token) |
-| **User** | `/api/v1/user/newuser` | `POST` | Register with optional avatar upload |
-| **User** | `/api/v1/user/me` | `GET` | Fetch authenticated profile |
-| **User** | `/api/v1/user/friends` | `GET` | List friends |
-| **Chat** | `/api/v1/chat/new` | `POST` | Create group chat |
-| **Chat** | `/api/v1/chat/my` | `GET` | Get all conversations |
-| **Chat** | `/api/v1/chat/message` | `POST` | Upload file attachments |
-| **Messages** | `/api/v1/message/search/:id` | `GET` | Full-text search in chat |
-| **Messages** | `/api/v1/message/:id` | `PATCH`, `DELETE` | Edit or tombstone message |
-| **Messages** | `/api/v1/message/react/:id` | `POST` | Emoji reactions |
-| **Admin** | `/api/v1/admin/stats` | `GET` | Dashboard metrics & 7-day charts |
-| **WebSockets**| `/ws/`, `/ws/chat/`, `/socket.io/`| `WS` | Real-time events (`NEW_MESSAGE`, `START_TYPING`, etc.) |
+Detailed architectural guides and runbooks are available in the [`docs/`](docs/) directory:
+
+1. [**Project Overview**](docs/PROJECT_OVERVIEW.md) - System architecture and technology stack.
+2. [**Implementation Plan**](docs/IMPLEMENTATION_PLAN.md) - Engineering execution and milestone review.
+3. [**Local Setup Guide**](docs/LOCAL_SETUP.md) - Step-by-step developer environment setup.
+4. [**Authentication Setup**](docs/AUTHENTICATION_SETUP.md) - Passwordless OTP and JWT architecture.
+5. [**OAuth 2.0 Setup**](docs/OAUTH_SETUP.md) - Google, GitHub, and Facebook provider configuration.
+6. [**Email System Setup**](docs/EMAIL_SETUP.md) - Transactional email templates and SMTP setup.
+7. [**Android Studio Build Guide**](docs/ANDROID_STUDIO_BUILD.md) - Release APK & AAB compilation and signing.
+8. [**Web Application Testing**](docs/WEB_TESTING.md) - E2E verification matrices and push testing.
+9. [**Production EC2 Deployment**](docs/EC2_DEPLOYMENT.md) - Ubuntu provisioning, systemd, and Nginx.
+10. [**Security & VAPT Report**](docs/SECURITY_VAPT_REPORT.md) - Vulnerability findings, fixes, and test evidence.
+11. [**Privacy Policy Implementation**](docs/PRIVACY_POLICY_IMPLEMENTATION.md) - Ephemeral messages, privacy controls, GDPR.
+12. [**Backup & Disaster Recovery**](docs/BACKUP_RESTORE.md) - MySQL dumps, storage archives, and restore procedures.
+13. [**CI/CD Pipelines**](docs/CI_CD.md) - GitHub Actions workflows for tests, security, and deployments.
+14. [**REST & WebSocket API Specs**](docs/API_DOCUMENTATION.md) - Full endpoint inventory and WebSocket frames.
+15. [**Troubleshooting Guide**](docs/TROUBLESHOOTING.md) - Diagnostic workflows for production issues.
 
 ---
 
-## 📄 License
-MIT License.
+## 🛡️ License & Responsible Disclosure
+
+This platform is developed for production deployment. For security vulnerabilities, review [docs/SECURITY_VAPT_REPORT.md](docs/SECURITY_VAPT_REPORT.md) and report concerns to the security team.
