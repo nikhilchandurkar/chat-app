@@ -63,6 +63,16 @@ class NativeChatWebSocket {
       return;
     }
 
+    let token = "";
+    try {
+      token = localStorage.getItem("chitChat-Token") || localStorage.getItem("access_token") || "";
+    } catch (e) {}
+
+    if (!token) {
+      // Don't connect without an authenticated token to avoid 403 handshakes
+      return;
+    }
+
     try {
       const url = this.getWsUrl();
       this.ws = new WebSocket(url);
@@ -94,7 +104,8 @@ class NativeChatWebSocket {
       this.ws.onclose = (event) => {
         this.stopHeartbeat();
         this.dispatch("disconnect", { code: event.code, reason: event.reason });
-        if (!this.isClosedManually) {
+        // Don't retry if unauthenticated / forbidden
+        if (!this.isClosedManually && event.code !== 4001 && event.code !== 1008 && event.code !== 403) {
           this.scheduleReconnect();
         }
       };

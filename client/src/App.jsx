@@ -7,7 +7,7 @@ import ProtectRoute from "./components/auth/ProtectRoute";
 import { LayoutLoader } from "./components/layout/Loaders";
 import { server } from "./constants/config";
 import { userExists, userNotExists } from "./redux/reducers/auth";
-import { SocketProvider } from "./socket";
+import { SocketProvider } from "./socket.jsx";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import CssBaseline from "@mui/material/CssBaseline";
 

@@ -3,7 +3,7 @@ import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useErrors, useSocketEvents } from '../../hooks/hook';
 import { useMyChatsQuery, useGetNotificationsQuery } from '../../redux/api/api';
-import { getSocket } from '../../socket';
+import { getSocket } from '../../socket.jsx';
 import { NEW_REQUEST, ONLINE_USERS, NEW_MESSAGE_ALERT, START_TYPING, STOP_TYPING, REFETCH_CHATS } from '../../constants/events';
 import ChatList from '../specific/ChatList';
 import Profile from '../specific/Profile';
@@ -19,7 +19,6 @@ const AppLayout = () => (WrappedComponent) => {
   return (props) => {
     const { activeChatId: chatId } = useSelector((state) => state.misc);
     const dispatch = useDispatch();
-    const params = useParams();
     const { data, isLoading, isError, refetch, error } = useMyChatsQuery("")
     
     const socket = getSocket();

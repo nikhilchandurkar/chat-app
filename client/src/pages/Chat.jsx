@@ -26,7 +26,7 @@ import { useSocketEvents } from "../hooks/hook";
 import { useChatDetailsQuery, useGetMessagesQuery } from "../redux/api/api";
 import { setIsFileMenu } from "../redux/reducers/misc";
 import ChatDetailsDrawer from "../components/specific/ChatDetailsDrawer";
-import { getSocket } from "../socket";
+import { getSocket } from "../socket.jsx";
 
 // Lazy-load emoji picker (heavy component, ~200KB)
 const EmojiPicker = lazy(() => import("emoji-picker-react"));
