@@ -1,0 +1,15 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<span class="badge">SECURITY NOTIFICATION</span>
+<h1>{{ provider|title }} Account Linked</h1>
+<p>Hello {{ user_name }},</p>
+<p>A <strong>{{ provider|title }}</strong> social account ({{ provider_email }}) was successfully linked to your {{ app_name|default:"ChatApp" }} profile.</p>
+
+<div class="info-box">
+  You can now use this provider to quickly authenticate to your account.
+</div>
+
+<p>If you did not authorize this account linking, please disconnect the provider immediately under Account Settings > Linked Accounts.</p>
+{% endblock %}
+

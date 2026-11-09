@@ -1,0 +1,18 @@
+[Unit]
+Description=ChatApp Celery Beat Periodic Scheduler
+After=network.target mysql.service redis-server.service chat-celery.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/srv/chatapp/django_server
+EnvironmentFile=/srv/chatapp/django_server/.env
+ExecStart=/srv/chatapp/django_server/venv/bin/celery -A core beat -l INFO --pidfile=/run/celery/beat.pid
+Restart=always
+RestartSec=10
+RuntimeDirectory=celery
+
+[Install]
+WantedBy=multi-user.target
+

@@ -50,13 +50,21 @@ const useAsyncMutation = (mutatationHook) => {
 
   const useSocketEvents = (socket, handlers) => {
     useEffect(() => {
+      if (!socket || typeof socket.on !== "function") return;
+
       Object.entries(handlers).forEach(([event, handler]) => {
-        socket.on(event, handler);
+        if (typeof handler === "function") {
+          socket.on(event, handler);
+        }
       });
   
       return () => {
+        if (!socket || typeof socket.off !== "function") return;
+
         Object.entries(handlers).forEach(([event, handler]) => {
-          socket.off(event, handler);
+          if (typeof handler === "function") {
+            socket.off(event, handler);
+          }
         });
       };
     }, [socket, handlers]);

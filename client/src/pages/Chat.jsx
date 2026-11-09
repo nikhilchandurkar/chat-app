@@ -16,8 +16,7 @@ import AppLayout from "../components/layout/AppLayout";
 import MessageComponent from "../components/shared/MessageComponent";
 import UnreadDivider from "../components/shared/UnreadDivider";
 
-import { orange } from "@mui/material/colors";
-import { useDispatch } from "react-redux";
+import { useDispatch, useSelector } from "react-redux";
 import {
   NEW_MESSAGE, START_TYPING, STOP_TYPING,
   MESSAGE_EDITED, MESSAGE_DELETED,
@@ -28,7 +27,6 @@ import { useChatDetailsQuery, useGetMessagesQuery } from "../redux/api/api";
 import { setIsFileMenu } from "../redux/reducers/misc";
 import ChatDetailsDrawer from "../components/specific/ChatDetailsDrawer";
 import { getSocket } from "../socket";
-import { useInfiniteScrollTop } from "6pp";
 
 // Lazy-load emoji picker (heavy component, ~200KB)
 const EmojiPicker = lazy(() => import("emoji-picker-react"));
@@ -53,6 +51,8 @@ const setLastSeen = (chatId) => {
 const Chat = ({ chatId, user }) => {
   const dispatch = useDispatch();
   const socket = getSocket();
+  const { themeMode } = useSelector((state) => state.misc);
+  const isDark = themeMode === "dark";
 
   const containerRef = useRef(null);
   const bottomRef = useRef(null);
@@ -60,6 +60,7 @@ const Chat = ({ chatId, user }) => {
   const typingTimeout = useRef(null);
 
   const [message, setMessage] = useState("");
+  const [oldMessages, setOldMessages] = useState([]);
   const [messages, setMessages] = useState([]);
   const [page, setPage] = useState(1);
   const [fileMenuAnchor, setFileMenuAnchor] = useState(null);
@@ -73,15 +74,63 @@ const Chat = ({ chatId, user }) => {
   const chatDetails = useChatDetailsQuery({ chatId, populate: true }, { skip: !chatId });
   const oldMessageChunk = useGetMessagesQuery({ chatId, page }, { skip: !chatId });
 
-  const { data: oldMessages, setData: setOldMessages } = useInfiniteScrollTop(
-    containerRef,
-    oldMessageChunk.data?.totalPages,
-    page,
-    setPage,
-    oldMessageChunk.data?.messages
-  );
-
   const members = chatDetails?.data?.chat?.members;
+
+  // Reset all local message and draft states whenever chatId changes
+  useEffect(() => {
+    setOldMessages([]);
+    setMessages([]);
+    setPage(1);
+    setMessage("");
+    setUserTyping(false);
+    setReplyingTo(null);
+  }, [chatId]);
+
+  // Keep oldMessages cleanly synced with the active chat's data only
+  useEffect(() => {
+    if (!oldMessageChunk.data?.messages) return;
+    const incoming = oldMessageChunk.data.messages;
+    if (page === 1) {
+      setOldMessages(incoming);
+    } else {
+      setOldMessages((prev) => {
+        const existingIds = new Set(prev.map((m) => String(m._id || m.id)));
+        const uniqueOlder = incoming.filter((m) => !existingIds.has(String(m._id || m.id)));
+        return [...uniqueOlder, ...prev];
+      });
+    }
+  }, [chatId, page, oldMessageChunk.data?.messages]);
+
+  // Infinite scroll upwards listener without accumulating cross-chat messages
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let debounceTimer = null;
+    const handleScroll = () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        if (container.scrollTop === 0) {
+          const totalPages = oldMessageChunk.data?.totalPages || 1;
+          if (page < totalPages) {
+            const prevHeight = container.scrollHeight;
+            setPage((prev) => prev + 1);
+            requestAnimationFrame(() => {
+              if (container) {
+                container.scrollTop = container.scrollHeight - prevHeight;
+              }
+            });
+          }
+        }
+      }, 150);
+    };
+
+    container.addEventListener("scroll", handleScroll);
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      if (debounceTimer) clearTimeout(debounceTimer);
+    };
+  }, [page, oldMessageChunk.data?.totalPages]);
 
   // Calculate unread divider index when old messages first load
   useEffect(() => {
@@ -130,8 +179,17 @@ const Chat = ({ chatId, user }) => {
   };
 
   const newMessagesHandler = useCallback((data) => {
-    setMessages((prev) => [...prev, data.message]);
-  }, []);
+    if (!data) return;
+    const targetChatId = data.chatId || data.conversation_id;
+    if (targetChatId && String(targetChatId) !== String(chatId)) return;
+    const msg = data.message || data;
+    if (msg && msg._id) {
+      setMessages((prev) => {
+        if (prev.some((m) => String(m._id) === String(msg._id))) return prev;
+        return [...prev, msg];
+      });
+    }
+  }, [chatId]);
 
   const messageEditedHandler = useCallback((data) => {
     const patch = (m) => m._id === data.messageId ? { ...m, content: data.content, isEdited: true } : m;
@@ -173,29 +231,45 @@ const Chat = ({ chatId, user }) => {
     setUserTyping(false);
   }, [chatId]);
 
-  const messageReactedHandler = useCallback((data) => {
-    if (data.chatId !== chatId) return;
+  const handleLocalReact = useCallback((messageId, reactions) => {
     const patch = (msg) => {
-      if (msg._id === data.messageId) {
-        return { ...msg, reactions: data.reactions };
+      if (String(msg._id) === String(messageId)) {
+        return { ...msg, reactions };
       }
       return msg;
     };
     setMessages((prev) => prev.map(patch));
     setOldMessages((prev) => prev.map(patch));
-  }, [chatId]);
+  }, [setOldMessages]);
+
+  const messageReactedHandler = useCallback((data) => {
+    if (!data) return;
+    const targetChatId = data.chatId || data.conversation_id;
+    if (targetChatId && String(targetChatId) !== String(chatId)) return;
+    const targetMsgId = data.messageId || data.message_id;
+    const reactions = data.reactions || [];
+    const patch = (msg) => {
+      if (String(msg._id) === String(targetMsgId)) {
+        return { ...msg, reactions };
+      }
+      return msg;
+    };
+    setMessages((prev) => prev.map(patch));
+    setOldMessages((prev) => prev.map(patch));
+  }, [chatId, setOldMessages]);
 
   const messageReadUpdateHandler = useCallback((data) => {
-    if (data.chatId !== chatId) return;
+    if (!data || data.chatId !== chatId) return;
+    const msgIds = Array.isArray(data.messageIds) ? data.messageIds.map(String) : [];
     const patch = (msg) => {
-      if (data.messageIds.includes(msg._id)) {
+      if (msgIds.includes(String(msg._id))) {
         return { ...msg, readBy: [...(msg.readBy || []), data.readBy] };
       }
       return msg;
     };
     setMessages((prev) => prev.map(patch));
     setOldMessages((prev) => prev.map(patch));
-  }, [chatId]);
+  }, [chatId, setOldMessages]);
 
   useSocketEvents(socket, {
     [NEW_MESSAGE]: newMessagesHandler,
@@ -204,10 +278,13 @@ const Chat = ({ chatId, user }) => {
     [MESSAGE_EDITED]: messageEditedHandler,
     [MESSAGE_DELETED]: messageDeletedHandler,
     "MESSAGE_REACTED": messageReactedHandler,
+    "message.reaction": messageReactedHandler,
     [MESSAGE_READ_UPDATE]: messageReadUpdateHandler,
   });
 
-  const allMessages = [...(oldMessages || []), ...(messages || [])];
+  const oldIds = new Set(oldMessages.map((m) => String(m._id || m.id)));
+  const uniqueRealtime = messages.filter((m) => !oldIds.has(String(m._id || m.id)));
+  const allMessages = [...oldMessages, ...uniqueRealtime];
   
   // Mark messages as read when they appear
   useEffect(() => {
@@ -296,6 +373,7 @@ const Chat = ({ chatId, user }) => {
                   onEdit={handleLocalEdit}
                   onDelete={handleLocalDelete}
                   onReply={() => setReplyingTo(value)}
+                  onReact={handleLocalReact}
                 />
               </div>
             </React.Fragment>
@@ -355,36 +433,36 @@ const Chat = ({ chatId, user }) => {
             placeholder="Type a message..."
             style={{
               flex: 1,
-              height: "100%",
-              border: "1px solid rgba(0,0,0,0.15)",
+              height: "42px",
+              border: isDark ? "1px solid #343B36" : "1px solid #E3E6E1",
               outline: "none",
-              padding: "0 1.5rem",
-              borderRadius: "2rem",
-              backgroundColor: "rgba(255,255,255,1)",
-              boxShadow: "inset 0 1px 4px rgba(0,0,0,0.02)",
+              padding: "0 1rem",
+              borderRadius: "8px",
+              backgroundColor: isDark ? "#202522" : "#FFFFFF",
               fontSize: "0.95rem",
-              color: "#333",
-              minWidth: "0" // Prevents input from overflowing flex container
+              color: isDark ? "#F1F3F0" : "#202421",
+              minWidth: "0"
             }}
           />
 
           {/* Voice recorder */}
           <VoiceRecorder chatId={chatId} />
 
-
-
           {/* Send */}
           <IconButton
             type="submit"
+            aria-label="Send message"
             sx={{
-              rotate: "-30deg",
-              bgcolor: orange[500],
-              color: "white",
+              bgcolor: "#236B4A",
+              color: "#FFFFFF",
+              borderRadius: "8px",
+              width: "42px",
+              height: "42px",
               padding: "0.5rem",
-              "&:hover": { bgcolor: "error.dark" },
+              "&:hover": { bgcolor: "#1B573C" },
             }}
           >
-            <SendIcon />
+            <SendIcon sx={{ fontSize: "1.2rem" }} />
           </IconButton>
         </Stack>
       </form>

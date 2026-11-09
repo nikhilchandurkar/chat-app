@@ -1,0 +1,15 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<span class="badge" style="background-color: #e0e7ff; color: #3730a3;">GROUP INVITATION</span>
+<h1>You were invited to {{ group_name }}</h1>
+<p>Hello {{ user_name }},</p>
+<p><strong>{{ inviter_name }}</strong> has invited you to join the private group <strong>{{ group_name }}</strong> on {{ app_name|default:"ChatApp" }}.</p>
+
+<div class="info-box">
+  To join this group, open {{ app_name|default:"ChatApp" }} on the web or mobile app and accept the invitation using your secure token.
+</div>
+
+<p>If you do not recognize the inviter or do not wish to participate, you may safely disregard this message.</p>
+{% endblock %}
+

@@ -1,0 +1,10 @@
+Hello {{ user_name }},
+
+Your {{ app_name|default:"ChatApp" }} account and associated personal data have been deactivated per your request.
+
+All active sessions have been revoked and your credentials have been invalidated.
+
+Thank you for using {{ app_name|default:"ChatApp" }}.
+
+— The {{ app_name|default:"ChatApp" }} Team
+

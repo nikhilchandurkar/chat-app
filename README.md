@@ -1,6 +1,15 @@
-# 🚀 Production Chat App
+# 💬 Secure Real-Time Messaging Platform (ChitChat)
 
-A high-performance, real-time chat application powered by **Django ASGI (Daphne)**, **MySQL 8 (Single Server DB)**, **React 18 (Vite)**, and **Capacitor Android Mobile**.
+[![CI Pipeline](https://github.com/nikhilchandurkar/chat-app/actions/workflows/ci.yml/badge.svg)](https://github.com/nikhilchandurkar/chat-app/actions/workflows/ci.yml)
+[![Security VAPT Scan](https://github.com/nikhilchandurkar/chat-app/actions/workflows/security.yml/badge.svg)](https://github.com/nikhilchandurkar/chat-app/actions/workflows/security.yml)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Django 5.1](https://img.shields.io/badge/django-5.1-green.svg)](https://www.djangoproject.com/)
+[![MySQL 8+](https://img.shields.io/badge/mysql-8.0+-orange.svg)](https://www.mysql.com/)
+[![React 18](https://img.shields.io/badge/react-18-61dafb.svg)](https://react.dev/)
+
+A high-performance, enterprise-grade, end-to-end messaging platform designed for privacy, zero-BOLA authorization, low latency, and production reliability.
+
+The system features a **unified Django Daphne ASGI backend**, **MySQL 8+**, **Redis 7+ Streams**, a **React 18 web application**, and **mobile clients (Capacitor & React Native)** with **Firebase Cloud Messaging (FCM HTTP v1)** and **private file storage**.
 
 ---
 
@@ -9,128 +18,129 @@ A high-performance, real-time chat application powered by **Django ASGI (Daphne)
 | Layer | Technology | Details |
 |---|---|---|
 | **Backend** | Python 3.12, Django 5.1, DRF | REST API + ASGI routing |
-| **ASGI Server** | Daphne 4.1 | Handles HTTP & WebSockets on port `3000` |
-| **Real-Time** | Django Channels 4.2 | Native WebSockets at `/ws` |
-| **Database** | **MySQL 8.0 (Single Server DB)** | Container `chat_mysql`, internal port `3306`, persisted at `/opt/chat-app/mysql_data` |
-| **Cache & Task Broker** | Redis 7 Alpine | Container `chat_redis`, internal port `6379`, persisted at `/opt/chat-app/redis_data` |
-| **Task Queue** | Celery 5.4 | Container `chat_celery_worker` with memory controls |
+| **ASGI Server** | Daphne 4.1 | Handles HTTP & WebSockets |
+| **Real-Time** | Django Channels 4.2 | Native WebSockets at `/ws/chat/` |
+| **Database** | **MySQL 8.0 (Single Server DB)** | Container `chat_mysql`, internal port `3306`, `utf8mb4` emoji support |
+| **Cache & Task Broker** | Redis 7 Alpine | Container `chat_redis`, internal port `6379` |
+| **Task Queue** | Celery 5.4 | Background workers for notifications and email delivery |
 | **Web & Proxy Server** | Nginx | Port `80` (HTTP) → Serves React static SPA + proxies API/WebSockets |
 | **Frontend** | React 18, TypeScript, Vite 6 | Material-UI (MUI), Redux Toolkit, Framer Motion, Axios |
-| **Mobile (Android)** | **Capacitor 6** | Wraps React SPA into native Android APK connecting to live server |
+| **Mobile** | Capacitor 6 & React Native | Android app connecting to live API & WebSocket server |
 | **CI/CD** | GitHub Actions | 7-Stage pipeline (Lint, SAST, Dependency audit, Tests, Build, Scan, EC2 Deploy) |
-| **Security** | Bandit, Semgrep, Trivy, Gitleaks, AES-256 | At-rest encryption for messages |
+| **Security** | Bandit, Semgrep, Trivy, Gitleaks, AES-256 | At-rest encryption for sensitive data |
 
 ---
 
-## 🗄️ Database Architecture: Single Server DB
-
-> [!IMPORTANT]
-> **There is ONLY 1 DATABASE for the entire app: MySQL 8 running directly on the EC2 server in Docker.**
-> - **Container Name:** `chat_mysql`
-> - **Database Name:** `chat_db`
-> - **Database User:** `chat_user`
-> - **Port:** `127.0.0.1:3306` (strictly internal, blocked from internet)
-> - **Storage Mount:** `/opt/chat-app/mysql_data` on server disk
-> - **Character Set:** `utf8mb4` (full emoji support for chat)
-
----
-
-## 🌐 Server Deployment Architecture (`16.113.127.132`)
+## 🏗️ Architecture & Directory Tree
 
 ```
-Internet Request (http://16.113.127.132)
-                     │
-                     ▼
-             ┌───────────────┐
-             │  Nginx (:80)  │
-             └───────┬───────┘
-                     │
-     ┌───────────────┼────────────────────────┐
-     │               │                        │
-     ▼               ▼                        ▼
-Static Web SPA     REST API (/api/)      WebSockets (/ws)
-/opt/chat-app/     Daphne Container      Daphne Container
-frontend/          (127.0.0.1:3000)      (127.0.0.1:3000)
-                     │                        │
-                     └──────────┬─────────────┘
-                                │
-                 ┌──────────────┴──────────────┐
-                 ▼                             ▼
-       MySQL 8 Container             Redis 7 Container
-        (127.0.0.1:3306)              (127.0.0.1:6379)
+chat-app/
+├── client/                     # 💻 Web App (React 18 + Vite + MUI)
+│   ├── android/                # 📱 Capacitor Android Studio Project
+│   ├── src/
+│   │   ├── components/         # Reusable UI components & dialogs
+│   │   ├── pages/              # Chat, Dashboard, Login, Groups
+│   │   ├── redux/              # RTK Store, API slices, state
+│   │   └── socket.jsx          # Native WebSocket client provider
+│   └── dist/                   # Production build assets
+├── django_server/              # 🐍 Backend (Django 5.1 + Daphne ASGI)
+│   ├── apps/
+│   │   ├── authentication/     # Users, Profiles, Contacts, Requests, OTP
+│   │   ├── chat/               # Conversations, Members, Invite Links
+│   │   ├── messages_app/       # Messages, Reactions, Attachments, Encryption
+│   │   ├── notifications/      # FCM Direct HTTP v1 & Web Push (VAPID)
+│   │   ├── outbox/             # Transactional Outbox Pattern & Redis Streams
+│   │   ├── realtime/           # Django Channels Consumers & WS Routing
+│   │   ├── status_app/         # Ephemeral 24hr Status Stories
+│   │   └── storage_app/        # Private Chunked File Storage & Streaming
+│   └── core/                   # ASGI/WSGI, Settings, URLs, Tests
+├── docs/                       # 📚 Full Architectural & Operational Guides
+├── mobile/                     # 📱 React Native Mobile Project
+├── nginx.conf                  # 🌐 Production Nginx Reverse Proxy Config
+└── setup_mysql_and_env.ps1     # ⚡ 1-Click MySQL & Environment Windows Setup
 ```
 
 ---
 
-## ⚡ Instant Setup on Server (`16.113.127.132`)
+## 🏃‍♂️ Quick Start (Local Development)
 
-If your Daphne backend is already running on port 3000, set up Nginx and the Frontend with:
+### 1. Database & Backend Setup (Windows PowerShell)
 
-```bash
-# 1. Install & enable Nginx
-sudo apt-get update && sudo apt-get install -y nginx
-sudo systemctl enable nginx
+Run the automated one-click setup script from the root directory:
 
-# 2. Copy and activate Nginx config
-sudo cp nginx.conf /etc/nginx/sites-available/chatapp
-sudo ln -sf /etc/nginx/sites-available/chatapp /etc/nginx/sites-enabled/chatapp
-sudo rm -f /etc/nginx/sites-enabled/default
-
-# 3. Test and start Nginx
-sudo nginx -t
-sudo systemctl restart nginx
-
-# 4. Create directories & set permissions
-sudo mkdir -p /opt/chat-app/{frontend,media,logs}
-sudo chown -R ubuntu:ubuntu /opt/chat-app
-sudo chmod -R 775 /opt/chat-app
+```powershell
+.\setup_mysql_and_env.ps1
 ```
 
----
+Or manually:
 
-## 📱 Android Testing & APK Build (Capacitor)
+```powershell
+cd django_server
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py test core.tests
+daphne -b 127.0.0.1 -p 8000 core.asgi:application
+```
 
-The mobile client is configured with Capacitor 6 under `client/android`. It embeds the React web application and connects directly to `http://16.113.127.132`.
-
-### Step 1: Build Web and Sync to Android
+### 2. Frontend Web Application (React 18 + Vite)
 
 ```powershell
 cd client
-npm run build:ci
-npx cap sync android
+npm install
+npm run dev
 ```
 
-### Step 2: Generate Debug APK (No keystore required)
+*Web client opens at `http://localhost:5173`.*
+
+---
+
+## 📱 Mobile Setup & Android APK
 
 ```powershell
-cd client\android
+cd client
+npm run build
+npx cap sync android
+cd android
 .\gradlew.bat assembleDebug
 ```
-The generated APK will be at:
+
+Debug APK output:
 `client\android\app\build\outputs\apk\debug\app-debug.apk`
 
-### Step 3: Test on Device or Emulator
+---
 
-```powershell
-# Open Android Studio:
+## 🧪 Testing & Verification
+
+```bash
+# Backend test suite (MySQL 8)
+cd django_server
+python manage.py test core.tests
+
+# Frontend production build
 cd client
-npx cap open android
-
-# Or install directly to connected phone:
-adb install android\app\build\outputs\apk\debug\app-debug.apk
+npm run build
 ```
 
 ---
 
-## 🧪 Testing & Quality Gates
+## 📚 Complete Documentation Suite
 
-```bash
-# Backend pytest suite (SQLite isolation)
-cd django_server && pytest tests/ -v --cov=apps
+Detailed operational runbooks are located in [`docs/`](docs/):
 
-# Frontend vitest suite
-cd client && npm run test
+1. [**Project Overview**](docs/PROJECT_OVERVIEW.md) - System architecture and technology stack.
+2. [**Local Setup Guide**](docs/LOCAL_SETUP.md) - Developer environment configuration.
+3. [**Authentication Setup**](docs/AUTHENTICATION_SETUP.md) - Passwordless OTP and JWT architecture.
+4. [**OAuth 2.0 Setup**](docs/OAUTH_SETUP.md) - Google, GitHub, and Facebook provider configuration.
+5. [**Email System Setup**](docs/EMAIL_SETUP.md) - Transactional email templates and SMTP setup.
+6. [**Android Studio Build Guide**](docs/ANDROID_STUDIO_BUILD.md) - Release APK compilation and signing.
+7. [**Production EC2 Deployment**](docs/EC2_DEPLOYMENT.md) - Ubuntu provisioning, systemd, and Nginx.
+8. [**Security & VAPT Report**](docs/SECURITY_VAPT_REPORT.md) - Vulnerability findings and test evidence.
+9. [**Backup & Disaster Recovery**](docs/BACKUP_RESTORE.md) - MySQL dumps, storage archives, and restore procedures.
+10. [**REST & WebSocket API Specs**](docs/API_DOCUMENTATION.md) - Endpoint inventory and WebSocket frames.
 
-# Security scanning
-cd django_server && bandit -r apps/ core/
-```
+---
+
+## 🛡️ License
+
+This project is licensed under the MIT License.

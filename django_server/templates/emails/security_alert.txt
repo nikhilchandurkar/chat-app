@@ -1,0 +1,13 @@
+Hello {{ user_name }},
+
+SECURITY ALERT: {{ alert_title|default:"Security Notice" }}
+
+{{ alert_message }}
+
+Timestamp: {{ timestamp }}
+IP Address: {{ ip_address|default:"Not recorded" }}
+
+If you suspect unauthorized activity, review your active sessions and devices in your account settings immediately.
+
+— The {{ app_name|default:"ChatApp" }} Security Team
+

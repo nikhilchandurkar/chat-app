@@ -1,0 +1,21 @@
+[Unit]
+Description=ChatApp Daphne ASGI Server
+After=network.target mysql.service redis-server.service
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/srv/chatapp/django_server
+EnvironmentFile=/srv/chatapp/django_server/.env
+ExecStart=/srv/chatapp/django_server/venv/bin/daphne -b 127.0.0.1 -p 8000 --proxy-headers core.asgi:application
+Restart=always
+RestartSec=5
+LimitNOFILE=65535
+PrivateTmp=true
+ProtectSystem=full
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+

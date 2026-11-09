@@ -1,173 +1,595 @@
-import secrets
-import hashlib
 import os
 from django.utils import timezone
-from django.core.cache import cache
-from django.contrib.auth import authenticate
+from django.db import transaction
 from django.db.models import Q
+from django.conf import settings
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import User, Request
+from .models import User, UserProfile, Request, SocialAccount, BlockedUser, Report, AuditLog, Device, UserSession
+from .throttles import OTPRequestThrottle, OTPVerifyThrottle, SearchThrottle, get_client_ip
+from rest_framework_simplejwt.tokens import RefreshToken as SimpleRefreshToken
 from .serializers import (
     UserSerializer,
-    RegisterSerializer,
-    LoginSerializer,
+    UserProfileSerializer,
+    PasswordLoginSerializer,
+    RegisterRequestSerializer,
+    RegisterVerifySerializer,
     RequestOTPSerializer,
     VerifyOTPSerializer,
+    GoogleAuthSerializer,
+    GitHubAuthSerializer,
+    FacebookAuthSerializer,
+    SocialAccountSerializer,
+    DeviceRegisterSerializer,
+    SessionSerializer,
     FriendRequestSerializer,
 )
-from .permissions import IsAdminUserRole
-from .tasks import send_otp_email_task, send_reset_password_email_task
+from .services.otp_service import OTPService
+from .services.oauth_service import OAuthService
+from .services.session_service import SessionService
 
 
-def set_jwt_cookie(response, user):
-    """Sets the chitChat-Token cookie matching the React frontend's expectations and includes token in response body for React Native mobile clients."""
-    refresh = RefreshToken.for_user(user)
-    access_token = str(refresh.access_token)
+def set_jwt_cookie(response, access_token: str, refresh_token: str = None):
+    """Sets secure HttpOnly cookie for Web and attaches token to response body for React Native."""
     response.set_cookie(
         key="chitChat-Token",
         value=access_token,
-        max_age=15 * 24 * 60 * 60,
+        max_age=30 * 24 * 60 * 60,
         httponly=True,
-        samesite="None",
-        secure=True,
+        samesite="Lax" if settings.DEBUG else "None",
+        secure=not settings.DEBUG,
     )
     if isinstance(response.data, dict):
         response.data["token"] = access_token
-    return access_token
+        if refresh_token:
+            response.data["refreshToken"] = refresh_token
 
 
-# ─── OTP Authentication (New Scalable Feature) ────────────────────────────────
-class RequestOTPView(APIView):
+# ─── Public Auth Configuration ───────────────────────────────────────────────
+class AuthConfigView(APIView):
     permission_classes = [AllowAny]
 
-    def post(self, request):
-        serializer = RequestOTPSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response({"success": False, "message": "Invalid email address"}, status=status.HTTP_400_BAD_REQUEST)
-
-        email = serializer.validated_data["email"].lower().strip()
-        otp = f"{secrets.randbelow(900000) + 100000}"
-
-        # Cache in Redis for 5 minutes (300 seconds)
-        cache.set(f"otp:{email}", otp, timeout=300)
-
-        # Send OTP asynchronously via Celery
-        try:
-            send_otp_email_task.delay(email, otp)
-        except Exception:
-            # If Celery worker is offline during local dev, log it
-            print(f"[DEV] Generated OTP for {email}: {otp}")
-
+    def get(self, request):
         return Response({
             "success": True,
-            "message": "A 6-digit verification code has been sent to your email."
+            "google_client_id": getattr(settings, "GOOGLE_CLIENT_ID", ""),
+            "github_client_id": getattr(settings, "GITHUB_CLIENT_ID", ""),
+            "facebook_app_id": getattr(settings, "FACEBOOK_APP_ID", ""),
         })
 
 
-class VerifyOTPView(APIView):
+# ─── Username / Email + Password Login ──────────────────────────────────────
+class PasswordLoginView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [OTPRequestThrottle]
 
     def post(self, request):
-        serializer = VerifyOTPSerializer(data=request.data)
+        serializer = PasswordLoginSerializer(data=request.data)
         if not serializer.is_valid():
-            return Response({"success": False, "message": "Invalid email or OTP format"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"success": False, "message": "Username/email and password are required.", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
-        email = serializer.validated_data["email"].lower().strip()
-        otp = serializer.validated_data["otp"].strip()
+        identifier = serializer.validated_data["username"].strip()
+        password = serializer.validated_data["password"]
+        device_id = serializer.validated_data.get("device_id", "web-client")
+        platform = serializer.validated_data.get("platform", "web")
+        app_version = serializer.validated_data.get("app_version", "1.0.0")
 
-        cached_otp = cache.get(f"otp:{email}")
-        if not cached_otp or cached_otp != otp:
-            return Response({"success": False, "message": "Invalid or expired OTP code"}, status=status.HTTP_400_BAD_REQUEST)
+        user = User.objects.filter(
+            Q(username__iexact=identifier) | Q(email__iexact=identifier)
+        ).first()
 
-        cache.delete(f"otp:{email}")
+        if not user or not user.check_password(password):
+            return Response({"success": False, "message": "Invalid username or password."}, status=status.HTTP_401_UNAUTHORIZED)
 
-        user, created = User.objects.get_or_create(
-            email=email,
+        if not user.is_active:
+            return Response({"success": False, "message": "Your account has been deactivated. Please contact support."}, status=status.HTTP_403_FORBIDDEN)
+
+        # Update last active & status
+        now = timezone.now()
+        user.status = "online"
+        user.last_login = now
+        user.save(update_fields=["status", "last_login"])
+
+        # Session & Device
+        device, _ = Device.objects.update_or_create(
+            user=user,
+            device_id=device_id,
             defaults={
-                "username": email.split("@")[0],
-                "name": email.split("@")[0].capitalize(),
-                "role": "user",
+                "platform": platform,
+                "app_version": app_version,
+                "is_active": True,
+                "last_active_at": now,
             }
+        )
+
+        session = SessionService.create_session(
+            user=user,
+            device=device,
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", ""),
+        )
+
+        # Generate JWT
+        jwt_token = SimpleRefreshToken.for_user(user)
+        access_token = str(jwt_token.access_token)
+        refresh_token = str(jwt_token)
+
+        # Audit Log
+        AuditLog.objects.create(
+            user=user,
+            action="LOGIN_SUCCESS",
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", "")[:255],
+            details={"method": "password", "platform": platform}
         )
 
         response = Response({
             "success": True,
-            "message": f"Welcome back, {user.name}!",
-            "user": UserSerializer(user).data
+            "message": f"Welcome back, {user.name or user.username}!",
+            "user": UserSerializer(user).data,
+            "token": access_token,
+            "refreshToken": refresh_token,
         })
-        set_jwt_cookie(response, user)
+        set_jwt_cookie(response, access_token, refresh_token)
         return response
 
 
-# ─── Traditional User Registration & Login ────────────────────────────────────
-class NewUserView(APIView):
+# ─── Registration with Email OTP Verification ───────────────────────────────
+class RegisterRequestView(APIView):
     permission_classes = [AllowAny]
+    throttle_classes = [OTPRequestThrottle]
 
     def post(self, request):
-        serializer = RegisterSerializer(data=request.data)
+        serializer = RegisterRequestSerializer(data=request.data)
         if not serializer.is_valid():
-            error_msg = next(iter(serializer.errors.values()))[0]
-            return Response({"success": False, "message": str(error_msg)}, status=status.HTTP_400_BAD_REQUEST)
+            first_err = next(iter(serializer.errors.values()))[0] if serializer.errors else "Invalid registration details."
+            return Response({"success": False, "message": first_err, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
 
-        user = serializer.save()
-
-        # Handle avatar file upload
-        if "avatar" in request.FILES:
-            avatar_file = request.FILES["avatar"]
-            # Save file to media root
-            from django.core.files.storage import default_storage
-            filename = default_storage.save(f"avatars/{user.id}_{avatar_file.name}", avatar_file)
-            user.avatar = {
-                "public_id": filename,
-                "url": f"/api/v1/media/{filename}"
-            }
-            user.save(update_fields=["avatar"])
-
-        response = Response({
-            "success": True,
-            "message": "User Created",
-            "user": UserSerializer(user).data
-        }, status=status.HTTP_201_CREATED)
-        set_jwt_cookie(response, user)
-        return response
-
-
-class LoginView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        serializer = LoginSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response({"success": False, "message": "Username and password are required"}, status=status.HTTP_400_BAD_REQUEST)
-
-        identifier = serializer.validated_data["username"].lower().strip()
+        username = serializer.validated_data["username"].strip()
+        email = serializer.validated_data["email"].lower().strip()
         password = serializer.validated_data["password"]
+        confirm_password = serializer.validated_data["confirm_password"]
 
-        user = User.objects.filter(Q(username=identifier) | Q(email=identifier)).first()
-        if not user or not user.check_password(password):
-            return Response({"success": False, "message": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+        if password != confirm_password:
+            return Response({"success": False, "message": "Passwords do not match."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if len(password) < 8:
+            return Response({"success": False, "message": "Password must be at least 8 characters long."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if User.objects.filter(username__iexact=username).exists():
+            return Response({"success": False, "message": "This username is already taken. Please choose another."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if User.objects.filter(email__iexact=email).exists():
+            return Response({"success": False, "message": "An account with this email address already exists."}, status=status.HTTP_400_BAD_REQUEST)
+
+        ip = get_client_ip(request)
+        success, message = OTPService.request_otp(email, purpose="register", ip_address=ip)
+        if not success:
+            return Response({"success": False, "message": message}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        return Response({
+            "success": True,
+            "message": f"Verification code sent to {email}. Please enter the 6-digit code to complete registration.",
+        })
+
+
+class RegisterVerifyView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [OTPVerifyThrottle]
+
+    def post(self, request):
+        serializer = RegisterVerifySerializer(data=request.data)
+        if not serializer.is_valid():
+            first_err = next(iter(serializer.errors.values()))[0] if serializer.errors else "Invalid verification details."
+            return Response({"success": False, "message": first_err, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        username = serializer.validated_data["username"].strip()
+        email = serializer.validated_data["email"].lower().strip()
+        password = serializer.validated_data["password"]
+        otp = serializer.validated_data["otp"].strip()
+        name = serializer.validated_data.get("name", "").strip() or username
+        device_id = serializer.validated_data.get("device_id", "web-client")
+        platform = serializer.validated_data.get("platform", "web")
+        app_version = serializer.validated_data.get("app_version", "1.0.0")
+
+        # 1. Verify OTP code
+        success, message = OTPService.verify_otp_only(email=email, otp=otp, purpose="register")
+        if not success:
+            return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 2. Race condition check for username/email
+        if User.objects.filter(username__iexact=username).exists():
+            return Response({"success": False, "message": "Username was taken while verifying. Please choose another username."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if User.objects.filter(email__iexact=email).exists():
+            return Response({"success": False, "message": "Email was registered while verifying."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # 3. Create user in database
+        with transaction.atomic():
+            user = User.objects.create_user(
+                email=email,
+                username=username,
+                password=password,
+                name=name,
+                role="user",
+                is_active=True,
+            )
+            user.status = "online"
+            user.save(update_fields=["status"])
+
+            # Create or ensure UserProfile
+            UserProfile.objects.get_or_create(
+                user=user,
+                defaults={"display_name": name or username}
+            )
+
+            # Device & Session
+            now = timezone.now()
+            device, _ = Device.objects.update_or_create(
+                user=user,
+                device_id=device_id,
+                defaults={
+                    "platform": platform,
+                    "app_version": app_version,
+                    "is_active": True,
+                    "last_active_at": now,
+                }
+            )
+
+            session = SessionService.create_session(
+                user=user,
+                device=device,
+                ip_address=get_client_ip(request),
+                user_agent=request.META.get("HTTP_USER_AGENT", ""),
+            )
+
+            jwt_token = SimpleRefreshToken.for_user(user)
+            access_token = str(jwt_token.access_token)
+            refresh_token = str(jwt_token)
+
+            AuditLog.objects.create(
+                user=user,
+                action="REGISTER_SUCCESS",
+                ip_address=get_client_ip(request),
+                user_agent=request.META.get("HTTP_USER_AGENT", "")[:255],
+                details={"method": "email_otp", "platform": platform}
+            )
 
         response = Response({
             "success": True,
-            "message": f"Welcome back, {user.name}!",
-            "user": UserSerializer(user).data
-        })
-        set_jwt_cookie(response, user)
+            "message": "Account created successfully! Welcome to ChitChat.",
+            "user": UserSerializer(user).data,
+            "token": access_token,
+            "refreshToken": refresh_token,
+        }, status=status.HTTP_201_CREATED)
+        set_jwt_cookie(response, access_token, refresh_token)
         return response
 
 
+# ─── Passwordless Email OTP Authentication ──────────────────────────────────
+class RequestOTPView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [OTPRequestThrottle]
+
+    def post(self, request):
+        serializer = RequestOTPSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "A valid email address is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        email = serializer.validated_data["email"]
+        purpose = serializer.validated_data.get("purpose", "login")
+        ip = get_client_ip(request)
+
+        success, message = OTPService.request_otp(email, purpose=purpose, ip_address=ip)
+        if not success:
+            return Response({"success": False, "message": message}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        return Response({"success": True, "message": message})
+
+
+class VerifyOTPView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [OTPVerifyThrottle]
+
+    def post(self, request):
+        serializer = VerifyOTPSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "Valid email and 6-digit code are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        email = serializer.validated_data["email"]
+        otp = serializer.validated_data["otp"]
+        device_id = serializer.validated_data.get("device_id", "web-client")
+        platform = serializer.validated_data.get("platform", "web")
+        app_version = serializer.validated_data.get("app_version", "1.0.0")
+        ip = get_client_ip(request)
+        ua = request.META.get("HTTP_USER_AGENT", "")
+
+        success, message, data = OTPService.verify_otp(
+            email=email,
+            otp=otp,
+            device_id=device_id,
+            platform=platform,
+            app_version=app_version,
+            ip_address=ip,
+            user_agent=ua,
+        )
+
+        if not success:
+            return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
+
+        response = Response({
+            "success": True,
+            "message": message,
+            "user": data["user"],
+            "session_id": data["session_id"],
+        })
+        set_jwt_cookie(response, data["tokens"]["access"], data["tokens"]["refresh"])
+        return response
+
+
+class AccountRecoveryView(APIView):
+    """
+    Secure passwordless account recovery via email OTP.
+    Invalidates all prior active sessions and refresh tokens on other devices.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes = [OTPVerifyThrottle]
+
+    def post(self, request):
+        email = request.data.get("email", "").strip().lower()
+        otp = request.data.get("otp", "").strip()
+        device_id = request.data.get("device_id", "web-recovery")
+        platform = request.data.get("platform", "web")
+        ip = get_client_ip(request)
+        ua = request.META.get("HTTP_USER_AGENT", "")
+
+        if not email or not otp:
+            return Response({"success": False, "message": "Email and 6-digit recovery code are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        success, message, data = OTPService.recover_account(
+            email=email,
+            otp=otp,
+            device_id=device_id,
+            platform=platform,
+            ip_address=ip,
+            user_agent=ua
+        )
+        if not success:
+            return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
+
+        response = Response({
+            "success": True,
+            "message": message,
+            "user": data.get("user"),
+            "session_id": data.get("session_id"),
+        })
+        if "tokens" in data:
+            set_jwt_cookie(response, data["tokens"]["access"], data["tokens"]["refresh"])
+        return response
+
+
+# ─── Social OAuth Authentication & Linking ──────────────────────────────────
+class GoogleAuthView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = GoogleAuthSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "id_token or code is required.", "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        id_token = serializer.validated_data.get("id_token")
+        code = serializer.validated_data.get("code")
+        redirect_uri = serializer.validated_data.get("redirect_uri", "")
+        device_id = serializer.validated_data.get("device_id", "google-client")
+        platform = serializer.validated_data.get("platform", "web")
+        app_version = serializer.validated_data.get("app_version", "1.0.0")
+
+        try:
+            if code:
+                profile = OAuthService.exchange_google_code(code, redirect_uri)
+            elif id_token:
+                profile = OAuthService.verify_google_token(id_token)
+            else:
+                return Response({"success": False, "message": "Either id_token or code is required."}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"success": False, "message": f"Google verification failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_user = request.user if request.user.is_authenticated else None
+        success, message, data = OAuthService.authenticate_or_link_social(
+            provider="google",
+            profile_data=profile,
+            current_user=current_user,
+            device_id=device_id,
+            platform=platform,
+            app_version=app_version,
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", "")
+        )
+
+        if not success:
+            return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
+
+        response = Response({"success": True, "message": message, "user": data.get("user")})
+        if "tokens" in data:
+            set_jwt_cookie(response, data["tokens"]["access"], data["tokens"]["refresh"])
+        return response
+
+
+class GitHubAuthView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = GitHubAuthSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        code = serializer.validated_data["code"]
+        redirect_uri = serializer.validated_data.get("redirect_uri", "")
+        device_id = serializer.validated_data.get("device_id", "github-client")
+        platform = serializer.validated_data.get("platform", "web")
+        app_version = serializer.validated_data.get("app_version", "1.0.0")
+
+        try:
+            profile = OAuthService.exchange_github_code(code, redirect_uri)
+        except Exception as e:
+            return Response({"success": False, "message": f"GitHub verification failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_user = request.user if request.user.is_authenticated else None
+        success, message, data = OAuthService.authenticate_or_link_social(
+            provider="github",
+            profile_data=profile,
+            current_user=current_user,
+            device_id=device_id,
+            platform=platform,
+            app_version=app_version,
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", "")
+        )
+
+        if not success:
+            return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
+
+        response = Response({"success": True, "message": message, "user": data.get("user")})
+        if "tokens" in data:
+            set_jwt_cookie(response, data["tokens"]["access"], data["tokens"]["refresh"])
+        return response
+
+
+class FacebookAuthView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = FacebookAuthSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "access_token is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        access_token = serializer.validated_data["access_token"]
+        device_id = serializer.validated_data.get("device_id", "facebook-client")
+        platform = serializer.validated_data.get("platform", "web")
+        app_version = serializer.validated_data.get("app_version", "1.0.0")
+
+        try:
+            profile = OAuthService.verify_facebook_token(access_token)
+        except Exception as e:
+            return Response({"success": False, "message": f"Facebook verification failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_user = request.user if request.user.is_authenticated else None
+        success, message, data = OAuthService.authenticate_or_link_social(
+            provider="facebook",
+            profile_data=profile,
+            current_user=current_user,
+            device_id=device_id,
+            platform=platform,
+            app_version=app_version,
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", "")
+        )
+
+        if not success:
+            return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
+
+        response = Response({"success": True, "message": message, "user": data.get("user")})
+        if "tokens" in data:
+            set_jwt_cookie(response, data["tokens"]["access"], data["tokens"]["refresh"])
+        return response
+
+
+class LinkedProvidersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        accounts = SocialAccount.objects.filter(user=request.user)
+        return Response({
+            "success": True,
+            "providers": SocialAccountSerializer(accounts, many=True).data
+        })
+
+
+class UnlinkProviderView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        provider = request.data.get("provider", "").lower().strip()
+        success, message = OAuthService.unlink_provider(request.user, provider)
+        if not success:
+            return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "message": message})
+
+
+# ─── Refresh Token & Session Management ─────────────────────────────────────
+class RefreshTokenView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        token_str = request.data.get("refreshToken") or request.COOKIES.get("chitChat-RefreshToken")
+        if not token_str:
+            return Response({"success": False, "message": "Refresh token is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        success, message, tokens = SessionService.rotate_refresh_token(token_str)
+        if not success:
+            return Response({"success": False, "message": message}, status=status.HTTP_401_UNAUTHORIZED)
+
+        response = Response({"success": True, "message": message, "tokens": tokens})
+        set_jwt_cookie(response, tokens["access"], tokens["refresh"])
+        return response
+
+
+class LogoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        response = Response({"success": True, "message": "Logged out successfully."})
+        response.delete_cookie("chitChat-Token")
+        response.delete_cookie("chitChat-RefreshToken")
+        return response
+
+
+class UserSessionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        sessions = SessionService.get_user_sessions(request.user)
+        return Response({"success": True, "sessions": sessions})
+
+
+class RevokeSessionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, session_id):
+        success = SessionService.revoke_session(request.user, session_id)
+        if not success:
+            return Response({"success": False, "message": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"success": True, "message": "Session revoked."})
+
+
+class RegisterDeviceView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = DeviceRegisterSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        device = SessionService.register_device(
+            user=request.user,
+            device_id=serializer.validated_data["device_id"],
+            platform=serializer.validated_data["platform"],
+            app_version=serializer.validated_data.get("app_version", "1.0.0"),
+            native_fcm_token=serializer.validated_data.get("native_fcm_token", ""),
+        )
+        return Response({"success": True, "device_id": device.device_id, "message": "Device registered."})
+
+
+# ─── Profile Management ─────────────────────────────────────────────────────
 class GetMyProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         return Response({
             "success": True,
-            "message": "User profile fetched",
             "user": UserSerializer(request.user).data
         })
 
@@ -179,12 +601,20 @@ class UpdateProfileView(APIView):
         user = request.user
         name = request.data.get("name")
         bio = request.data.get("bio")
+        username = request.data.get("username")
+
+        if username and username.lower() != user.username:
+            clean_username = username.lower().strip()
+            if User.objects.filter(username=clean_username).exclude(id=user.id).exists():
+                return Response({"success": False, "message": "Username already taken."}, status=status.HTTP_400_BAD_REQUEST)
+            user.username = clean_username
 
         if name:
             user.name = name.strip()
         if bio is not None:
             user.bio = bio.strip()
 
+        # Handle avatar file upload
         if "avatar" in request.FILES:
             avatar_file = request.FILES["avatar"]
             from django.core.files.storage import default_storage
@@ -195,9 +625,18 @@ class UpdateProfileView(APIView):
             }
 
         user.save()
+
+        # Update profile
+        profile, _ = UserProfile.objects.get_or_create(user=user)
+        if "display_name" in request.data:
+            profile.display_name = request.data["display_name"].strip()
+        if "about" in request.data:
+            profile.about = request.data["about"].strip()
+        profile.save()
+
         return Response({
             "success": True,
-            "message": "Profile updated successfully",
+            "message": "Profile updated successfully.",
             "user": UserSerializer(user).data
         })
 
@@ -207,95 +646,10 @@ class DeleteProfileView(APIView):
 
     def delete(self, request):
         user = request.user
-        user.delete()
-        response = Response({"success": True, "message": "Account deleted successfully"})
+        user.is_active = False
+        user.save(update_fields=["is_active"])
+        response = Response({"success": True, "message": "Account deactivated."})
         response.delete_cookie("chitChat-Token")
-        return response
-
-
-class ChangePasswordView(APIView):
-    permission_classes = [IsAuthenticated]
-
-    def put(self, request):
-        current_password = request.data.get("currentPassword")
-        new_password = request.data.get("newPassword")
-
-        if not current_password or not new_password:
-            return Response({"success": False, "message": "Please provide current and new password"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if len(new_password) < 8:
-            return Response({"success": False, "message": "New password must be at least 8 characters"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if not request.user.check_password(current_password):
-            return Response({"success": False, "message": "Current password is incorrect"}, status=status.HTTP_401_UNAUTHORIZED)
-
-        request.user.set_password(new_password)
-        request.user.save()
-        return Response({"success": True, "message": "Password changed successfully"})
-
-
-class ForgotPasswordView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        email = request.data.get("email", "").strip().lower()
-        if not email:
-            return Response({"success": False, "message": "Please provide your email address"}, status=status.HTTP_400_BAD_REQUEST)
-
-        user = User.objects.filter(email=email).first()
-        if not user:
-            return Response({"success": True, "message": "If an account exists with that email, a reset link has been sent."})
-
-        raw_token = secrets.token_hex(32)
-        hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
-
-        user.reset_password_token = hashed_token
-        user.reset_password_expires = timezone.now() + timezone.timedelta(hours=1)
-        user.save(update_fields=["reset_password_token", "reset_password_expires"])
-
-        client_url = os.environ.get("CLIENT_URL", "https://nikhil-chats.chickenkiller.com")
-        reset_url = f"{client_url}/reset-password?token={raw_token}&email={user.email}"
-
-        print(f"[DEV] Reset Password Link for {user.email}: {reset_url}")
-        try:
-            send_reset_password_email_task.delay(user.email, reset_url, user.name)
-        except Exception:
-            pass
-
-        return Response({"success": True, "message": "If an account exists with that email, a reset link has been sent."})
-
-
-class ResetPasswordView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        token = request.data.get("token")
-        email = request.data.get("email", "").strip().lower()
-        new_password = request.data.get("newPassword")
-
-        if not token or not email or not new_password:
-            return Response({"success": False, "message": "Invalid reset request"}, status=status.HTTP_400_BAD_REQUEST)
-
-        if len(new_password) < 8:
-            return Response({"success": False, "message": "Password must be at least 8 characters"}, status=status.HTTP_400_BAD_REQUEST)
-
-        hashed_token = hashlib.sha256(token.encode()).hexdigest()
-        user = User.objects.filter(
-            email=email,
-            reset_password_token=hashed_token,
-            reset_password_expires__gt=timezone.now()
-        ).first()
-
-        if not user:
-            return Response({"success": False, "message": "Reset link is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
-
-        user.set_password(new_password)
-        user.reset_password_token = None
-        user.reset_password_expires = None
-        user.save()
-
-        response = Response({"success": True, "message": "Password reset successfully. You are now logged in."})
-        set_jwt_cookie(response, user)
         return response
 
 
@@ -303,81 +657,87 @@ class UpdateStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
-        new_status = request.data.get("status")
-        valid_statuses = ["online", "away", "busy", "dnd"]
-        if new_status not in valid_statuses:
-            return Response({"success": False, "message": "Invalid status value"}, status=status.HTTP_400_BAD_REQUEST)
+        status_val = request.data.get("status", "online")
+        if status_val not in dict(User.STATUS_CHOICES):
+            return Response({"success": False, "message": "Invalid status value."}, status=status.HTTP_400_BAD_REQUEST)
 
-        request.user.status = new_status
+        request.user.status = status_val
         request.user.save(update_fields=["status"])
-        return Response({"success": True, "message": "Status updated", "status": new_status})
+        return Response({"success": True, "status": status_val})
 
 
 class UpdatePrivacyView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
-        profile_privacy = request.data.get("profile")
-        if profile_privacy not in ["everyone", "friends", "nobody"]:
-            return Response({"success": False, "message": "Invalid privacy setting"}, status=status.HTTP_400_BAD_REQUEST)
-
-        request.user.privacy = {"profile": profile_privacy}
-        request.user.save(update_fields=["privacy"])
-        return Response({"success": True, "message": "Privacy settings updated", "privacy": request.user.privacy})
-
-
-class LogoutView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        response = Response({"success": True, "message": "Logout successful"})
-        response.delete_cookie("chitChat-Token")
-        return response
+        profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        for field in [
+            "privacy_avatar", "privacy_online", "privacy_last_seen",
+            "hide_from_search", "privacy_read_receipts", "privacy_typing_indicator",
+            "who_can_add_to_groups", "who_can_message_me"
+        ]:
+            if field in request.data:
+                setattr(profile, field, request.data[field])
+        profile.save()
+        return Response({
+            "success": True,
+            "privacy": UserProfileSerializer(profile).data
+        })
 
 
 class SearchUserView(APIView):
     permission_classes = [IsAuthenticated]
+    throttle_classes = [SearchThrottle]
 
     def get(self, request):
         query = request.query_params.get("name", "").strip()
-        page = int(request.query_params.get("page", 1))
-        limit = int(request.query_params.get("limit", 10))
+        if not query:
+            return Response({"success": True, "users": []})
 
-        # Exclude self and existing friends
-        users_qs = User.objects.filter(name__icontains=query).exclude(id=request.user.id)
-        start = (page - 1) * limit
-        end = start + limit
-        users = users_qs[start:end]
+        # Exclude blocked users and self
+        blocked_ids = BlockedUser.objects.filter(user=request.user).values_list("blocked_user_id", flat=True)
+        blocked_by_ids = BlockedUser.objects.filter(blocked_user=request.user).values_list("user_id", flat=True)
+        excluded_ids = set(list(blocked_ids) + list(blocked_by_ids) + [request.user.id])
 
-        results = []
-        for u in users:
-            can_see = u.privacy.get("profile") == "everyone" if isinstance(u.privacy, dict) else True
-            results.append({
-                "_id": str(u.id),
-                "name": u.name,
-                "avatar": u.avatar.get("url") if (can_see and isinstance(u.avatar, dict)) else None,
-            })
+        # Exclude users who configured 'hide_from_search'
+        hidden_users = UserProfile.objects.filter(hide_from_search=True).values_list("user_id", flat=True)
+        excluded_ids.update(hidden_users)
 
-        return Response({"success": True, "message": "Users fetched successfully", "users": results})
+        # Search by display name and username only (prevent email enumeration attacks)
+        users = User.objects.filter(
+            Q(name__icontains=query) | Q(username__icontains=query)
+        ).exclude(id__in=excluded_ids).order_by("name")[:20]
+
+        return Response({
+            "success": True,
+            "users": UserSerializer(users, many=True).data
+        })
 
 
+# ─── Social / Contacts / Blocks / Reports ───────────────────────────────────
 class SendFriendRequestView(APIView):
     permission_classes = [IsAuthenticated]
 
     def put(self, request):
-        target_user_id = request.data.get("userId")
-        if str(request.user.id) == str(target_user_id):
-            return Response({"success": False, "message": "Cannot send friend request to yourself"}, status=status.HTTP_400_BAD_REQUEST)
+        user_id = request.data.get("userId")
+        if not user_id:
+            return Response({"success": False, "message": "userId is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        target_user = User.objects.filter(id=target_user_id).first()
-        if not target_user:
-            return Response({"success": False, "message": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        target = User.objects.filter(id=user_id).first()
+        if not target or target == request.user:
+            return Response({"success": False, "message": "Target user not found or invalid."}, status=status.HTTP_400_BAD_REQUEST)
 
-        req, created = Request.objects.get_or_create(sender=request.user, receiver=target_user)
-        if not created:
-            return Response({"success": False, "message": "Request already sent"}, status=status.HTTP_400_BAD_REQUEST)
+        req, created = Request.objects.get_or_create(
+            sender=request.user,
+            receiver=target,
+            defaults={"status": "pending"}
+        )
+        if not created and req.status == "pending":
+            return Response({"success": False, "message": "Request already sent."}, status=status.HTTP_400_BAD_REQUEST)
 
-        return Response({"success": True, "message": "Friend request sent successfully"})
+        req.status = "pending"
+        req.save(update_fields=["status"])
+        return Response({"success": True, "message": "Friend request sent."})
 
 
 class AcceptFriendRequestView(APIView):
@@ -387,251 +747,212 @@ class AcceptFriendRequestView(APIView):
         request_id = request.data.get("requestId")
         accept = request.data.get("accept", True)
 
-        req_obj = Request.objects.filter(id=request_id, receiver=request.user).first()
-        if not req_obj:
-            return Response({"success": False, "message": "Request not found or unauthorized"}, status=status.HTTP_404_NOT_FOUND)
+        req = Request.objects.filter(id=request_id, receiver=request.user).first()
+        if not req:
+            return Response({"success": False, "message": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        if not accept:
-            req_obj.delete()
-            return Response({"success": True, "message": "Request rejected"})
+        if accept:
+            req.status = "accepted"
+            req.save(update_fields=["status"])
+            # Create a 1-to-1 conversation if one does not exist
+            from apps.chat.models import Conversation, ConversationMember
+            conv = Conversation.objects.filter(
+                type="direct",
+                member_records__user=request.user
+            ).filter(member_records__user=req.sender).first()
 
-        # Create Direct Chat between sender and receiver
-        from apps.chat.models import Chat
-        chat = Chat.objects.create(
-            name=f"{req_obj.sender.name} <==> {req_obj.receiver.name}",
-            group_chat=False
-        )
-        chat.members.add(req_obj.sender, req_obj.receiver)
-        req_obj.delete()
+            if not conv:
+                conv = Conversation.objects.create(type="direct", creator=request.user)
+                ConversationMember.objects.create(conversation=conv, user=request.user, role="member")
+                ConversationMember.objects.create(conversation=conv, user=req.sender, role="member")
 
-        return Response({
-            "success": True,
-            "message": "Friend request accepted",
-            "senderId": str(req_obj.sender.id)
-        })
+            return Response({"success": True, "message": "Friend request accepted.", "senderId": str(req.sender.id)})
+        else:
+            req.status = "rejected"
+            req.save(update_fields=["status"])
+            return Response({"success": True, "message": "Friend request rejected."})
 
 
 class GetNotificationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        requests = Request.objects.filter(receiver=request.user).select_related("sender")
-        all_requests = []
-        for r in requests:
-            all_requests.append({
-                "_id": str(r.id),
-                "sender": {
-                    "_id": str(r.sender.id),
-                    "name": r.sender.name,
-                    "avatar": r.sender.avatar.get("url") if isinstance(r.sender.avatar, dict) else None,
-                }
-            })
-        return Response({"success": True, "message": "Notifications fetched", "allRequests": all_requests})
+        pending_requests = Request.objects.filter(receiver=request.user, status="pending").select_related("sender")
+        return Response({
+            "success": True,
+            "allRequests": FriendRequestSerializer(pending_requests, many=True).data
+        })
 
 
-class GetFriendsView(APIView):
+class GetMyFriendsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from apps.chat.models import Chat
-        direct_chats = Chat.objects.filter(group_chat=False, members=request.user).prefetch_related("members")
+        # Friends are users connected via accepted requests or 1-to-1 conversations
+        from apps.chat.models import ConversationMember
+        conv_ids = ConversationMember.objects.filter(
+            user=request.user,
+            conversation__type="direct"
+        ).values_list("conversation_id", flat=True)
 
-        friends = []
-        for chat in direct_chats:
-            other = chat.members.exclude(id=request.user.id).first()
-            if other:
-                friends.append({
-                    "_id": str(other.id),
-                    "name": other.name,
-                    "avatar": other.avatar.get("url") if isinstance(other.avatar, dict) else None,
-                    "status": other.status
-                })
+        friend_user_ids = ConversationMember.objects.filter(
+            conversation_id__in=conv_ids
+        ).exclude(user=request.user).values_list("user_id", flat=True)
 
-        return Response({"success": True, "message": "Friends fetched successfully", "friends": friends})
+        friends = User.objects.filter(id__in=friend_user_ids)
+        return Response({
+            "success": True,
+            "friends": UserSerializer(friends, many=True).data
+        })
 
 
-class ToggleStarView(APIView):
+class ToggleStarMessageView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, id):
-        starred = list(request.user.starred_messages or [])
-        msg_id = str(id)
-        if msg_id in starred:
-            starred.remove(msg_id)
-            message = "Message unstarred"
-        else:
-            starred.append(msg_id)
-            message = "Message starred"
+        from apps.messages_app.models import StarredMessage, Message
+        msg = Message.objects.select_related("conversation").filter(id=id).first()
+        if not msg:
+            return Response({"success": False, "message": "Message not found."}, status=status.HTTP_404_NOT_FOUND)
 
-        request.user.starred_messages = starred
-        request.user.save(update_fields=["starred_messages"])
-        return Response({"success": True, "message": message})
+        # IDOR Authorization: User MUST be a member of the conversation this message belongs to!
+        if not msg.conversation.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        starred = StarredMessage.objects.filter(user=request.user, message=msg).first()
+        if starred:
+            starred.delete()
+            is_starred = False
+        else:
+            StarredMessage.objects.create(user=request.user, message=msg)
+            is_starred = True
+
+        return Response({"success": True, "isStarred": is_starred})
 
 
 class GetStarredMessagesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from apps.messages_app.models import Message
-        starred_ids = request.user.starred_messages or []
-        messages = Message.objects.filter(id__in=starred_ids).select_related("sender")
-        results = []
-        for m in messages:
-            results.append({
-                "_id": str(m.id),
-                "content": m.decrypted_content,
-                "sender": {
-                    "_id": str(m.sender.id),
-                    "name": m.sender.name,
-                    "avatar": m.sender.avatar.get("url") if isinstance(m.sender.avatar, dict) else None,
-                },
-                "createdAt": m.created_at.isoformat(),
-            })
-        return Response({"success": True, "message": "Starred messages fetched", "messages": results})
-
-
-# ─── RBAC Admin Views (Admin Only) ────────────────────────────────────────────
-class AdminVerifyView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        secret_key = request.data.get("secretKey")
-        admin_secret = os.environ.get("ADMIN_SECRET_KEY", "chat_app_secret")
-        if not secret_key or secret_key != admin_secret:
-            return Response({"success": False, "message": "Invalid Admin Secret Key"}, status=status.HTTP_401_UNAUTHORIZED)
-
-        response = Response({
-            "success": True,
-            "message": "Authenticated successfully, welcome admin"
-        })
-        response.set_cookie(
-            key="chitChat-admin-token",
-            value="admin_authenticated",
-            max_age=24 * 60 * 60,
-            httponly=True,
-            samesite="None",
-            secure=True,
-        )
-        return response
-
-
-class AdminLogoutView(APIView):
-    permission_classes = [AllowAny]
-
-    def post(self, request):
-        response = Response({"success": True, "message": "Admin logged out successfully"})
-        response.delete_cookie("chitChat-admin-token")
-        return response
-
-
-class AdminUsersView(APIView):
-    permission_classes = [IsAdminUserRole]
-
-    def get(self, request):
-        from apps.chat.models import Chat
-        users = User.objects.all()
-        results = []
-        for u in users:
-            groups_count = Chat.objects.filter(members=u, group_chat=True).count()
-            friends_count = Chat.objects.filter(members=u, group_chat=False).count()
-            results.append({
-                "_id": str(u.id),
-                "name": u.name,
-                "username": u.username,
-                "avatar": u.avatar.get("url") if isinstance(u.avatar, dict) else None,
-                "groups": groups_count,
-                "friends": friends_count,
-            })
-        return Response({"status": "success", "users": results})
-
-
-class AdminChatsView(APIView):
-    permission_classes = [IsAdminUserRole]
-
-    def get(self, request):
-        from apps.chat.models import Chat
-        from apps.messages_app.models import Message
-        chats = Chat.objects.all().prefetch_related("members", "creator")
-        results = []
-        for c in chats:
-            total_members = c.members.count()
-            total_messages = Message.objects.filter(chat=c).count()
-            members_data = []
-            for m in c.members.all()[:5]:
-                members_data.append({
-                    "_id": str(m.id),
-                    "name": m.name,
-                    "avatar": m.avatar.get("url") if isinstance(m.avatar, dict) else None
-                })
-            results.append({
-                "_id": str(c.id),
-                "groupChat": c.group_chat,
-                "name": c.name,
-                "avatar": [c.avatar.get("url")] if isinstance(c.avatar, dict) and c.avatar.get("url") else [],
-                "members": members_data,
-                "creator": {
-                    "name": c.creator.name if c.creator else "Unknown",
-                    "avatar": c.creator.avatar.get("url") if c.creator and isinstance(c.creator.avatar, dict) else None,
-                } if c.creator else None,
-                "totalMembers": total_members,
-                "totalMessages": total_messages,
-            })
-        return Response({"status": "success", "chats": results})
-
-
-class AdminMessagesView(APIView):
-    permission_classes = [IsAdminUserRole]
-
-    def get(self, request):
-        from apps.messages_app.models import Message
-        messages = Message.objects.all().select_related("sender", "chat").order_by("-created_at")[:100]
-        results = []
-        for m in messages:
-            results.append({
-                "_id": str(m.id),
-                "content": m.decrypted_content,
-                "attachments": m.attachments or [],
-                "createdAt": m.created_at.isoformat(),
-                "sender": {
-                    "_id": str(m.sender.id),
-                    "name": m.sender.name,
-                    "avatar": m.sender.avatar.get("url") if isinstance(m.sender.avatar, dict) else None,
-                },
-                "chat": str(m.chat.id),
-                "groupChat": m.chat.group_chat,
-            })
-        return Response({"status": "success", "messages": results})
-
-
-class AdminStatsView(APIView):
-    permission_classes = [IsAdminUserRole]
-
-    def get(self, request):
-        from apps.chat.models import Chat
-        from apps.messages_app.models import Message
-
-        users_count = User.objects.count()
-        chats_count = Chat.objects.count()
-        messages_count = Message.objects.count()
-        groups_count = Chat.objects.filter(group_chat=True).count()
-
-        # Last 7 days message count buckets
-        now = timezone.now()
-        last_7_days = []
-        for i in range(6, -1, -1):
-            day_start = now - timezone.timedelta(days=i)
-            day_end = day_start + timezone.timedelta(days=1)
-            count = Message.objects.filter(created_at__range=(day_start, day_end)).count()
-            last_7_days.append(count)
-
+        from apps.messages_app.models import StarredMessage
+        from apps.messages_app.serializers import MessageSerializer
+        starred = StarredMessage.objects.filter(user=request.user).select_related("message", "message__sender")
+        messages = [s.message for s in starred]
         return Response({
             "success": True,
-            "status": "success",
-            "stats": {
-                "usersCount": users_count,
-                "totalChatsCount": chats_count,
-                "groupsCount": groups_count,
-                "messagesCount": messages_count,
-                "last7DaysMessages": last_7_days,
-            }
+            "messages": MessageSerializer(messages, many=True).data
         })
+
+
+class BlockUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, user_id):
+        target = User.objects.filter(id=user_id).first()
+        if not target or target == request.user:
+            return Response({"success": False, "message": "Invalid user to block."}, status=status.HTTP_400_BAD_REQUEST)
+
+        BlockedUser.objects.get_or_create(user=request.user, blocked_user=target)
+        return Response({"success": True, "message": f"Blocked {target.username}."})
+
+    def delete(self, request, user_id):
+        BlockedUser.objects.filter(user=request.user, blocked_user_id=user_id).delete()
+        return Response({"success": True, "message": "User unblocked."})
+
+
+class GetBlockedUsersView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        blocked = BlockedUser.objects.filter(user=request.user).select_related("blocked_user")
+        users = [b.blocked_user for b in blocked]
+        return Response({
+            "success": True,
+            "blockedUsers": UserSerializer(users, many=True).data
+        })
+
+
+class ReportUserView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        user_id = request.data.get("userId")
+        reason = request.data.get("reason", "").strip()
+        if not user_id or not reason:
+            return Response({"success": False, "message": "userId and reason are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        target = User.objects.filter(id=user_id).first()
+        if not target:
+            return Response({"success": False, "message": "Target user not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        Report.objects.create(reporter=request.user, reported_user=target, reason=reason)
+        return Response({"success": True, "message": "Report submitted."})
+
+
+# ─── Data Privacy & Account Management (GDPR/Compliance) ───────────────────
+class ExportUserDataView(APIView):
+    """Exports authenticated user's account, profile, devices, and sessions."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        profile = getattr(user, "profile", None)
+        devices = list(user.devices.values("device_id", "platform", "app_version", "last_active_at", "created_at"))
+        sessions = list(user.sessions.filter(is_revoked=False).values("id", "ip_address", "user_agent", "created_at", "expires_at"))
+
+        export_data = {
+            "account": {
+                "id": str(user.id),
+                "email": user.email,
+                "username": user.username,
+                "name": user.name,
+                "created_at": user.created_at.isoformat(),
+            },
+            "profile": {
+                "display_name": profile.display_name if profile else "",
+                "about": profile.about if profile else "",
+                "privacy_avatar": profile.privacy_avatar if profile else "everyone",
+                "privacy_online": profile.privacy_online if profile else "everyone",
+                "privacy_last_seen": profile.privacy_last_seen if profile else "everyone",
+                "hide_from_search": profile.hide_from_search if profile else False,
+            },
+            "devices": devices,
+            "sessions": sessions,
+            "export_timestamp": timezone.now().isoformat(),
+        }
+        return Response({"success": True, "data": export_data})
+
+
+class DeleteAccountView(APIView):
+    """Secure account deactivation and data erasure per user privacy request."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        confirm = request.data.get("confirm", False)
+        if not confirm:
+            return Response({"success": False, "message": "Account deletion requires explicit confirmation."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = request.user
+        email = user.email
+        name = user.name or user.username
+
+        with transaction.atomic():
+            user.sessions.update(is_revoked=True)
+            user.refresh_tokens.update(is_revoked=True)
+            user.is_active = False
+            user.save(update_fields=["is_active"])
+
+            AuditLog.objects.create(
+                user=user,
+                action="auth.account_deleted",
+                ip_address=get_client_ip(request),
+                user_agent=request.META.get("HTTP_USER_AGENT", ""),
+                details={"status": "deactivated"}
+            )
+
+        from apps.authentication.services.email_service import EmailNotificationService
+        EmailNotificationService.send_account_deleted(email=email, user_name=name)
+
+        response = Response({"success": True, "message": "Your account has been deactivated and scheduled for deletion."})
+        response.delete_cookie("chitChat-Token")
+        return response

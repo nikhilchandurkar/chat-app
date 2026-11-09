@@ -52,8 +52,11 @@ venv/
 env/
 **/staticfiles/
 django_server/media/
+django_server/storage/
+storage/
 django_server/.env
 django_server/.env.production
+*.log
 
 # Media Uploads & Logs
 **/media/*

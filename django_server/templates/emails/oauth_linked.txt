@@ -1,0 +1,8 @@
+Hello {{ user_name }},
+
+A {{ provider|title }} account ({{ provider_email }}) was successfully linked to your {{ app_name|default:"ChatApp" }} profile.
+
+If you did not authorize this change, please disconnect this provider immediately from Account Settings.
+
+— The {{ app_name|default:"ChatApp" }} Security Team
+

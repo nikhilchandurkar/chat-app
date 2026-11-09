@@ -1,0 +1,42 @@
+name: Scheduled & Static Security Audit (VAPT)
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"  # Weekly on Monday at 02:00 UTC
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "django_server/**"
+      - "client/**"
+      - "mobile/**"
+
+jobs:
+  security-audit:
+    name: OWASP & Static Security Scans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python Dependency & Static AST Security (Bandit)
+        run: |
+          pip install bandit pip-audit
+          cd django_server
+          pip install -r requirements.txt
+          pip-audit || true
+          bandit -r apps core -ll -f txt
+
+      - name: Node.js Security Audit
+        run: |
+          cd client && npm audit --audit-level=high || true
+          cd ../mobile && npm audit --audit-level=high || true
+
+      - name: Secret Leak Scanning
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+

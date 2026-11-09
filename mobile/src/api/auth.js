@@ -1,125 +1,165 @@
-/**
- * Auth API + Secure Token Storage
- *
- * Uses expo-secure-store (hardware-backed keystore on Android / iOS Keychain)
- * instead of AsyncStorage for the JWT token. AsyncStorage is unencrypted.
- *
- * Falls back to AsyncStorage when SecureStore is unavailable (e.g. web/emulator
- * without Play Services) so development always works.
- */
-
 import axios from "axios";
-import * as SecureStore from "expo-secure-store";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { API_BASE_URL, STORAGE_KEYS, CONFIG } from "../config";
+import { API_BASE_URL, STORAGE_KEYS } from "../config";
 
-// ── Secure storage helpers ────────────────────────────────────────────────────
-
-async function secureSet(key, value) {
-  try {
-    await SecureStore.setItemAsync(key, value);
-  } catch {
-    // Fallback for emulators / web
-    await AsyncStorage.setItem(key, value);
-  }
-}
-
-async function secureGet(key) {
-  try {
-    return await SecureStore.getItemAsync(key);
-  } catch {
-    return AsyncStorage.getItem(key);
-  }
-}
-
-async function secureRemove(key) {
-  try {
-    await SecureStore.deleteItemAsync(key);
-  } catch {
-    await AsyncStorage.removeItem(key);
-  }
-}
-
-// ── Axios instance ────────────────────────────────────────────────────────────
-
-export const apiClient = axios.create({
+const api = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,
-  timeout: CONFIG.API_TIMEOUT,
-  headers: { "Content-Type": "application/json" },
+  timeout: 15000,
+  headers: {
+    "Content-Type": "application/json",
+  },
 });
 
-// Attach JWT Bearer token to every request
-apiClient.interceptors.request.use(async (config) => {
-  const token = await secureGet(STORAGE_KEYS.TOKEN);
+// Interceptor to inject Authorization Bearer token from AsyncStorage
+api.interceptors.request.use(async (config) => {
+  const token = await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
   return config;
 });
 
-// Global error interceptor: 401 → clear token so app redirects to login
-apiClient.interceptors.response.use(
-  (res) => res,
-  async (error) => {
-    if (error.response?.status === 401) {
-      await secureRemove(STORAGE_KEYS.TOKEN);
-      await AsyncStorage.removeItem(STORAGE_KEYS.USER);
-    }
-    return Promise.reject(error);
+export const loginWithPassword = async (username, password, deviceId = "android-device") => {
+  const response = await api.post("/auth/login", {
+    username: username.trim(),
+    password,
+    device_id: deviceId,
+    platform: "android",
+    app_version: "1.0.0",
+  });
+  const { data } = response;
+  if (data.token) {
+    await AsyncStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
   }
-);
-
-// ── Token helpers (exported for socket.js) ────────────────────────────────────
-
-export const getStoredToken = () => secureGet(STORAGE_KEYS.TOKEN);
-
-// ── Auth methods ──────────────────────────────────────────────────────────────
-
-export async function loginWithPassword(username, password) {
-  const response = await apiClient.post("/user/login", { username, password });
-  const { token, user } = response.data;
-  if (token) {
-    await secureSet(STORAGE_KEYS.TOKEN, token);
-    await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+  if (data.refreshToken) {
+    await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refreshToken);
   }
-  return response.data;
-}
-
-export async function requestOtp(email) {
-  const response = await apiClient.post("/auth/request-otp", { email });
-  return response.data;
-}
-
-export async function verifyOtp(email, otp) {
-  const response = await apiClient.post("/auth/verify-otp", { email, otp });
-  const { token, user } = response.data;
-  if (token) {
-    await secureSet(STORAGE_KEYS.TOKEN, token);
-    await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(user));
+  if (data.user) {
+    await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(data.user));
   }
-  return response.data;
-}
+  return data;
+};
 
-export async function logout() {
+export const registerRequest = async (username, email, password, confirmPassword, name = "") => {
+  const response = await api.post("/auth/register/request", {
+    username: username.trim(),
+    email: email.toLowerCase().trim(),
+    password,
+    confirm_password: confirmPassword,
+    name: name.trim() || username.trim(),
+  });
+  return response.data;
+};
+
+export const registerVerify = async (username, email, password, otp, name = "", deviceId = "android-device") => {
+  const response = await api.post("/auth/register/verify", {
+    username: username.trim(),
+    email: email.toLowerCase().trim(),
+    password,
+    otp: otp.trim(),
+    name: name.trim() || username.trim(),
+    device_id: deviceId,
+    platform: "android",
+    app_version: "1.0.0",
+  });
+  const { data } = response;
+  if (data.token) {
+    await AsyncStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
+  }
+  if (data.refreshToken) {
+    await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refreshToken);
+  }
+  if (data.user) {
+    await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(data.user));
+  }
+  return data;
+};
+
+export const requestOtp = async (email) => {
+  const response = await api.post("/auth/otp/request", { email: email.toLowerCase().trim() });
+  return response.data;
+};
+
+export const verifyOtp = async (email, otp, deviceId = "android-device") => {
+  const response = await api.post("/auth/otp/verify", {
+    email: email.toLowerCase().trim(),
+    otp: otp.trim(),
+    device_id: deviceId,
+    platform: "android",
+    app_version: "1.0.0",
+  });
+
+  const { data } = response;
+  if (data.token) {
+    await AsyncStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
+  }
+  if (data.refreshToken) {
+    await AsyncStorage.setItem(STORAGE_KEYS.REFRESH_TOKEN, data.refreshToken);
+  }
+  if (data.user) {
+    await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(data.user));
+  }
+  if (deviceId) {
+    await AsyncStorage.setItem(STORAGE_KEYS.DEVICE_ID, deviceId);
+  }
+  return data;
+};
+
+export const socialLogin = async (provider, tokenOrCode, deviceId = "android-device") => {
+  let endpoint = `/auth/oauth/${provider.toLowerCase()}`;
+  let payload = { device_id: deviceId, platform: "android", app_version: "1.0.0" };
+
+  if (provider.toLowerCase() === "google") {
+    payload.id_token = tokenOrCode;
+  } else if (provider.toLowerCase() === "github") {
+    payload.code = tokenOrCode;
+  } else if (provider.toLowerCase() === "facebook") {
+    payload.access_token = tokenOrCode;
+  }
+
+  const response = await api.post(endpoint, payload);
+  const { data } = response;
+  if (data.token) {
+    await AsyncStorage.setItem(STORAGE_KEYS.TOKEN, data.token);
+  }
+  if (data.user) {
+    await AsyncStorage.setItem(STORAGE_KEYS.USER, JSON.stringify(data.user));
+  }
+  return data;
+};
+
+export const registerDevicePushToken = async (nativeFcmToken, deviceId = "android-device") => {
+  const response = await api.post("/auth/devices/register", {
+    device_id: deviceId,
+    platform: "android",
+    native_fcm_token: nativeFcmToken,
+    app_version: "1.0.0",
+  });
+  return response.data;
+};
+
+export const getProfile = async () => {
+  const response = await api.get("/user/me");
+  return response.data;
+};
+
+export const getSessions = async () => {
+  const response = await api.get("/auth/sessions");
+  return response.data;
+};
+
+export const revokeSession = async (sessionId) => {
+  const response = await api.delete(`/auth/sessions/${sessionId}`);
+  return response.data;
+};
+
+export const logout = async () => {
   try {
-    await apiClient.post("/user/logout");
-  } catch {
-    // Ignore network errors on logout
-  }
-  await secureRemove(STORAGE_KEYS.TOKEN);
+    await api.post("/auth/logout");
+  } catch (e) {}
+  await AsyncStorage.removeItem(STORAGE_KEYS.TOKEN);
+  await AsyncStorage.removeItem(STORAGE_KEYS.REFRESH_TOKEN);
   await AsyncStorage.removeItem(STORAGE_KEYS.USER);
-}
+};
 
-export async function getProfile() {
-  const response = await apiClient.get("/user/me");
-  return response.data;
-}
-
-export async function getStoredUser() {
-  try {
-    const str = await AsyncStorage.getItem(STORAGE_KEYS.USER);
-    return str ? JSON.parse(str) : null;
-  } catch {
-    return null;
-  }
-}
+export default api;

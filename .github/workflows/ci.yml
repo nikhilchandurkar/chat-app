@@ -1,0 +1,117 @@
+name: Continuous Integration & Security Checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  backend-ci:
+    name: Django Backend & Security Tests
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: rootpassword
+          MYSQL_DATABASE: chat_db
+          MYSQL_USER: chat_user
+          MYSQL_PASSWORD: chat_password
+        ports:
+          - 3306:3306
+        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          cd django_server
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install bandit ruff
+
+      - name: Django System Checks
+        run: |
+          cd django_server
+          python manage.py check
+
+      - name: Verify Migration Consistency
+        env:
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: 3306
+          DATABASE_NAME: chat_db
+          DATABASE_USER: chat_user
+          DATABASE_PASSWORD: chat_password
+        run: |
+          cd django_server
+          python manage.py makemigrations --check --dry-run
+
+      - name: Run Unit & Negative Security Tests
+        env:
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: 3306
+          DATABASE_NAME: chat_db
+          DATABASE_USER: chat_user
+          DATABASE_PASSWORD: chat_password
+        run: |
+          cd django_server
+          python manage.py test core.tests
+
+      - name: Static Security Scan (Bandit)
+        run: |
+          cd django_server
+          bandit -r apps core -ll -i
+
+  web-ci:
+    name: React Web Frontend Build & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: "client/package-lock.json"
+
+      - name: Install Dependencies
+        run: |
+          cd client
+          npm ci
+
+      - name: Build Web Production Bundle
+        run: |
+          cd client
+          npm run build
+
+  android-ci:
+    name: React Native Android Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: "mobile/package-lock.json"
+
+      - name: Install Dependencies
+        run: |
+          cd mobile
+          npm ci
+
+      - name: Verify Expo Configuration
+        run: |
+          cd mobile
+          npx expo config --type public
+

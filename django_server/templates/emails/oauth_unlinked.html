@@ -1,0 +1,11 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<span class="badge">SECURITY NOTIFICATION</span>
+<h1>{{ provider|title }} Account Disconnected</h1>
+<p>Hello {{ user_name }},</p>
+<p>The <strong>{{ provider|title }}</strong> login provider has been disconnected from your {{ app_name|default:"ChatApp" }} account.</p>
+
+<p>You can still log in using your registered email address with single-use verification codes.</p>
+{% endblock %}
+

@@ -1,0 +1,19 @@
+[Unit]
+Description=ChatApp Celery Worker
+After=network.target mysql.service redis-server.service
+
+[Service]
+Type=forking
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/srv/chatapp/django_server
+EnvironmentFile=/srv/chatapp/django_server/.env
+ExecStart=/srv/chatapp/django_server/venv/bin/celery -A core worker -l INFO --concurrency=4 --pidfile=/run/celery/worker.pid
+ExecStop=/srv/chatapp/django_server/venv/bin/celery multi stopwait worker --pidfile=/run/celery/worker.pid
+Restart=always
+RestartSec=10
+RuntimeDirectory=celery
+
+[Install]
+WantedBy=multi-user.target
+

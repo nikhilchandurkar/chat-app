@@ -1,20 +1,15 @@
 import { Drawer, Grid, Skeleton, Box } from '@mui/material';
-import React from 'react';
+import React, { useCallback, useState, useEffect, useRef } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
-import { useParams } from 'react-router-dom'; // Remove this if unused elsewhere, but leave for now to avoid errors.
-import sampleChats from '../../constants/sampleData';
-import { useErrors } from '../../hooks/hook';
+import { useErrors, useSocketEvents } from '../../hooks/hook';
 import { useMyChatsQuery, useGetNotificationsQuery } from '../../redux/api/api';
 import { getSocket } from '../../socket';
 import { NEW_REQUEST, ONLINE_USERS, NEW_MESSAGE_ALERT, START_TYPING, STOP_TYPING, REFETCH_CHATS } from '../../constants/events';
-import { useSocketEvents } from '../../hooks/hook';
-import { incrementNotificationCount, setIsMobile, setIsMobileProfile, setNotificationCount } from '../../redux/reducers/misc';
-import { useCallback, useState, useEffect } from 'react';
 import ChatList from '../specific/ChatList';
 import Profile from '../specific/Profile';
 import Header from './Header';
-import toast from 'react-hot-toast';
-import { NEW_MESSAGE } from '../../constants/events';
+import DeleteChatMenu from '../dialogs/DeleteChatMenu';
+import { incrementNotificationCount, setIsMobile, setIsMobileProfile, setNotificationCount, setIsDeleteMenu, setSelectedDeleteChat } from '../../redux/reducers/misc';
 
 
 
@@ -53,40 +48,67 @@ const AppLayout = () => (WrappedComponent) => {
     }, [dispatch]);
 
     const onlineUsersListener = useCallback((data) => {
-      setOnlineUsers(data);
+      if (!data) return;
+      if (Array.isArray(data)) {
+        const ids = data
+          .map((u) => (typeof u === "object" && u !== null ? String(u.user_id || u.id || u._id || "") : String(u)))
+          .filter(Boolean);
+        setOnlineUsers(ids);
+      } else if (typeof data === "object") {
+        const uid = String(data.user_id || data.userId || data.id || "");
+        if (uid) {
+          setOnlineUsers((prev) => {
+            const current = Array.isArray(prev) ? prev.map(String) : [];
+            if (data.status === "offline") {
+              return current.filter((id) => id !== uid);
+            } else {
+              return current.includes(uid) ? current : [...current, uid];
+            }
+          });
+        }
+      }
     }, []);
 
     const newMessageAlertListener = useCallback((data) => {
-      if (data.chatId === chatId) return;
+      if (!data || data.chatId === chatId) return;
       
       const senderName = data.message?.sender?.name || "Someone";
       toast(`New Message from ${senderName}`, { icon: "💬" });
 
       setNewMessagesAlert((prev) => {
-        const existing = prev.find((i) => i.chatId === data.chatId);
+        const list = Array.isArray(prev) ? prev : [];
+        const existing = list.find((i) => i.chatId === data.chatId);
         if (existing) {
-          return prev.map((i) =>
+          return list.map((i) =>
             i.chatId === data.chatId ? { ...i, count: i.count + 1, message: data.message } : i
           );
         }
-        return [...prev, { chatId: data.chatId, count: 1, message: data.message }];
+        return [...list, { chatId: data.chatId, count: 1, message: data.message }];
       });
     }, [chatId]);
 
     const startTypingListener = useCallback((data) => {
+      if (!data?.chatId) return;
       setTypingChats((prev) => {
-        if (!prev.includes(data.chatId)) return [...prev, data.chatId];
-        return prev;
+        const list = Array.isArray(prev) ? prev : [];
+        if (!list.includes(data.chatId)) return [...list, data.chatId];
+        return list;
       });
     }, []);
 
     const stopTypingListener = useCallback((data) => {
-      setTypingChats((prev) => prev.filter((id) => id !== data.chatId));
+      if (!data?.chatId) return;
+      setTypingChats((prev) => {
+        const list = Array.isArray(prev) ? prev : [];
+        return list.filter((id) => id !== data.chatId);
+      });
     }, []);
 
     const eventHandlers = {
       [NEW_REQUEST]: newRequestHandler,
       [ONLINE_USERS]: onlineUsersListener,
+      "user.online": onlineUsersListener,
+      "user.offline": onlineUsersListener,
       [NEW_MESSAGE]: newMessageAlertListener,
       [START_TYPING]: startTypingListener,
       [STOP_TYPING]: stopTypingListener,
@@ -94,9 +116,14 @@ const AppLayout = () => (WrappedComponent) => {
     };
 
     useSocketEvents(socket, eventHandlers);
+    const deleteMenuAnchor = useRef(null);
+
     const handleDeleteChats = (e, _id, groupChat) => {
       e.preventDefault();
-    }
+      deleteMenuAnchor.current = e.currentTarget;
+      dispatch(setIsDeleteMenu(true));
+      dispatch(setSelectedDeleteChat({ chatId: _id, groupChat }));
+    };
     
     const handleMobileClose = () => dispatch(setIsMobile(false))
 
@@ -153,7 +180,7 @@ const AppLayout = () => (WrappedComponent) => {
                 isLoading ? (<Skeleton />) : (
                   <ChatList
                     handleDeleteChat={handleDeleteChats}
-                    chats={data?.chats || sampleChats}
+                    chats={data?.chats || []}
                     chatId={chatId}
                     user={user}
                     onlineUsers={onlineUsers}
@@ -176,6 +203,7 @@ const AppLayout = () => (WrappedComponent) => {
               }}
             >
               <WrappedComponent {...props}
+                key={chatId || "dashboard"}
                 chatId={chatId} 
                 user={user}
               />
@@ -200,6 +228,7 @@ const AppLayout = () => (WrappedComponent) => {
             </Grid>
           </Grid>
         </Box>
+        <DeleteChatMenu dispatch={dispatch} deleteMenuAnchor={deleteMenuAnchor} />
       </>
     )
   }

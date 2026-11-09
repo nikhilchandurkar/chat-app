@@ -1,0 +1,15 @@
+{% extends "emails/base_email.html" %}
+
+{% block content %}
+<span class="badge" style="background-color: #fee2e2; color: #991b1b;">SECURITY RECOVERY</span>
+<h1>Account Recovery Completed</h1>
+<p>Hello {{ user_name }},</p>
+<p>Your {{ app_name|default:"ChatApp" }} account was successfully recovered via verified email OTP authentication.</p>
+
+<div class="alert-box">
+  <strong>Session Revocation:</strong> As a security precaution, all prior active sessions and refresh tokens on other devices have been terminated.
+</div>
+
+<p>If you initiated this recovery, you may safely continue using your new session. If you did NOT perform this action, contact security support immediately.</p>
+{% endblock %}
+

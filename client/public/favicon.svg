@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" width="48" height="48" fill="none">
+  <!-- Solid forest green background, no gradients -->
+  <rect width="48" height="48" rx="10" fill="#236B4A"/>
+  <!-- Speech message symbol -->
+  <path d="M14 31V19C14 17.34 15.34 16 17 16H31C32.66 16 34 17.34 34 19V27C34 28.66 32.66 30 31 30H18L14 33V31Z" fill="#FFFFFF"/>
+  <circle cx="20" cy="23" r="1.5" fill="#236B4A"/>
+  <circle cx="24" cy="23" r="1.5" fill="#236B4A"/>
+  <circle cx="28" cy="23" r="1.5" fill="#236B4A"/>
+</svg>

@@ -1,64 +1,69 @@
-"""
-Django settings for the Chat Application.
-
-Supports three database backends via DB_ENGINE env var:
-  postgresql  – PostgreSQL (default, recommended)
-  mysql       – MySQL / MariaDB
-  sqlite3     – SQLite (dev / tests only)
-
-All configuration is driven by environment variables.
-See .env.example for the full reference.
-"""
-
 import os
+import re
+import urllib.parse as urlparse
 from pathlib import Path
 from datetime import timedelta
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load .env file (single file for all environments)
+# Python 3.15+ Compatibility: Patch Django Context.__copy__ for instrumented test rendering
+import copy
+import django.template.context as _dtc
+
+def _safe_base_context_copy(self):
+    obj = self.__class__.__new__(self.__class__)
+    obj.dicts = self.dicts[:]
+    return obj
+
+def _safe_context_copy(self):
+    obj = self.__class__.__new__(self.__class__)
+    obj.dicts = self.dicts[:]
+    obj.render_context = copy.copy(self.render_context)
+    return obj
+
+_dtc.BaseContext.__copy__ = _safe_base_context_copy
+_dtc.Context.__copy__ = _safe_context_copy
+
+# Load environment variables
 load_dotenv(BASE_DIR / ".env")
 
-# ─── Core Security ────────────────────────────────────────────────────────────
+SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") or os.environ.get("SECRET_KEY") or "django-insecure-chat-app-production-secret-key-replace-in-env"
+DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() in ("true", "1", "yes")
 
-SECRET_KEY = (
-    os.environ.get("SECRET_KEY")
-    or os.environ.get("DJANGO_SECRET_KEY")
-    or "django-insecure-chatapp-development-key-replace-in-prod"
-)
+# Allowed Hosts
+ALLOWED_HOSTS = [h.strip() for h in os.environ.get("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
 
-DEBUG = os.environ.get("DEBUG", "True").lower() == "true"
-
-_raw_hosts = os.environ.get("ALLOWED_HOSTS", "*")
-ALLOWED_HOSTS = [h.strip() for h in _raw_hosts.split()] if _raw_hosts != "*" else ["*"]
-
-# ─── Application Definition ───────────────────────────────────────────────────
-
+# Application definition
 INSTALLED_APPS = [
-    "daphne",  # Must be first for ASGI
+    "daphne",  # ASGI server must be first
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
-    # Third-party
+    # Third-party packages
     "rest_framework",
     "rest_framework_simplejwt",
     "corsheaders",
     "channels",
-    # Internal apps
+    # Chat system internal apps
     "apps.authentication",
     "apps.chat",
     "apps.messages_app",
+    "apps.storage_app",
+    "apps.notifications",
+    "apps.outbox",
     "apps.realtime",
     "apps.preview",
+    "apps.sync_app",
+    "apps.status_app",
 ]
 
 MIDDLEWARE = [
-    "corsheaders.middleware.CorsMiddleware",           # Must be near top
-    "django.middleware.gzip.GZipMiddleware",            # Reduce bandwidth
+    "corsheaders.middleware.CorsMiddleware",
+    "django.middleware.gzip.GZipMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -90,104 +95,49 @@ TEMPLATES = [
 WSGI_APPLICATION = "core.wsgi.application"
 ASGI_APPLICATION = "core.asgi.application"
 
-# ─── Database Configuration ───────────────────────────────────────────────────
-# DB_ENGINE: postgresql (default) | mysql | sqlite3
-#
-# Connection strategy:
-#   ASGI/Daphne is async — coroutines share a small thread pool.
-#   Django's CONN_MAX_AGE keeps one connection alive per OS thread.
-#   For async workloads this is the correct approach: each sync DB call
-#   runs in a thread via database_sync_to_async, and that thread reuses
-#   its persistent connection (no reconnect overhead per request).
-#
-#   CONN_MAX_AGE=0   → new connection every request (safe but slow)
-#   CONN_MAX_AGE=600 → reuse connection for up to 10 minutes per thread
-#                      (recommended for Daphne + thread pool)
-#
-#   CONN_HEALTH_CHECKS=True → Django pings before reuse, drops stale connections
-#   automatically (prevents "server closed the connection unexpectedly")
+# ─── Database Configuration: Strict MySQL 8+ Engine Exclusively ────────────
+try:
+    import pymysql
+    pymysql.install_as_MySQLdb()
+except Exception:
+    pass
 
-DB_ENGINE = os.environ.get("DB_ENGINE", "mysql").lower().strip()
-
-# 600s = 10 min. Safe default for a small EC2. Reduce if you hit
-# "too many connections" errors (lower = connections freed faster).
-_conn_max_age = int(os.environ.get("DB_CONN_MAX_AGE", "600"))
-
-# How many connections the thread pool keeps open concurrently.
-# Daphne default thread pool = (CPU * 5). On a 1-core t3.micro = 5 threads.
-# Keep this comfortably below PostgreSQL's max_connections (default 100).
-_db_pool_options: dict = {}
-
-if DB_ENGINE == "sqlite3":
-    DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / os.environ.get("SQLITE_PATH", "db.sqlite3"),
-        }
-    }
-
-elif DB_ENGINE == "mysql":
+db_url = os.environ.get("DATABASE_URL", "")
+if db_url.startswith("mysql://"):
+    parsed = urlparse.urlparse(db_url)
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.mysql",
-            "NAME": os.environ.get("MYSQL_DATABASE", "chat_db"),
-            "USER": os.environ.get("MYSQL_USER", "chat_user"),
-            "PASSWORD": os.environ.get("MYSQL_PASSWORD", "chat_password"),
-            "HOST": os.environ.get("MYSQL_HOST", "127.0.0.1"),
-            "PORT": os.environ.get("MYSQL_PORT", "3306"),
-            "CONN_MAX_AGE": _conn_max_age,
-            "CONN_HEALTH_CHECKS": True,
+            "NAME": parsed.path[1:],
+            "USER": parsed.username or "chat_user",
+            "PASSWORD": parsed.password or "chat_password",
+            "HOST": parsed.hostname or "127.0.0.1",
+            "PORT": parsed.port or 3306,
             "OPTIONS": {
                 "charset": "utf8mb4",
                 "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-                # Keep MySQL connections alive; match server wait_timeout
-                "connect_timeout": 10,
             },
+            "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", 600)),
+            "CONN_HEALTH_CHECKS": True,
         }
     }
-
-else:  # postgresql (default)
-    import urllib.parse as _urlparse
-
-    # DATABASE_URL must be set in production via environment / GitHub secret.
-    # It is intentionally left with no hardcoded fallback for production safety.
-    # For local dev it falls back to the standard local container URL.
-    _db_url = os.environ.get(
-        "DATABASE_URL",
-        "postgresql://chat_user:chat_password@127.0.0.1:5432/chat_db",
-    )
-    _url = _urlparse.urlparse(_db_url)
-
+else:
     DATABASES = {
         "default": {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": _url.path.lstrip("/") or "chat_db",
-            "USER": _url.username or "chat_user",
-            "PASSWORD": _url.password or "chat_password",
-            # Use the host from DATABASE_URL — do NOT hardcode 127.0.0.1
-            # so this works both locally and against a remote RDS/Cloud SQL host.
-            "HOST": _url.hostname or "127.0.0.1",
-            "PORT": str(_url.port or 5432),
-            # Persistent connections: reuse the same socket across requests
-            # on the same thread — eliminates TCP handshake + auth overhead.
-            "CONN_MAX_AGE": _conn_max_age,
-            # Auto-detect stale connections (e.g. after server restart or
-            # network blip) and reconnect transparently.
-            "CONN_HEALTH_CHECKS": True,
+            "ENGINE": "django.db.backends.mysql",
+            "NAME": os.environ.get("DATABASE_NAME", "chat_db"),
+            "USER": os.environ.get("DATABASE_USER", "chat_user"),
+            "PASSWORD": os.environ.get("DATABASE_PASSWORD", "chat_password"),
+            "HOST": os.environ.get("DATABASE_HOST", "127.0.0.1"),
+            "PORT": int(os.environ.get("DATABASE_PORT", 3306)),
             "OPTIONS": {
-                # Hard limit per connection attempt — fail fast, don't hang
-                "connect_timeout": 10,
-                # Keep-alive so idle connections survive NAT/firewall timeouts
-                # (avoids "SSL connection has been closed unexpectedly")
-                "keepalives": 1,
-                "keepalives_idle": 60,    # send first probe after 60s idle
-                "keepalives_interval": 10, # probe every 10s after that
-                "keepalives_count": 5,    # drop after 5 failed probes
+                "charset": "utf8mb4",
+                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
             },
+            "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", 600)),
+            "CONN_HEALTH_CHECKS": True,
         }
     }
-
-# ─── Auth ─────────────────────────────────────────────────────────────────────
 
 AUTH_USER_MODEL = "authentication.User"
 
@@ -195,72 +145,40 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
     "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
     "django.contrib.auth.hashers.BCryptPasswordHasher",
-    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
 ]
 
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
-        "OPTIONS": {"min_length": 8},
-    },
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
 ]
-
-# ─── Internationalisation ─────────────────────────────────────────────────────
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
 USE_I18N = True
 USE_TZ = True
 
-# ─── Static & Media ───────────────────────────────────────────────────────────
-
+# ─── Static & Private File Storage ──────────────────────────────────────────
 STATIC_URL = "/static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
 MEDIA_URL = "/api/v1/media/"
 MEDIA_ROOT = BASE_DIR / "media"
 
+STORAGE_ROOT = Path(os.environ.get("STORAGE_ROOT", BASE_DIR / "storage" / "private"))
+STORAGE_ROOT.mkdir(parents=True, exist_ok=True)
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-# ─── CORS ─────────────────────────────────────────────────────────────────────
-
+# ─── CORS & Security Configuration ──────────────────────────────────────────
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOW_CREDENTIALS = True
-
-_client_url = os.environ.get("CLIENT_URL", "http://localhost:5173")
-_extra_origins = os.environ.get("EXTRA_CORS_ORIGINS", "")
-
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:3000",
-    "http://16.113.127.132",
-    "https://16.113.127.132",
-    "https://nikhil-chats.chickenkiller.com",
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost(:[0-9]+)?$",
+    r"^http://127\.0\.0\.1(:[0-9]+)?$",
+    r"^https://.*\.chickenkiller\.com$",
+    r"^https://.*\.vercel\.app$",
 ]
-if _client_url and _client_url not in CORS_ALLOWED_ORIGINS:
-    CORS_ALLOWED_ORIGINS.append(_client_url)
-for _origin in _extra_origins.split():
-    if _origin not in CORS_ALLOWED_ORIGINS:
-        CORS_ALLOWED_ORIGINS.append(_origin)
-
-CSRF_TRUSTED_ORIGINS = [
-    "http://16.113.127.132",
-    "https://16.113.127.132",
-    "https://nikhil-chats.chickenkiller.com",
-    "http://localhost:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:3000",
-]
-if _client_url and _client_url not in CSRF_TRUSTED_ORIGINS:
-    CSRF_TRUSTED_ORIGINS.append(_client_url)
-for _origin in _extra_origins.split():
-    if _origin not in CSRF_TRUSTED_ORIGINS:
-        CSRF_TRUSTED_ORIGINS.append(_origin)
-
-# ─── Django REST Framework ────────────────────────────────────────────────────
+if os.environ.get("PUBLIC_DOMAIN"):
+    CORS_ALLOWED_ORIGIN_REGEXES.append(rf"^https://.*{re.escape(os.environ.get('PUBLIC_DOMAIN'))}$" if 're' in globals() else rf"^https://.*{os.environ.get('PUBLIC_DOMAIN')}$")
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -270,33 +188,44 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticated",
     ),
     "DEFAULT_THROTTLE_CLASSES": [
-        "rest_framework.throttling.AnonRateThrottle",
-        "rest_framework.throttling.UserRateThrottle",
+        "apps.authentication.throttles.ProxySafeAnonRateThrottle",
+        "apps.authentication.throttles.ProxySafeUserRateThrottle",
     ],
     "DEFAULT_THROTTLE_RATES": {
-        "anon": f"{os.environ.get('API_RATE_LIMIT', '60')}/min",
-        "user": f"{os.environ.get('API_RATE_LIMIT', '60')}/min",
-        "login": f"{os.environ.get('LOGIN_RATE_LIMIT', '5')}/min",
-        "otp": f"{os.environ.get('OTP_RATE_LIMIT', '3')}/min",
+        "anon": "60/minute",
+        "user": "600/minute",
+        "otp_request": "6/minute",
+        "otp_verify": "10/minute",
+        "message_send": "60/minute",
+        "file_upload": "30/minute",
+        "search": "45/minute",
     },
-    # Never expose stack traces in API responses
-    "EXCEPTION_HANDLER": "core.exceptions.custom_exception_handler",
 }
 
-# ─── SimpleJWT ────────────────────────────────────────────────────────────────
+# ─── HTTP Security Headers ──────────────────────────────────────────────────
+SECURE_BROWSER_XSS_FILTER = True
+SECURE_CONTENT_TYPE_NOSNIFF = True
+X_FRAME_OPTIONS = "DENY"
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
+if not DEBUG:
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+CSRF_COOKIE_HTTPONLY = True
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(days=15),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=30),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.environ.get("JWT_ACCESS_MINUTES", 60))),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.environ.get("JWT_REFRESH_DAYS", 30))),
+    "ROTATE_REFRESH_TOKENS": True,
+    "BLACKLIST_AFTER_ROTATION": True,
     "AUTH_HEADER_TYPES": ("Bearer",),
     "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
 }
 
-# ─── Redis, Channels & Cache ──────────────────────────────────────────────────
-
+# ─── Redis & Channel Layer ──────────────────────────────────────────────────
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 
-if os.environ.get("USE_REDIS", "False").lower() == "true":
+if os.environ.get("USE_REDIS", "False").lower() in ("true", "1"):
     CACHES = {
         "default": {
             "BACKEND": "django_redis.cache.RedisCache",
@@ -311,11 +240,10 @@ if os.environ.get("USE_REDIS", "False").lower() == "true":
         },
     }
 else:
-    # In-memory fallbacks for zero-setup local development
     CACHES = {
         "default": {
             "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-            "LOCATION": "chat-app-cache",
+            "LOCATION": "chat-local-cache",
         }
     }
     CHANNEL_LAYERS = {
@@ -324,90 +252,55 @@ else:
         },
     }
 
-# ─── Celery (Low-Resource Configuration) ─────────────────────────────────────
+# ─── Email & SMTP Configuration ─────────────────────────────────────────────
+EMAIL_HOST = os.environ.get("SMTP_HOST") or os.environ.get("EMAIL_HOST", "smtp.gmail.com")
+EMAIL_PORT = int(os.environ.get("SMTP_PORT") or os.environ.get("EMAIL_PORT", 587))
+EMAIL_USE_TLS = os.environ.get("SMTP_USE_TLS", "True").lower() in ("true", "1")
+EMAIL_HOST_USER = (
+    os.environ.get("SMTP_USERNAME")
+    or os.environ.get("EMAIL_HOST_USER")
+    or os.environ.get("EMAIL_USER")
+    or ""
+)
+EMAIL_HOST_PASSWORD = (
+    os.environ.get("SMTP_PASSWORD")
+    or os.environ.get("EMAIL_HOST_PASSWORD")
+    or os.environ.get("EMAIL_APP_PASSWORD")
+    or os.environ.get("APP_PASSWORD")
+    or os.environ.get("EMAIL_PASS")
+    or ""
+).replace(" ", "").strip()
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "noreply@chatapp.local")
 
-CELERY_BROKER_URL = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
-CELERY_ACCEPT_CONTENT = ["json"]
-CELERY_TASK_SERIALIZER = "json"
-CELERY_RESULT_SERIALIZER = "json"
-CELERY_TIMEZONE = TIME_ZONE
-# Conservative for 1–2 GB RAM machines
-CELERY_WORKER_CONCURRENCY = int(os.environ.get("CELERY_CONCURRENCY", 2))
-CELERY_WORKER_MAX_TASKS_PER_CHILD = 100
-CELERY_WORKER_MAX_MEMORY_PER_CHILD = 150_000  # 150 MB
-CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# Automatically use SMTP if host user & app password credentials exist, otherwise fallback to console in debug
+default_email_backend = (
+    "django.core.mail.backends.smtp.EmailBackend"
+    if (EMAIL_HOST_USER and EMAIL_HOST_PASSWORD)
+    else ("django.core.mail.backends.console.EmailBackend" if DEBUG else "django.core.mail.backends.smtp.EmailBackend")
+)
+EMAIL_BACKEND = os.environ.get("EMAIL_BACKEND", default_email_backend)
 
-# ─── Email ────────────────────────────────────────────────────────────────────
+# ─── OAuth Configurations ───────────────────────────────────────────────────
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "")
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
-EMAIL_USE_TLS = os.environ.get("EMAIL_SECURE", "false").lower() != "true"
-EMAIL_USE_SSL = os.environ.get("EMAIL_SECURE", "false").lower() == "true"
-EMAIL_HOST_USER = os.environ.get("EMAIL_USER", "")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_PASS", "")
-DEFAULT_FROM_EMAIL = os.environ.get("EMAIL_FROM", EMAIL_HOST_USER)
+GITHUB_CLIENT_ID = os.environ.get("GITHUB_CLIENT_ID", "")
+GITHUB_CLIENT_SECRET = os.environ.get("GITHUB_CLIENT_SECRET", "")
 
-# ─── Production Security Settings ────────────────────────────────────────────
-# These are automatically activated when DEBUG=False
+FACEBOOK_APP_ID = os.environ.get("FACEBOOK_APP_ID", "")
+FACEBOOK_APP_SECRET = os.environ.get("FACEBOOK_APP_SECRET", "")
 
-if not DEBUG:
-    SECURE_BROWSER_XSS_FILTER = True
-    SECURE_CONTENT_TYPE_NOSNIFF = True
-    X_FRAME_OPTIONS = "DENY"
-    SECURE_HSTS_SECONDS = 31_536_000
-    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-    SECURE_HSTS_PRELOAD = True
-    # Only enable SSL redirects if behind HTTPS
-    SECURE_SSL_REDIRECT = os.environ.get("FORCE_SSL_REDIRECT", "False").lower() == "true"
-    SESSION_COOKIE_SECURE = os.environ.get("SESSION_COOKIE_SECURE", "False").lower() == "true"
-    CSRF_COOKIE_SECURE = os.environ.get("CSRF_COOKIE_SECURE", "False").lower() == "true"
+# ─── Web Push (VAPID) ───────────────────────────────────────────────────────
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "")
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "")
+VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", DEFAULT_FROM_EMAIL)
 
-# ─── Logging ──────────────────────────────────────────────────────────────────
+# ─── FCM Direct HTTP v1 ─────────────────────────────────────────────────────
+FCM_PROJECT_ID = os.environ.get("FCM_PROJECT_ID", "")
+FCM_SERVICE_ACCOUNT_PATH = os.environ.get("FCM_SERVICE_ACCOUNT_PATH", "")
 
-LOGGING = {
-    "version": 1,
-    "disable_existing_loggers": False,
-    "formatters": {
-        "verbose": {
-            "format": "[{asctime}] {levelname} {name}: {message}",
-            "style": "{",
-        },
-    },
-    "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "verbose",
-        },
-        "file": {
-            "class": "logging.handlers.RotatingFileHandler",
-            "filename": BASE_DIR / "logs" / "app.log",
-            "maxBytes": 10 * 1024 * 1024,  # 10 MB
-            "backupCount": 5,
-            "formatter": "verbose",
-        },
-    },
-    "root": {
-        "handlers": ["console"],
-        "level": "INFO",
-    },
-    "loggers": {
-        "django": {
-            "handlers": ["console"],
-            "level": "WARNING",
-            "propagate": False,
-        },
-        "apps": {
-            "handlers": ["console", "file"] if not DEBUG else ["console"],
-            "level": "DEBUG" if DEBUG else "INFO",
-            "propagate": False,
-        },
-    },
-}
-
-# Ensure logs directory exists
-try:
-    (BASE_DIR / "logs").mkdir(parents=True, exist_ok=True)
-except Exception:
-    pass
+# ─── Public Domain & URLs ───────────────────────────────────────────────────
+PUBLIC_DOMAIN = os.environ.get("PUBLIC_DOMAIN", "localhost")
+API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+WEBSOCKET_URL = os.environ.get("WEBSOCKET_URL", "ws://localhost:8000/ws/chat/")
+MEDIA_BASE_URL = os.environ.get("MEDIA_BASE_URL", "http://localhost:8000/api/v1/media/")

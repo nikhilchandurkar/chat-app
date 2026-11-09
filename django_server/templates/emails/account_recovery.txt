@@ -1,0 +1,11 @@
+Hello {{ user_name }},
+
+Your {{ app_name|default:"ChatApp" }} account was successfully recovered via verified email OTP authentication.
+
+SECURITY NOTICE:
+As a precaution, all prior active sessions and refresh tokens on other devices have been terminated.
+
+If you initiated this recovery, you may safely continue using your new session. If you did NOT perform this action, contact security support immediately.
+
+— The {{ app_name|default:"ChatApp" }} Security Team
+

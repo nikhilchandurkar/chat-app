@@ -25,16 +25,16 @@ class ErrorBoundary extends Component {
       return (
         <div style={{
           display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          minHeight: '100vh', background: '#0f172a', color: '#f8fafc', fontFamily: 'sans-serif', padding: '20px'
+          minHeight: '100vh', background: '#202421', color: '#F1F3F0', fontFamily: 'sans-serif', padding: '20px'
         }}>
           <h2>Something went wrong loading Chat App</h2>
-          <pre style={{ color: '#ef4444', background: '#1e293b', padding: '16px', borderRadius: '8px', maxWidth: '600px', overflowX: 'auto' }}>
+          <pre style={{ color: '#ef4444', background: '#181B19', padding: '16px', borderRadius: '8px', maxWidth: '600px', overflowX: 'auto' }}>
             {this.state.error?.toString()}
           </pre>
           <button
             onClick={() => window.location.reload()}
             style={{
-              marginTop: '16px', padding: '10px 24px', background: '#3b82f6', color: '#fff',
+              marginTop: '16px', padding: '10px 24px', background: '#236B4A', color: '#fff',
               border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600
             }}
           >
@@ -53,9 +53,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
       <Provider store={store}>
         <HelmetProvider>
           <CssBaseline />
-          <div onContextMenu={(e) => e.preventDefault()}>
-            <App />
-          </div>
+          <App />
         </HelmetProvider>
       </Provider>
     </ErrorBoundary>

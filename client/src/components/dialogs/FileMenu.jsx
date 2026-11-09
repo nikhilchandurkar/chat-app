@@ -31,16 +31,16 @@ const FileMenu = ({ anchorEl, chatId }) => {
   const selectFile = () => fileRef.current?.click();
 
   const fileChangeHandler = async (e, key) => {
-    const files = Array.from(e.target.files);
+    const files = Array.from(e.target.files || []);
 
     if (files.length <= 0) return;
 
     if (files.length > 5)
       return toast.error(`You can only send 5 ${key} at a time`);
 
-    const hasLargeFile = files.some((file) => file.size > 1024 * 1024 * 2);
+    const hasLargeFile = files.some((file) => file.size > 1024 * 1024 * 25);
     if (hasLargeFile) {
-      return toast.error(`Files must be smaller than 2MB`);
+      return toast.error(`Files must be smaller than 25MB`);
     }
 
     dispatch(setUploadingLoader(true));
@@ -56,13 +56,16 @@ const FileMenu = ({ anchorEl, chatId }) => {
 
       const res = await sendAttachments(myForm);
 
-      if (res.data) toast.success(`${key} sent successfully`, { id: toastId });
-      else toast.error(`Failed to send ${key}`, { id: toastId });
-
-      // Fetching Here
+      if (res.data?.success) {
+        toast.success(`${key} sent successfully`, { id: toastId });
+      } else {
+        toast.error(res.error?.data?.message || `Failed to send ${key}`, { id: toastId });
+      }
     } catch (error) {
-      toast.error(error, { id: toastId });
+      toast.error("Failed to upload attachments", { id: toastId });
     } finally {
+      // Clear input value so same file can be selected again
+      if (e.target) e.target.value = "";
       dispatch(setUploadingLoader(false));
     }
   };

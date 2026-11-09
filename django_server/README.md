@@ -41,12 +41,12 @@ This backend is designed as a drop-in, scalable replacement for the Node.js back
 
 ## 🚀 Quick Start (Local Development)
 
-### Option 1: Zero-Dependency Local Dev (SQLite + In-Memory)
-You can run the Daphne server immediately without having Postgres or Redis installed locally:
+### Local Development (MySQL 8+)
+Ensure MySQL 8+ is running, then run:
 
 #### Windows (PowerShell):
 ```powershell
-cd e:\chat\django_server
+cd django_server
 .\run_local.ps1
 ```
 
@@ -57,7 +57,7 @@ chmod +x run_local.sh
 ./run_local.sh
 ```
 
-The script will automatically create `.venv`, install dependencies, run migrations, and launch **Daphne** on `http://127.0.0.1:8000`.
+The script will automatically detect `venv`, verify MySQL configuration, run migrations, and launch **Daphne** on `http://127.0.0.1:8000`.
 
 ---
 
@@ -146,8 +146,12 @@ ADMIN_SECRET_KEY=chat_app_secret
 PORT=8000
 CLIENT_URL=https://nikhil-chats.chickenkiller.com
 
-# Database (Leave blank for SQLite, or configure PostgreSQL)
-DATABASE_URL=postgresql://chat_user:chat_password@localhost:5432/chat_db
+# Database (Strict MySQL 8+)
+DATABASE_NAME=chat_db
+DATABASE_USER=chat_user
+DATABASE_PASSWORD=chat_password
+DATABASE_HOST=127.0.0.1
+DATABASE_PORT=3306
 
 # Redis & Channels (Set USE_REDIS=True when Redis is active)
 USE_REDIS=True

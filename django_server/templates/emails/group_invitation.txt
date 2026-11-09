@@ -1,0 +1,10 @@
+Hello {{ user_name }},
+
+{{ inviter_name }} has invited you to join the private group "{{ group_name }}" on {{ app_name|default:"ChatApp" }}.
+
+To join this group, open ChatApp on the web or mobile app and accept the invitation using your secure token.
+
+If you do not recognize the inviter or do not wish to participate, you may safely disregard this message.
+
+— The {{ app_name|default:"ChatApp" }} Team
+

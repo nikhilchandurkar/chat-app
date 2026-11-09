@@ -1,0 +1,66 @@
+name: Android APK & AAB Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "Build Type (apk or aab)"
+        required: true
+        default: "apk"
+        type: choice
+        options:
+          - apk
+          - aab
+
+jobs:
+  build-android:
+    name: Build Android Artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: "mobile/package-lock.json"
+
+      - name: Install Mobile Dependencies
+        run: |
+          cd mobile
+          npm ci
+
+      - name: Setup EAS CLI
+        run: npm install -g eas-cli
+
+      - name: Prebuild Native Android Project
+        run: |
+          cd mobile
+          npx expo prebuild --platform android --no-install
+
+      - name: Build Android via Gradle
+        run: |
+          cd mobile/android
+          chmod +x gradlew
+          if [ "${{ github.event.inputs.build_type }}" == "aab" ]; then
+            ./gradlew bundleRelease --no-daemon
+          else
+            ./gradlew assembleDebug --no-daemon
+          fi
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-${{ github.event.inputs.build_type }}
+          path: |
+            mobile/android/app/build/outputs/apk/**/*.apk
+            mobile/android/app/build/outputs/bundle/**/*.aab
+          retention-days: 14
+
