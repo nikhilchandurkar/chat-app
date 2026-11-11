@@ -173,8 +173,10 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^http://localhost(:[0-9]+)?$",
-    r"^http://127\.0\.0\.1(:[0-9]+)?$",
+    r"^https?://localhost(:[0-9]+)?$",
+    r"^https?://127\.0\.0\.1(:[0-9]+)?$",
+    r"^capacitor://localhost$",
+    r"^ionic://localhost$",
     r"^https?://.*\.chickenkiller\.com$",
     r"^https?://.*\.duckdns\.org$",
     r"^https?://.*\.vercel\.app$",
@@ -185,6 +187,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://localhost",
+    "capacitor://localhost",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
@@ -192,6 +196,8 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://localhost",
+    "capacitor://localhost",
 ]
 
 client_url = os.environ.get("CLIENT_URL", "").strip().rstrip("/")
@@ -257,8 +263,13 @@ SIMPLE_JWT = {
     "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
 }
 
-# ─── Redis & Channel Layer ──────────────────────────────────────────────────
+# ─── Redis, Celery & Channel Layer ──────────────────────────────────────────
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", REDIS_URL)
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", REDIS_URL)
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
 
 if os.environ.get("USE_REDIS", "False").lower() in ("true", "1"):
     CACHES = {

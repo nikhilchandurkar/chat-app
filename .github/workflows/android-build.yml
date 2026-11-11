@@ -1,6 +1,11 @@
 name: Android APK & AAB Build
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'mobile/**'
+      - '.github/workflows/android-build.yml'
   workflow_dispatch:
     inputs:
       build_type:
@@ -37,10 +42,7 @@ jobs:
           cd mobile
           npm ci
 
-      - name: Setup EAS CLI
-        run: npm install -g eas-cli
-
-      - name: Prebuild Native Android Project
+      - name: Verify JS Bundle & Prebuild Native Android Project
         run: |
           cd mobile
           npx expo prebuild --platform android --no-install
@@ -58,7 +60,7 @@ jobs:
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: android-${{ github.event.inputs.build_type }}
+          name: android-${{ github.event.inputs.build_type || 'apk' }}
           path: |
             mobile/android/app/build/outputs/apk/**/*.apk
             mobile/android/app/build/outputs/bundle/**/*.aab

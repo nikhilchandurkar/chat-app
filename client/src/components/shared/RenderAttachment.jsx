@@ -15,7 +15,7 @@ import {
   IconButton,
   Tooltip,
 } from "@mui/material";
-import { transformImage } from "../../lib/feature";
+import { resolveMediaUrl, transformImage } from "../../lib/feature";
 
 const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
   // Support both component usage (<RenderAttachment file=... />) and function call (RenderAttachment(file, url))
@@ -33,15 +33,16 @@ const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [imgError, setImgError] = useState(false);
 
-  const fileName = name || (url ? url.split("/").pop()?.split("?")[0] : "attachment");
-  const displayUrl = transformImage(url, 400);
+  const resolvedUrl = resolveMediaUrl(url);
+  const fileName = name || (resolvedUrl ? resolvedUrl.split("/").pop()?.split("?")[0] : "attachment");
+  const displayUrl = transformImage(resolvedUrl, 400);
 
   switch (file) {
     case "video":
       return (
         <Box sx={{ mt: 0.5, maxWidth: "280px" }}>
           <video
-            src={url}
+            src={resolvedUrl}
             preload="metadata"
             width="100%"
             controls
@@ -122,7 +123,7 @@ const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
                 <Tooltip title="Download">
                   <IconButton
                     component="a"
-                    href={url}
+                    href={resolvedUrl}
                     download={fileName}
                     target="_blank"
                     size="small"
@@ -140,7 +141,7 @@ const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
             </Box>
             <DialogContent sx={{ p: 2, display: "flex", justifyContent: "center", alignItems: "center" }}>
               <img
-                src={url}
+                src={resolvedUrl}
                 alt={fileName}
                 style={{
                   maxWidth: "100%",
@@ -163,7 +164,7 @@ const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
               {fileName || "Audio Message"}
             </Typography>
             <audio
-              src={url}
+              src={resolvedUrl}
               preload="metadata"
               controls
               style={{ height: 32, width: "100%", display: "block" }}
@@ -176,7 +177,7 @@ const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
       return (
         <Box
           component="a"
-          href={url}
+          href={resolvedUrl}
           target="_blank"
           rel="noopener noreferrer"
           download={fileName}
@@ -213,7 +214,7 @@ const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
       return (
         <Box
           component="a"
-          href={url}
+          href={resolvedUrl}
           target="_blank"
           rel="noopener noreferrer"
           download={fileName}

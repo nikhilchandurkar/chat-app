@@ -2,7 +2,7 @@ import React, { memo } from "react";
 import { Box, Stack, Typography, useTheme } from "@mui/material";
 import AvatarCard from "./AvatarCard";
 import { useDispatch } from "react-redux";
-import { setActiveChatId } from "../../redux/reducers/misc";
+import { setActiveChatId, setIsMobile } from "../../redux/reducers/misc";
 import { motion } from "framer-motion";
 
 const ChatItem = ({
@@ -23,6 +23,7 @@ const ChatItem = ({
   
   const handleClick = (e) => {
     dispatch(setActiveChatId(_id));
+    dispatch(setIsMobile(false));
   };
 
   const isDarkMode = theme.palette.mode === 'dark';

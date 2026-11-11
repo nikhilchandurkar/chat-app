@@ -4,6 +4,7 @@ import { transformImage } from "../../lib/feature";
 
 // Todo Transform
 const AvatarCard = ({ avatar = [], max = 4, name = "" }) => {
+  const list = Array.isArray(avatar) && avatar.length > 0 ? avatar : [""];
   return (
     <Stack direction={"row"} spacing={0.5}>
       <AvatarGroup
@@ -12,20 +13,20 @@ const AvatarCard = ({ avatar = [], max = 4, name = "" }) => {
           position: "relative",
         }}
       >
-        <Box width={"5rem"} height={"3rem"}>
-          {avatar.map((i, index) => (
+        <Box width={list.length > 1 ? "5rem" : "3.2rem"} height={"3rem"} position="relative">
+          {list.slice(0, max).map((i, index) => (
             <Avatar
-              key={Math.random() * 100}
+              key={i || index}
               src={transformImage(i)}
-              alt={`Avatar ${index}`}
+              alt={`${name || "Chat"} Avatar ${index}`}
               sx={{
                 width: "3rem",
                 height: "3rem",
+                bgcolor: "#236B4A",
+                color: "#FFFFFF",
+                fontWeight: 700,
                 position: "absolute",
-                left: {
-                  xs: `${0.5 + index}rem`,
-                  sm: `${index}rem`,
-                },
+                left: list.length > 1 ? `${index * 0.9}rem` : 0,
               }}
             >
               {name ? name[0].toUpperCase() : "U"}

@@ -117,6 +117,8 @@ const Profile = () => {
     const toastId = toast.loading("Deleting account...");
     try {
       await deleteProfile().unwrap();
+      localStorage.removeItem("chitChat-Token");
+      localStorage.removeItem("access_token");
       dispatch(userNotExists());
       toast.success("Account deleted", { id: toastId });
     } catch (error) {
@@ -172,7 +174,7 @@ const Profile = () => {
             startIcon={<LockIcon />}
             onClick={() => setShowPasswordForm((s) => !s)}
             size="small"
-            sx={{ color: "rgba(255,255,255,0.7)" }}
+            sx={{ color: "text.secondary" }}
           >
             {showPasswordForm ? "Hide" : "Change Password"}
           </Button>
@@ -205,9 +207,9 @@ const Profile = () => {
         <Stack spacing={2} width="100%" alignItems="center">
           <ProfileCard heading="Bio" text={user?.bio || "No bio"} Icon={FaceIcon} />
           <ProfileCard heading="Username" text={`@${user?.username}`} Icon={UsernameIcon} />
-          <ProfileCard heading="Name" text={user?.name} Icon={FaceIcon} />
+          <ProfileCard heading="Name" text={user?.name || user?.username} Icon={FaceIcon} />
           <ProfileCard heading="Email" text={user?.email || "Not set"} Icon={EmailIcon} />
-          <ProfileCard heading="Joined" text={moment(user?.createdAt).fromNow()} Icon={CalendarIcon} />
+          <ProfileCard heading="Joined" text={moment(user?.created_at || user?.createdAt).fromNow()} Icon={CalendarIcon} />
           
           <Divider sx={{ my: 2, width: "100%", maxWidth: "350px" }} />
           

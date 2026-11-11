@@ -3,12 +3,10 @@ import AppLayout from "../components/layout/AppLayout";
 import Home from "./Home";
 import Chat from "./Chat";
 import { useSelector } from "react-redux";
-import Notifications from "../components/specific/Notifications";
 
-const Dashboard = ({ chatId, user }) => {
-    const { activeChatId, isNotification } = useSelector((state) => state.misc);
+const Dashboard = ({ user }) => {
+    const { activeChatId } = useSelector((state) => state.misc);
 
-    if (isNotification) return <Notifications />;
     if (activeChatId) return <Chat key={activeChatId} chatId={activeChatId} user={user} />;
     
     return <Home />;

@@ -1,5 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { WS_BASE_URL, STORAGE_KEYS } from "../config";
+import { getWsBaseUrl, STORAGE_KEYS } from "../config";
 
 class MobileChatSocket {
   constructor() {
@@ -8,7 +8,9 @@ class MobileChatSocket {
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 20;
     this.pingInterval = null;
+    this.reconnectTimer = null;
     this.isConnected = false;
+    this.isClosedManually = false;
   }
 
   async connect() {
@@ -17,7 +19,13 @@ class MobileChatSocket {
     }
 
     const token = await AsyncStorage.getItem(STORAGE_KEYS.TOKEN);
-    const url = `${WS_BASE_URL}${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+    if (!token) {
+      return;
+    }
+
+    this.isClosedManually = false;
+    const baseUrl = getWsBaseUrl();
+    const url = `${baseUrl}?token=${encodeURIComponent(token)}`;
 
     try {
       this.ws = new WebSocket(url);
@@ -45,11 +53,18 @@ class MobileChatSocket {
         } catch (e) {}
       };
 
-      this.ws.onclose = () => {
+      this.ws.onclose = (event) => {
         this.isConnected = false;
         this.stopHeartbeat();
-        this.dispatch("disconnect", {});
-        this.scheduleReconnect();
+        this.dispatch("disconnect", { code: event?.code, reason: event?.reason });
+        if (
+          !this.isClosedManually &&
+          event?.code !== 4001 &&
+          event?.code !== 1008 &&
+          event?.code !== 403
+        ) {
+          this.scheduleReconnect();
+        }
       };
 
       this.ws.onerror = (err) => {
@@ -77,10 +92,11 @@ class MobileChatSocket {
   }
 
   scheduleReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) return;
+    if (this.isClosedManually || this.reconnectAttempts >= this.maxReconnectAttempts) return;
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
     const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 15000);
     this.reconnectAttempts++;
-    setTimeout(() => {
+    this.reconnectTimer = setTimeout(() => {
       this.connect();
     }, delay);
   }
@@ -127,9 +143,17 @@ class MobileChatSocket {
   }
 
   disconnect() {
+    this.isClosedManually = true;
+    this.isConnected = false;
     this.stopHeartbeat();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     if (this.ws) {
-      this.ws.close();
+      try {
+        this.ws.close();
+      } catch (e) {}
       this.ws = null;
     }
   }

@@ -11,6 +11,7 @@ import {
   Palette as PaletteIcon,
   Speed as SpeedIcon,
   Wifi as WifiIcon,
+  MoreVert as MoreVertIcon,
 } from "@mui/icons-material";
 import {
   AppBar,
@@ -18,6 +19,10 @@ import {
   Badge,
   Box,
   IconButton,
+  ListItemIcon,
+  ListItemText,
+  Menu,
+  MenuItem,
   Toolbar,
   Tooltip,
   Typography
@@ -28,7 +33,7 @@ import toast from "react-hot-toast";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from 'react-router-dom';
 import { server } from '../../constants/config';
-import { userExists } from "../../redux/reducers/auth";
+import { userNotExists } from "../../redux/reducers/auth";
 import { setIsMobile, setIsMobileProfile, setIsNotification, setIsSearch, setIsNewGroup, resetNotificationCount, setActiveChatId, toggleTheme } from "../../redux/reducers/misc";
 
 const SearchDialog = lazy(() => import("../specific/Search"));
@@ -49,6 +54,7 @@ const Header = ({ unreadMessagesCount = 0 }) => {
   const [showAppearance, setShowAppearance] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
   const [showConnectivity, setShowConnectivity] = useState(false);
+  const [mobileMenuAnchor, setMobileMenuAnchor] = useState(null);
 
   const handleMobile = () => dispatch(setIsMobile(true));
   const openMobileProfile = () => dispatch(setIsMobileProfile(true));
@@ -62,13 +68,19 @@ const Header = ({ unreadMessagesCount = 0 }) => {
 
 
   const logoutHandler = async () => {
+    setMobileMenuAnchor(null);
     try {
       const { data } = await axios.post(`${server}/api/v1/user/logout`, {},
-        { withCredentials: true, });
-      dispatch(userExists());
-      toast.success(data.message);
+        { withCredentials: true });
+      toast.success(data?.message || "Logged out successfully");
     } catch (error) {
-      toast.error(error?.response?.data?.message || "something went wrong");
+      // Clear local session even if server cookie already expired
+    } finally {
+      localStorage.removeItem("chitChat-Token");
+      localStorage.removeItem("access_token");
+      dispatch(setActiveChatId(null));
+      dispatch(userNotExists());
+      navigate("/login", { replace: true });
     }
   };
 
@@ -107,7 +119,7 @@ const Header = ({ unreadMessagesCount = 0 }) => {
               </IconButton>
             </Box>
             <Box sx={{ flexGrow: 1 }} />
-            <Box>
+            <Box sx={{ display: "flex", alignItems: "center" }}>
               <IconBtn 
                 title="Profile" 
                 icon={<AccountCircleIcon />} 
@@ -116,17 +128,58 @@ const Header = ({ unreadMessagesCount = 0 }) => {
               />
               <IconBtn title="Search" icon={<SearchIcon />} onClick={openSearch} />
               <IconBtn title="New Group" icon={<AddIcon />} onClick={addNewGroup} />
-              <IconBtn title="Starred Messages" icon={<StarIcon />} onClick={() => setShowStarred(true)} />
-              <IconBtn title="Appearance & Experience" icon={<PaletteIcon />} onClick={() => setShowAppearance(true)} />
-              <IconBtn title="Device & Performance" icon={<SpeedIcon />} onClick={() => setShowPerformance(true)} />
-              <IconBtn title="Connectivity & Offline" icon={<WifiIcon />} onClick={() => setShowConnectivity(true)} />
-              <IconBtn 
-                title={themeMode === 'dark' ? "Light Mode" : "Dark Mode"} 
-                icon={themeMode === 'dark' ? <LightModeIcon /> : <DarkModeIcon />} 
-                onClick={() => dispatch(toggleTheme())} 
-              />
               <IconBtn title="Notifications" icon={<Badge badgeContent={notificationCount} color="error"><NotificationsIcon /></Badge>} onClick={openNotification} />
-              <IconBtn title="Logout" icon={<LogoutIcon />} onClick={logoutHandler} />
+
+              {/* Desktop Quick Actions */}
+              <Box sx={{ display: { xs: "none", md: "inline-flex" }, alignItems: "center" }}>
+                <IconBtn title="Starred Messages" icon={<StarIcon />} onClick={() => setShowStarred(true)} />
+                <IconBtn title="Appearance & Experience" icon={<PaletteIcon />} onClick={() => setShowAppearance(true)} />
+                <IconBtn title="Device & Performance" icon={<SpeedIcon />} onClick={() => setShowPerformance(true)} />
+                <IconBtn title="Connectivity & Offline" icon={<WifiIcon />} onClick={() => setShowConnectivity(true)} />
+                <IconBtn 
+                  title={themeMode === 'dark' ? "Light Mode" : "Dark Mode"} 
+                  icon={themeMode === 'dark' ? <LightModeIcon /> : <DarkModeIcon />} 
+                  onClick={() => dispatch(toggleTheme())} 
+                />
+                <IconBtn title="Logout" icon={<LogoutIcon />} onClick={logoutHandler} />
+              </Box>
+
+              {/* Mobile Overflow Menu so toolbar never clips on narrow Android screens */}
+              <Box sx={{ display: { xs: "inline-flex", md: "none" } }}>
+                <IconButton color="inherit" aria-label="More options" onClick={(e) => setMobileMenuAnchor(e.currentTarget)}>
+                  <MoreVertIcon />
+                </IconButton>
+                <Menu
+                  anchorEl={mobileMenuAnchor}
+                  open={Boolean(mobileMenuAnchor)}
+                  onClose={() => setMobileMenuAnchor(null)}
+                >
+                  <MenuItem onClick={() => { setMobileMenuAnchor(null); setShowStarred(true); }}>
+                    <ListItemIcon><StarIcon fontSize="small" /></ListItemIcon>
+                    <ListItemText>Starred Messages</ListItemText>
+                  </MenuItem>
+                  <MenuItem onClick={() => { setMobileMenuAnchor(null); setShowAppearance(true); }}>
+                    <ListItemIcon><PaletteIcon fontSize="small" /></ListItemIcon>
+                    <ListItemText>Appearance</ListItemText>
+                  </MenuItem>
+                  <MenuItem onClick={() => { setMobileMenuAnchor(null); setShowPerformance(true); }}>
+                    <ListItemIcon><SpeedIcon fontSize="small" /></ListItemIcon>
+                    <ListItemText>Device & Performance</ListItemText>
+                  </MenuItem>
+                  <MenuItem onClick={() => { setMobileMenuAnchor(null); setShowConnectivity(true); }}>
+                    <ListItemIcon><WifiIcon fontSize="small" /></ListItemIcon>
+                    <ListItemText>Connectivity & Sync</ListItemText>
+                  </MenuItem>
+                  <MenuItem onClick={() => { setMobileMenuAnchor(null); dispatch(toggleTheme()); }}>
+                    <ListItemIcon>{themeMode === "dark" ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}</ListItemIcon>
+                    <ListItemText>{themeMode === "dark" ? "Light Mode" : "Dark Mode"}</ListItemText>
+                  </MenuItem>
+                  <MenuItem onClick={logoutHandler} sx={{ color: "error.main" }}>
+                    <ListItemIcon><LogoutIcon fontSize="small" color="error" /></ListItemIcon>
+                    <ListItemText>Log Out</ListItemText>
+                  </MenuItem>
+                </Menu>
+              </Box>
             </Box>
           </Toolbar>
         </AppBar>

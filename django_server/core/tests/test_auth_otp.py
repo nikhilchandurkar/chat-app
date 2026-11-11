@@ -193,3 +193,57 @@ class AuthOTPTestCase(TestCase):
         self.assertEqual(login_resp.status_code, 200)
         self.assertTrue(login_resp.data["success"])
 
+    def test_change_forgot_reset_password_and_privacy(self):
+        from django.contrib.auth.tokens import default_token_generator
+        from django.utils.encoding import force_bytes
+        from django.utils.http import urlsafe_base64_encode
+
+        user = User.objects.create_user(
+            email="secuser@example.com",
+            username="secuser",
+            password="InitialPassword123!",
+            name="Security User",
+        )
+        self.client.force_authenticate(user=user)
+
+        # 1. Wrong current password rejected
+        bad_cp = self.client.put("/api/v1/user/password", {
+            "currentPassword": "WrongPassword!",
+            "newPassword": "UpdatedPassword123!",
+        })
+        self.assertEqual(bad_cp.status_code, 400)
+
+        # 2. Valid password change succeeds
+        ok_cp = self.client.put("/api/v1/user/password", {
+            "currentPassword": "InitialPassword123!",
+            "newPassword": "UpdatedPassword123!",
+        })
+        self.assertEqual(ok_cp.status_code, 200)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("UpdatedPassword123!"))
+
+        # 3. Profile privacy update handles web "profile" key
+        priv_resp = self.client.put("/api/v1/user/privacy", {"profile": "friends"})
+        self.assertEqual(priv_resp.status_code, 200)
+        user.refresh_from_db()
+        self.assertEqual(user.privacy.get("profile"), "friends")
+
+        # 4. Forgot password returns success even unauthenticated
+        self.client.force_authenticate(user=None)
+        fp_resp = self.client.post("/api/v1/user/forgot-password", {"email": user.email})
+        self.assertEqual(fp_resp.status_code, 200)
+        self.assertTrue(fp_resp.data["success"])
+
+        # 5. Reset password with valid token updates password & returns JWT
+        uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+        token = f"{uidb64}:{default_token_generator.make_token(user)}"
+        rp_resp = self.client.post("/api/v1/user/reset-password", {
+            "token": token,
+            "email": user.email,
+            "newPassword": "FinalResetPassword123!",
+        })
+        self.assertEqual(rp_resp.status_code, 200)
+        self.assertIn("token", rp_resp.data)
+        user.refresh_from_db()
+        self.assertTrue(user.check_password("FinalResetPassword123!"))
+

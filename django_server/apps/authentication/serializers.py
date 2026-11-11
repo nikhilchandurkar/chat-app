@@ -24,12 +24,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     _id = serializers.CharField(source="id", read_only=True)
+    id = serializers.CharField(read_only=True)
+    createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     profile = UserProfileSerializer(read_only=True)
 
     class Meta:
         model = User
         fields = [
             "_id",
+            "id",
             "name",
             "username",
             "email",
@@ -41,6 +44,7 @@ class UserSerializer(serializers.ModelSerializer):
             "starred_messages",
             "profile",
             "created_at",
+            "createdAt",
         ]
 
 

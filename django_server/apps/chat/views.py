@@ -263,9 +263,14 @@ class ChatDetailsView(APIView):
         name = request.data.get("name")
         if name:
             chat.name = name.strip()
+        if "avatar" in request.FILES:
+            from django.core.files.storage import default_storage
+            avatar_file = request.FILES["avatar"]
+            filename = default_storage.save(f"avatars/group_{chat.id}_{avatar_file.name}", avatar_file)
+            chat.avatar = {"public_id": filename, "url": f"/api/v1/media/{filename}"}
         chat.save()
 
-        return Response({"success": True, "message": "Group renamed successfully."})
+        return Response({"success": True, "message": "Group updated successfully."})
 
     def delete(self, request, id):
         chat = get_object_or_404(Conversation, id=id)
@@ -546,3 +551,97 @@ class RevokeInvitationLinkView(APIView):
         invite.is_revoked = True
         invite.save(update_fields=["is_revoked"])
         return Response({"success": True, "message": "Invitation link revoked."})
+
+
+def _get_admin_chat_or_error(user, chat_id):
+    """Validates chat existence and confirms user holds creator or admin privileges."""
+    chat = get_object_or_404(Conversation, id=chat_id)
+    if not (chat.creator == user or chat.admins.filter(id=user.id).exists()):
+        return None, Response({"success": False, "message": "Only group admins can perform this action."}, status=status.HTTP_403_FORBIDDEN)
+    return chat, None
+
+
+class ToggleRestrictMessagesView(APIView):
+    """Toggles whether only group admins can post messages in a group chat."""
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, id):
+        chat, err = _get_admin_chat_or_error(request.user, id)
+        if err:
+            return err
+        chat.restricted_messages = not chat.restricted_messages
+        chat.save(update_fields=["restricted_messages"])
+        return Response({"success": True, "restrictedMessages": chat.restricted_messages})
+
+
+class ManageAdminView(APIView):
+    """Promotes or demotes a conversation member to/from group admin."""
+    permission_classes = [IsAuthenticated]
+    action = "add"
+
+    def post(self, request):
+        chat_id = request.data.get("chatId")
+        user_id = request.data.get("userId")
+        if not chat_id or not user_id:
+            return Response({"success": False, "message": "chatId and userId are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        chat, err = _get_admin_chat_or_error(request.user, chat_id)
+        if err:
+            return err
+
+        target = get_object_or_404(User, id=user_id)
+        if not chat.member_records.filter(user=target).exists():
+            return Response({"success": False, "message": "User is not a member of this group."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if self.action == "add":
+            chat.admins.add(target)
+            msg = f"{target.name or target.username} promoted to admin."
+        else:
+            if chat.creator == target:
+                return Response({"success": False, "message": "Cannot demote group creator."}, status=status.HTTP_400_BAD_REQUEST)
+            chat.admins.remove(target)
+            msg = f"{target.name or target.username} demoted to member."
+
+        return Response({"success": True, "message": msg})
+
+
+class GetPinnedMessagesView(APIView):
+    """Returns active pinned messages for a conversation member."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, id):
+        chat = get_object_or_404(Conversation, id=id)
+        if not chat.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        from apps.messages_app.serializers import MessageSerializer
+        pins = PinnedMessage.objects.filter(conversation=chat).select_related("message", "message__sender").order_by("pinned_at")
+        return Response({"success": True, "pinnedMessages": MessageSerializer([p.message for p in pins], many=True, context={"request": request}).data})
+
+
+class PinMessageActionView(APIView):
+    """Pins or unpins a specific message within a conversation."""
+    permission_classes = [IsAuthenticated]
+
+    def _get_authorized_chat(self, user, chat_id):
+        chat = get_object_or_404(Conversation, id=chat_id)
+        if not chat.member_records.filter(user=user).exists():
+            return None, Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+        if chat.type == "group":
+            return _get_admin_chat_or_error(user, chat_id)
+        return chat, None
+
+    def post(self, request, id, message_id):
+        chat, err = self._get_authorized_chat(request.user, id)
+        if err:
+            return err
+        msg = get_object_or_404(Message, id=message_id, conversation=chat)
+        PinnedMessage.objects.get_or_create(conversation=chat, message=msg, defaults={"pinned_by": request.user})
+        return Response({"success": True, "message": "Message pinned."})
+
+    def delete(self, request, id, message_id):
+        chat, err = self._get_authorized_chat(request.user, id)
+        if err:
+            return err
+        PinnedMessage.objects.filter(conversation=chat, message_id=message_id).delete()
+        return Response({"success": True, "message": "Message unpinned."})

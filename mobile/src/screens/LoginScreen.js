@@ -7,22 +7,31 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  SafeAreaView,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Modal,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import {
   loginWithPassword,
   registerRequest,
   registerVerify,
   requestOtp,
   verifyOtp,
+  forgotPassword,
+  checkServerReady,
 } from "../api/auth";
+import {
+  DEV_DEFAULT_API_URL,
+  PROD_API_URL,
+  getApiBaseUrl,
+  setCustomServerUrl,
+} from "../config";
 import { registerForNativeFCM } from "../services/notifications";
 
 export default function LoginScreen({ navigation }) {
-  // authMode: "login" | "register" | "otp"
+  // authMode: "login" | "register" | "otp_email" | "otp_verify" | "forgot"
   const [authMode, setAuthMode] = useState("login");
 
   // Login state
@@ -30,18 +39,27 @@ export default function LoginScreen({ navigation }) {
   const [loginPassword, setLoginPassword] = useState("");
 
   // Register state
+  const [regName, setRegName] = useState("");
   const [regUsername, setRegUsername] = useState("");
   const [regEmail, setRegEmail] = useState("");
   const [regPassword, setRegPassword] = useState("");
   const [regConfirmPassword, setRegConfirmPassword] = useState("");
   const [regStep, setRegStep] = useState("details"); // "details" | "otp"
 
-  // OTP state
+  // OTP & Forgot password state
   const [otpEmail, setOtpEmail] = useState("");
+  const [forgotEmail, setForgotEmail] = useState("");
   const [otpDigits, setOtpDigits] = useState(["", "", "", "", "", ""]);
   const [countdown, setCountdown] = useState(60);
   const [canResend, setCanResend] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // Server connection & local testing modal state
+  const [serverModalVisible, setServerModalVisible] = useState(false);
+  const [activeServer, setActiveServer] = useState(getApiBaseUrl());
+  const [customUrlInput, setCustomUrlInput] = useState(getApiBaseUrl());
+  const [testingServer, setTestingServer] = useState(false);
+
   const digitRefs = useRef([]);
 
   useEffect(() => {
@@ -54,7 +72,6 @@ export default function LoginScreen({ navigation }) {
     return () => clearInterval(timer);
   }, [regStep, authMode, countdown]);
 
-  // 1. Password Login
   const handlePasswordLogin = async () => {
     const identifier = loginIdentifier.trim();
     if (!identifier) {
@@ -74,14 +91,13 @@ export default function LoginScreen({ navigation }) {
     } catch (err) {
       Alert.alert(
         "Login Failed",
-        err?.response?.data?.message || "Invalid username or password. Please try again."
+        err?.response?.data?.message || `Unable to sign in at ${activeServer}. Check credentials or server connection.`
       );
     } finally {
       setLoading(false);
     }
   };
 
-  // 2. Register Step 1: Send OTP
   const handleRegisterRequest = async () => {
     const username = regUsername.trim().toLowerCase();
     const email = regEmail.trim().toLowerCase();
@@ -105,7 +121,7 @@ export default function LoginScreen({ navigation }) {
 
     setLoading(true);
     try {
-      await registerRequest(username, email, regPassword, regConfirmPassword);
+      await registerRequest(username, email, regPassword, regConfirmPassword, regName);
       setOtpEmail(email);
       setRegStep("otp");
       setCountdown(60);
@@ -122,7 +138,6 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
-  // 3. Register Step 2: Verify OTP & Activate
   const handleRegisterVerify = async () => {
     const code = otpDigits.join("");
     if (code.length !== 6) {
@@ -132,7 +147,7 @@ export default function LoginScreen({ navigation }) {
 
     setLoading(true);
     try {
-      await registerVerify(regUsername, otpEmail, regPassword, code);
+      await registerVerify(regUsername, otpEmail, regPassword, code, regName);
       registerForNativeFCM().catch(() => {});
       navigation.replace("ChatList");
     } catch (err) {
@@ -145,7 +160,6 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
-  // 4. Passwordless OTP flow
   const handleSendOtp = async () => {
     const cleanEmail = otpEmail.trim().toLowerCase();
     if (!cleanEmail || !cleanEmail.includes("@")) {
@@ -190,6 +204,49 @@ export default function LoginScreen({ navigation }) {
     }
   };
 
+  const handleForgotSubmit = async () => {
+    const email = forgotEmail.trim().toLowerCase();
+    if (!email || !email.includes("@")) {
+      Alert.alert("Invalid Email", "Please enter your account email address.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await forgotPassword(email);
+      Alert.alert("Check Your Email", res?.message || "Reset instructions sent.", [
+        { text: "OK", onPress: () => setAuthMode("login") },
+      ]);
+    } catch (err) {
+      Alert.alert("Error", err?.response?.data?.message || "Failed to request password reset.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTestAndSaveServer = async (targetUrl) => {
+    const candidate = (targetUrl || customUrlInput).trim().replace(/\/+$/, "");
+    setTestingServer(true);
+    try {
+      const health = await checkServerReady(candidate);
+      const saved = await setCustomServerUrl(candidate === PROD_API_URL ? "" : candidate);
+      setActiveServer(saved);
+      setCustomUrlInput(saved);
+      Alert.alert(
+        "Server Connected",
+        `Verified live connection to:\n${saved}\n\nDatabase: ${health?.checks?.database || "ok"}\nRedis: ${health?.checks?.redis || "ok"}`
+      );
+      setServerModalVisible(false);
+    } catch (err) {
+      Alert.alert(
+        "Connection Failed",
+        `Could not reach ${candidate}/api/v1/ready.\n\nFor local PC testing on a physical phone, make sure phone & PC share Wi-Fi and use your PC's LAN IP (e.g. http://192.168.1.10:8000).`
+      );
+    } finally {
+      setTestingServer(false);
+    }
+  };
+
   const handleDigitChange = (index, val) => {
     const clean = val.replace(/\D/g, "");
     const newDigits = [...otpDigits];
@@ -210,7 +267,7 @@ export default function LoginScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <KeyboardAvoidingView
-        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
         style={styles.container}
       >
         <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
@@ -220,10 +277,22 @@ export default function LoginScreen({ navigation }) {
             </View>
             <Text style={styles.appTitle}>ChitChat</Text>
             <Text style={styles.appSubtitle}>Secure Real-Time Messaging</Text>
+
+            <TouchableOpacity
+              style={styles.serverPill}
+              onPress={() => {
+                setCustomUrlInput(activeServer);
+                setServerModalVisible(true);
+              }}
+            >
+              <View style={styles.serverDot} />
+              <Text style={styles.serverPillText} numberOfLines={1}>
+                {activeServer.replace(/^https?:\/\//, "")} (Change)
+              </Text>
+            </TouchableOpacity>
           </View>
 
-          {/* Mode Switcher Tabs */}
-          {regStep !== "otp" && authMode !== "otp_verify" && (
+          {regStep !== "otp" && authMode !== "otp_verify" && authMode !== "forgot" && (
             <View style={styles.tabContainer}>
               <TouchableOpacity
                 style={[styles.tabButton, authMode === "login" && styles.tabButtonActive]}
@@ -271,6 +340,16 @@ export default function LoginScreen({ navigation }) {
                 />
 
                 <TouchableOpacity
+                  style={styles.forgotAlign}
+                  onPress={() => {
+                    setForgotEmail("");
+                    setAuthMode("forgot");
+                  }}
+                >
+                  <Text style={styles.forgotText}>Forgot password?</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
                   style={[styles.primaryButton, loading && styles.disabledButton]}
                   onPress={handlePasswordLogin}
                   disabled={loading}
@@ -295,9 +374,19 @@ export default function LoginScreen({ navigation }) {
               </>
             )}
 
-            {/* 2. REGISTRATION (STEP 1: DETAILS) */}
+            {/* 2. REGISTRATION (STEP 1) */}
             {authMode === "register" && regStep === "details" && (
               <>
+                <Text style={styles.inputLabel}>Display Name</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. Nikhil Chandurkar"
+                  placeholderTextColor="#A6AEA8"
+                  value={regName}
+                  onChangeText={setRegName}
+                  editable={!loading}
+                />
+
                 <Text style={styles.inputLabel}>Choose Username</Text>
                 <TextInput
                   style={styles.input}
@@ -358,7 +447,7 @@ export default function LoginScreen({ navigation }) {
               </>
             )}
 
-            {/* 3. REGISTRATION (STEP 2: OTP VERIFICATION) */}
+            {/* 3. REGISTRATION (STEP 2: OTP) */}
             {authMode === "register" && regStep === "otp" && (
               <>
                 <Text style={styles.otpDescription}>
@@ -411,7 +500,7 @@ export default function LoginScreen({ navigation }) {
               </>
             )}
 
-            {/* 4. PASSWORDLESS EMAIL OTP (STANDALONE) */}
+            {/* 4. PASSWORDLESS EMAIL OTP */}
             {authMode === "otp_email" && (
               <>
                 <Text style={styles.inputLabel}>Enter Email for Code</Text>
@@ -497,9 +586,100 @@ export default function LoginScreen({ navigation }) {
                 </View>
               </>
             )}
+
+            {/* 6. FORGOT PASSWORD */}
+            {authMode === "forgot" && (
+              <>
+                <Text style={styles.otpDescription}>
+                  Enter your account email and we will send a recovery link.
+                </Text>
+                <Text style={styles.inputLabel}>Account Email</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="name@example.com"
+                  placeholderTextColor="#A6AEA8"
+                  value={forgotEmail}
+                  onChangeText={setForgotEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  editable={!loading}
+                />
+
+                <TouchableOpacity
+                  style={[styles.primaryButton, loading && styles.disabledButton]}
+                  onPress={handleForgotSubmit}
+                  disabled={loading}
+                >
+                  {loading ? (
+                    <ActivityIndicator color="#FFFFFF" />
+                  ) : (
+                    <Text style={styles.primaryButtonText}>Send Reset Link</Text>
+                  )}
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.linkButton} onPress={() => setAuthMode("login")}>
+                  <Text style={styles.linkButtonText}>Back to Sign In</Text>
+                </TouchableOpacity>
+              </>
+            )}
           </View>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Server Endpoint Config Modal */}
+      <Modal visible={serverModalVisible} animationType="fade" transparent>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>Backend Server Endpoint</Text>
+            <Text style={styles.modalSub}>
+              Default points to your live AWS EC2 HTTPS backend. Use a LAN IP only if testing local Django on your PC.
+            </Text>
+
+            <TextInput
+              style={styles.input}
+              value={customUrlInput}
+              onChangeText={setCustomUrlInput}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="https://chat-nikkiii.duckdns.org"
+            />
+
+            <View style={styles.presetRow}>
+              <TouchableOpacity
+                style={styles.presetBtn}
+                onPress={() => setCustomUrlInput(PROD_API_URL)}
+              >
+                <Text style={styles.presetBtnText}>Live Production</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.presetBtn}
+                onPress={() => setCustomUrlInput(DEV_DEFAULT_API_URL)}
+              >
+                <Text style={styles.presetBtnText}>Emulator Local</Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={[styles.primaryButton, testingServer && styles.disabledButton]}
+              onPress={() => handleTestAndSaveServer()}
+              disabled={testingServer}
+            >
+              {testingServer ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.primaryButtonText}>Test & Save Server</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.linkButton}
+              onPress={() => setServerModalVisible(false)}
+            >
+              <Text style={styles.changeEmailText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -545,6 +725,28 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: "#737A75",
     marginTop: 4,
+  },
+  serverPill: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#E8F3ED",
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 20,
+    marginTop: 10,
+    maxWidth: "90%",
+  },
+  serverDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: "#236B4A",
+    marginRight: 6,
+  },
+  serverPillText: {
+    fontSize: 11,
+    fontWeight: "600",
+    color: "#236B4A",
   },
   tabContainer: {
     flexDirection: "row",
@@ -604,6 +806,16 @@ const styles = StyleSheet.create({
     color: "#202421",
     marginBottom: 8,
   },
+  forgotAlign: {
+    alignSelf: "flex-end",
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  forgotText: {
+    fontSize: 12,
+    color: "#236B4A",
+    fontWeight: "600",
+  },
   primaryButton: {
     backgroundColor: "#236B4A",
     borderRadius: 10,
@@ -646,8 +858,8 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   otpBox: {
-    width: 44,
-    height: 52,
+    width: 42,
+    height: 50,
     borderRadius: 10,
     borderWidth: 1.5,
     borderColor: "#E3E6E1",
@@ -678,5 +890,45 @@ const styles = StyleSheet.create({
   changeEmailText: {
     color: "#737A75",
     fontSize: 13,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "center",
+    padding: 24,
+  },
+  modalBox: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 20,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: "700",
+    color: "#202421",
+    marginBottom: 6,
+  },
+  modalSub: {
+    fontSize: 13,
+    color: "#737A75",
+    marginBottom: 14,
+    lineHeight: 18,
+  },
+  presetRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginTop: 4,
+  },
+  presetBtn: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: "#E8F3ED",
+    alignItems: "center",
+  },
+  presetBtnText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#236B4A",
   },
 });

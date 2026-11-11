@@ -147,14 +147,47 @@ def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=N
         conv.updated_at = timezone.now()
         conv.save(update_fields=["updated_at"])
 
+        from django.db import models as dj_models
+        ConversationMember.objects.filter(
+            conversation=conv
+        ).exclude(user=sender).update(unread_count=dj_models.F("unread_count") + 1)
+
         recipient_ids = [str(m.user_id) for m in conv.member_records.all()]
 
-        # Record in transactional outbox
+        serialized_msg = {
+            "_id": str(msg.id),
+            "id": str(msg.id),
+            "content": content,
+            "sender": {
+                "_id": str(sender.id),
+                "id": str(sender.id),
+                "name": sender.name,
+                "username": sender.username,
+                "avatar": sender.avatar.get("url") if isinstance(sender.avatar, dict) else None,
+            },
+            "chat": str(conv.id),
+            "conversation_id": str(conv.id),
+            "client_message_id": client_msg_id,
+            "attachments": attachments or [],
+            "message_type": msg_type,
+            "isEdited": False,
+            "isDeleted": False,
+            "reactions": [],
+            "replyTo": reply_to,
+            "readBy": [str(sender.id)],
+            "createdAt": msg.created_at.isoformat(),
+            "expiresAt": expires_at.isoformat() if expires_at else None,
+            "recipient_ids": recipient_ids,
+        }
+
+        # Record in transactional outbox (includes full message payload for both web & mobile clients)
         OutboxService.create_outbox_event(
             event_type="message.created",
             conversation_id=str(conv.id),
             payload={
                 "event": "message.created",
+                "legacy_event": "NEW_MESSAGE",
+                "chatId": str(conv.id),
                 "conversation_id": str(conv.id),
                 "message_id": str(msg.id),
                 "sender_id": str(sender.id),
@@ -166,33 +199,12 @@ def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=N
                 "timestamp": msg.created_at.isoformat(),
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "recipient_ids": recipient_ids,
+                "message": serialized_msg,
             }
         )
         OutboxService.publish_pending()
 
-        return {
-            "_id": str(msg.id),
-            "id": str(msg.id),
-            "content": content,
-            "sender": {
-                "_id": str(sender.id),
-                "id": str(sender.id),
-                "name": sender.name,
-                "avatar": sender.avatar.get("url") if isinstance(sender.avatar, dict) else None,
-            },
-            "chat": str(conv.id),
-            "conversation_id": str(conv.id),
-            "client_message_id": client_msg_id,
-            "attachments": attachments or [],
-            "isEdited": False,
-            "isDeleted": False,
-            "reactions": [],
-            "replyTo": reply_to,
-            "readBy": [str(sender.id)],
-            "createdAt": msg.created_at.isoformat(),
-            "expiresAt": expires_at.isoformat() if expires_at else None,
-            "recipient_ids": recipient_ids,
-        }, None
+        return serialized_msg, None
     except Exception as e:
         logger.error("Error saving incoming message: %s", str(e))
         return None, str(e)
@@ -333,22 +345,6 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     "message_id": saved_data["_id"],
                     "timestamp": saved_data["createdAt"],
                 })
-
-                recipients = saved_data.get("recipient_ids", [])
-                for uid in recipients:
-                    await self.channel_layer.group_send(
-                        f"user_{uid}",
-                        {
-                            "type": "chat.event",
-                            "event": "message.created",
-                            "event_legacy": "NEW_MESSAGE",
-                            "data": {
-                                "chatId": chat_id,
-                                "conversation_id": chat_id,
-                                "message": saved_data,
-                            }
-                        }
-                    )
             else:
                 await self.send_json({
                     "event": "error",

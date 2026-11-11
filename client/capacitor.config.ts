@@ -1,29 +1,30 @@
 import { CapacitorConfig } from "@capacitor/cli";
 
+const serverUrl = process.env.CAPACITOR_SERVER_URL || "https://chat-nikkiii.duckdns.org";
+
 const config: CapacitorConfig = {
   // Must match the applicationId in android/app/build.gradle
   appId: "com.nikhil.chatapp",
-  appName: "Nikhil Chat",
-  // Point to your production server — Capacitor bundles the web assets
-  // but API calls go to this URL (hardcoded for Android release build)
+  appName: "ChitChat",
   webDir: "dist",
   server: {
-    // Set to your real server URL so the APK talks to the live backend
-    url: "http://16.113.127.132",
-    cleartext: true, // allow HTTP (no SSL) — remove once you add HTTPS
+    // Points to live HTTPS server (or override via CAPACITOR_SERVER_URL for local emulator/LAN testing)
+    url: serverUrl,
+    cleartext: serverUrl.startsWith("http://"),
+    androidScheme: "https",
   },
   android: {
-    allowMixedContent: true, // allow HTTP API calls from HTTPS webview
+    allowMixedContent: false,
     captureInput: true,
-    webContentsDebuggingEnabled: false, // set true for debug builds
-    backgroundColor: "#1a1a2e",
+    webContentsDebuggingEnabled: false,
+    backgroundColor: "#236B4A",
   },
   plugins: {
     SplashScreen: {
-      launchShowDuration: 2000,
-      backgroundColor: "#1a1a2e",
+      launchShowDuration: 1500,
+      backgroundColor: "#236B4A",
       showSpinner: true,
-      spinnerColor: "#e94560",
+      spinnerColor: "#FFFFFF",
     },
   },
 };

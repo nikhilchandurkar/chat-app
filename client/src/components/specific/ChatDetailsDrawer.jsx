@@ -39,7 +39,7 @@ import {
   useToggleRestrictMessagesMutation,
   useDeleteChatMutation,
 } from "../../redux/api/api";
-import { fileFormat } from "../../lib/feature";
+import { fileFormat, resolveMediaUrl } from "../../lib/feature";
 import { useSelector, useDispatch } from "react-redux";
 import { useAsyncMutation } from "../../hooks/hook";
 import { useNavigate } from "react-router-dom";
@@ -89,18 +89,26 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
   const isAdmin = isCreator || groupDetails?.admins?.includes(user?._id);
 
   useEffect(() => {
-    if (open && chatId && tabIndex === (isGroupChat ? 1 : 0)) {
-      fetchMedia({ chatId, page: 1 }).unwrap().then(res => setMediaMessages(res.messages));
+    if (open && chatId && tabIndex >= (isGroupChat ? 1 : 0)) {
+      fetchMedia({ chatId, page: 1 })
+        .unwrap()
+        .then((res) => {
+          const items = Array.isArray(res?.media)
+            ? res.media
+            : (res?.messages || []).flatMap((m) => m.attachments || []);
+          setMediaMessages(items);
+        })
+        .catch(() => setMediaMessages([]));
     }
     if (groupDetails) {
       setGroupNameValue(groupDetails.name);
     }
-  }, [open, chatId, tabIndex, fetchMedia, groupDetails]);
+  }, [open, chatId, tabIndex, isGroupChat, fetchMedia, groupDetails]);
 
-  const allMedia = mediaMessages.flatMap(msg => msg.attachments);
+  const allMedia = Array.isArray(mediaMessages) ? mediaMessages : [];
 
-  const imagesAndVideos = allMedia.filter(att => ["video", "image"].includes(fileFormat(att.url)));
-  const docs = allMedia.filter(att => ["file", "audio"].includes(fileFormat(att.url)));
+  const imagesAndVideos = allMedia.filter((att) => ["video", "image"].includes(fileFormat(att?.url)));
+  const docs = allMedia.filter((att) => ["file", "audio", "pdf", "unknown"].includes(fileFormat(att?.url)));
 
   const handleTabChange = (event, newValue) => {
     setTabIndex(newValue);
@@ -273,7 +281,7 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
                       <Typography variant="caption" color="secondary" sx={{ ml: 1 }}>Admin</Typography>
                     )}
                   </Box>
-                  {isAdmin && member._id !== user._id && (
+                  {isAdmin && member._id !== user?._id && (
                     <IconButton size="small" onClick={(e) => handleMenuOpen(e, member)}>
                       <MoreVertIcon />
                     </IconButton>
@@ -316,9 +324,9 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
                 {imagesAndVideos.map((att, idx) => (
                   <Grid item xs={4} key={idx}>
                     {fileFormat(att.url) === "image" ? (
-                      <img src={att.url} alt="media" style={{ width: "100%", height: "100px", objectFit: "cover", borderRadius: "8px" }} />
+                      <img src={resolveMediaUrl(att.url)} alt={att.name || "media"} style={{ width: "100%", height: "100px", objectFit: "cover", borderRadius: "8px" }} />
                     ) : (
-                      <video src={att.url} style={{ width: "100%", height: "100px", objectFit: "cover", borderRadius: "8px" }} />
+                      <video src={resolveMediaUrl(att.url)} style={{ width: "100%", height: "100px", objectFit: "cover", borderRadius: "8px" }} />
                     )}
                   </Grid>
                 ))}
@@ -336,8 +344,8 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
                 {docs.map((att, idx) => (
                   <Box key={idx} sx={{ display: "flex", alignItems: "center", gap: 2, p: 1, bgcolor: "rgba(0,0,0,0.05)", borderRadius: "8px" }}>
                     <DocIcon color="primary" />
-                    <Typography variant="body2" noWrap sx={{ flex: 1 }}>Document</Typography>
-                    <a href={att.url} target="_blank" rel="noreferrer" style={{ fontSize: "0.8rem", color: "blue" }}>Open</a>
+                    <Typography variant="body2" noWrap sx={{ flex: 1 }}>{att.name || "Document"}</Typography>
+                    <a href={resolveMediaUrl(att.url)} target="_blank" rel="noreferrer" style={{ fontSize: "0.8rem", color: "#236B4A", fontWeight: 600 }}>Open</a>
                   </Box>
                 ))}
               </Stack>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import {
   StyleSheet,
   View,
@@ -6,39 +6,96 @@ import {
   Switch,
   TouchableOpacity,
   FlatList,
-  SafeAreaView,
   ActivityIndicator,
   Alert,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getOfflineQueue, syncOfflineQueue, clearOfflineQueue } from "../services/offlineQueueService";
+import socket from "../api/socket";
+import { checkServerReady } from "../api/auth";
+import { getApiBaseUrl, getWsBaseUrl } from "../config";
+
+const AUTO_SYNC_KEY = "@chatapp_auto_sync";
 
 export default function ConnectivityScreen() {
-  const [isOnline, setIsOnline] = useState(true);
+  const [wsConnected, setWsConnected] = useState(socket.isConnected);
+  const [apiReachable, setApiReachable] = useState(null);
+  const [latencyMs, setLatencyMs] = useState(null);
+  const [checking, setChecking] = useState(false);
   const [autoSync, setAutoSync] = useState(true);
   const [queue, setQueue] = useState([]);
   const [syncing, setSyncing] = useState(false);
 
-  useEffect(() => {
-    loadQueue();
-  }, []);
-
-  const loadQueue = async () => {
+  const loadQueue = useCallback(async () => {
     const q = await getOfflineQueue();
     setQueue(q);
+  }, []);
+
+  const checkHealth = useCallback(async () => {
+    setChecking(true);
+    const start = Date.now();
+    try {
+      await checkServerReady();
+      setApiReachable(true);
+      setLatencyMs(Date.now() - start);
+    } catch {
+      setApiReachable(false);
+      setLatencyMs(null);
+    } finally {
+      setWsConnected(socket.isConnected);
+      setChecking(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadQueue();
+    checkHealth();
+
+    AsyncStorage.getItem(AUTO_SYNC_KEY).then((val) => {
+      if (val !== null) setAutoSync(val === "true");
+    });
+
+    const onConnect = () => setWsConnected(true);
+    const onDisconnect = () => setWsConnected(false);
+    socket.on("connect", onConnect);
+    socket.on("disconnect", onDisconnect);
+
+    return () => {
+      socket.off("connect", onConnect);
+      socket.off("disconnect", onDisconnect);
+    };
+  }, [loadQueue, checkHealth]);
+
+  const handleToggleAutoSync = async (nextVal) => {
+    setAutoSync(nextVal);
+    await AsyncStorage.setItem(AUTO_SYNC_KEY, nextVal ? "true" : "false");
+  };
+
+  const handleReconnectAndPing = async () => {
+    if (!socket.isConnected) {
+      socket.connect();
+    }
+    await checkHealth();
   };
 
   const handleManualSync = async () => {
     if (queue.length === 0) {
-      Alert.alert("Queue Empty", "There are no pending offline messages.");
+      await handleReconnectAndPing();
+      Alert.alert("Outbox Empty", "No pending offline messages. Server connection refreshed.");
       return;
     }
     setSyncing(true);
+    if (!socket.isConnected) {
+      socket.connect();
+    }
     const { syncedCount, failedCount } = await syncOfflineQueue();
     setSyncing(false);
     await loadQueue();
+    await checkHealth();
     Alert.alert(
       "Sync Complete",
-      `Successfully sent ${syncedCount} message(s). ${failedCount > 0 ? `${failedCount} failed.` : ""}`
+      `Delivered ${syncedCount} queued message(s).${failedCount > 0 ? ` ${failedCount} remaining.` : ""}`
     );
   };
 
@@ -56,23 +113,41 @@ export default function ConnectivityScreen() {
     ]);
   };
 
+  const isHealthy = wsConnected || apiReachable === true;
+
   return (
-    <SafeAreaView style={styles.container}>
+    <SafeAreaView style={styles.container} edges={["bottom", "left", "right"]}>
       <View style={styles.content}>
         {/* Connection State Card */}
         <Text style={styles.sectionHeader}>CONNECTION STATE</Text>
         <View style={styles.card}>
           <View style={styles.row}>
-            <View>
-              <Text style={styles.statusTitle}>Backend Server Status</Text>
-              <Text style={styles.statusSub}>Django Daphne ASGI /ws/chat/</Text>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={styles.statusTitle}>Real-Time Backend Server</Text>
+              <Text style={styles.statusSub} numberOfLines={1}>{getApiBaseUrl()}</Text>
+              <Text style={styles.statusSub} numberOfLines={1}>
+                WS: {getWsBaseUrl()} {wsConnected ? "• Connected" : "• Disconnected"}
+              </Text>
+              {latencyMs !== null && (
+                <Text style={styles.latencyText}>API Ping: {latencyMs} ms</Text>
+              )}
             </View>
-            <View style={[styles.badge, { backgroundColor: isOnline ? "#E8F3ED" : "#FADBD8" }]}>
-              <Text style={[styles.badgeText, { color: isOnline ? "#236B4A" : "#C0392B" }]}>
-                {isOnline ? "Online" : "Offline"}
+            <View style={[styles.badge, { backgroundColor: isHealthy ? "#E8F3ED" : "#FADBD8" }]}>
+              <Text style={[styles.badgeText, { color: isHealthy ? "#236B4A" : "#C0392B" }]}>
+                {wsConnected ? "Live WS" : apiReachable ? "REST Ready" : apiReachable === false ? "Offline" : "Checking"}
               </Text>
             </View>
           </View>
+
+          <TouchableOpacity
+            style={styles.pingBtn}
+            onPress={handleReconnectAndPing}
+            disabled={checking}
+          >
+            <Text style={styles.pingBtnText}>
+              {checking ? "Testing Server..." : "Ping Server & Reconnect WebSocket"}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Sync Settings */}
@@ -85,7 +160,7 @@ export default function ConnectivityScreen() {
             </View>
             <Switch
               value={autoSync}
-              onValueChange={setAutoSync}
+              onValueChange={handleToggleAutoSync}
               trackColor={{ false: "#E3E6E1", true: "#236B4A" }}
             />
           </View>
@@ -116,22 +191,22 @@ export default function ConnectivityScreen() {
                   <Text style={styles.queueTime}>Queued at {new Date(item.timestamp).toLocaleTimeString()}</Text>
                 </View>
                 <View style={styles.pendingBadge}>
-                  <Text style={styles.pendingText}>{item.state.toUpperCase()}</Text>
+                  <Text style={styles.pendingText}>{(item.state || "queued").toUpperCase()}</Text>
                 </View>
               </View>
             )}
           />
         )}
 
-        {queue.length > 0 && (
-          <TouchableOpacity style={styles.syncBtn} onPress={handleManualSync} disabled={syncing}>
-            {syncing ? (
-              <ActivityIndicator color="#FFFFFF" />
-            ) : (
-              <Text style={styles.syncBtnText}>Synchronize Outbox Now</Text>
-            )}
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity style={styles.syncBtn} onPress={handleManualSync} disabled={syncing}>
+          {syncing ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.syncBtnText}>
+              {queue.length > 0 ? "Synchronize Outbox Now" : "Verify Sync & Refresh"}
+            </Text>
+          )}
+        </TouchableOpacity>
       </View>
     </SafeAreaView>
   );
@@ -199,6 +274,26 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: "#737A75",
     marginTop: 2,
+  },
+  latencyText: {
+    fontSize: 11,
+    color: "#236B4A",
+    fontWeight: "600",
+    marginTop: 4,
+  },
+  pingBtn: {
+    marginTop: 12,
+    backgroundColor: "#F1F2EF",
+    borderRadius: 6,
+    paddingVertical: 10,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#E3E6E1",
+  },
+  pingBtnText: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#236B4A",
   },
   badge: {
     paddingHorizontal: 10,

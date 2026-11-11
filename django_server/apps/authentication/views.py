@@ -1,8 +1,13 @@
 import os
+from urllib.parse import quote
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import Q
 from django.conf import settings
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from django.core.mail import send_mail
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -640,17 +645,25 @@ class UpdateProfileView(APIView):
             "user": UserSerializer(user).data
         })
 
+    def delete(self, request):
+        return _deactivate_profile_response(request.user)
+
+
+def _deactivate_profile_response(user):
+    """Shared account deactivation helper for DeleteProfileView and UpdateProfileView."""
+    user.is_active = False
+    user.save(update_fields=["is_active"])
+    response = Response({"success": True, "message": "Account deactivated."})
+    response.delete_cookie("chitChat-Token")
+    response.delete_cookie("chitChat-RefreshToken")
+    return response
+
 
 class DeleteProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def delete(self, request):
-        user = request.user
-        user.is_active = False
-        user.save(update_fields=["is_active"])
-        response = Response({"success": True, "message": "Account deactivated."})
-        response.delete_cookie("chitChat-Token")
-        return response
+        return _deactivate_profile_response(request.user)
 
 
 class UpdateStatusView(APIView):
@@ -671,6 +684,15 @@ class UpdatePrivacyView(APIView):
 
     def put(self, request):
         profile, _ = UserProfile.objects.get_or_create(user=request.user)
+        if "profile" in request.data:
+            raw_val = str(request.data["profile"]).strip().lower()
+            if raw_val in ("everyone", "friends", "contacts", "nobody"):
+                user_privacy = dict(request.user.privacy or {})
+                user_privacy["profile"] = raw_val
+                request.user.privacy = user_privacy
+                request.user.save(update_fields=["privacy"])
+                profile.privacy_avatar = "contacts" if raw_val == "friends" else raw_val
+
         for field in [
             "privacy_avatar", "privacy_online", "privacy_last_seen",
             "hide_from_search", "privacy_read_receipts", "privacy_typing_indicator",
@@ -681,8 +703,123 @@ class UpdatePrivacyView(APIView):
         profile.save()
         return Response({
             "success": True,
-            "privacy": UserProfileSerializer(profile).data
+            "privacy": UserProfileSerializer(profile).data,
+            "user_privacy": request.user.privacy,
         })
+
+
+class ChangePasswordView(APIView):
+    """Updates an authenticated user's password after verifying their current password."""
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request):
+        current_password = request.data.get("currentPassword") or request.data.get("current_password") or ""
+        new_password = request.data.get("newPassword") or request.data.get("new_password") or ""
+
+        if len(new_password) < 8:
+            return Response(
+                {"success": False, "message": "Password must be at least 8 characters long."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user = request.user
+        if user.has_usable_password() and not user.check_password(current_password):
+            return Response(
+                {"success": False, "message": "Current password is incorrect."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(new_password)
+        user.save(update_fields=["password"])
+        AuditLog.objects.create(
+            user=user,
+            action="PASSWORD_CHANGED",
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", "")[:255],
+        )
+        return Response({"success": True, "message": "Password changed successfully."})
+
+
+class ForgotPasswordView(APIView):
+    """Issues a single-use password reset token and dispatches the reset link by email."""
+    permission_classes = [AllowAny]
+    throttle_classes = [OTPRequestThrottle]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        if not email:
+            return Response({"success": False, "message": "Email address is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(email__iexact=email, is_active=True).first()
+        if user:
+            uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
+            token = f"{uidb64}:{default_token_generator.make_token(user)}"
+            client_base = getattr(settings, "API_BASE_URL", "https://chat-nikkiii.duckdns.org").rstrip("/")
+            reset_url = f"{client_base}/reset-password?token={quote(token)}&email={quote(user.email)}"
+            try:
+                from .tasks import send_reset_password_email_task
+                send_reset_password_email_task.delay(user.email, reset_url, user.name or user.username)
+            except Exception:
+                send_mail(
+                    subject="Reset Your ChatApp Password",
+                    message=f"Reset link (expires in 1 hour): {reset_url}",
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[user.email],
+                    fail_silently=True,
+                )
+
+        return Response({
+            "success": True,
+            "message": "If an account exists with that email, a password reset link has been sent.",
+        })
+
+
+class ResetPasswordView(APIView):
+    """Validates a password reset token, updates password, and issues fresh JWT credentials."""
+    permission_classes = [AllowAny]
+    throttle_classes = [OTPVerifyThrottle]
+
+    def post(self, request):
+        raw_token = (request.data.get("token") or "").strip()
+        email = (request.data.get("email") or "").strip().lower()
+        new_password = request.data.get("newPassword") or request.data.get("new_password") or ""
+
+        if not raw_token or ":" not in raw_token or len(new_password) < 8:
+            return Response(
+                {"success": False, "message": "Invalid reset link or password shorter than 8 characters."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        uidb64, token = raw_token.split(":", 1)
+        try:
+            uid = force_str(urlsafe_base64_decode(uidb64))
+            user = User.objects.filter(pk=uid, email__iexact=email, is_active=True).first()
+        except Exception:
+            user = None
+
+        if not user or not default_token_generator.check_token(user, token):
+            return Response(
+                {"success": False, "message": "Reset link is invalid or expired."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(new_password)
+        user.status = "online"
+        user.save(update_fields=["password", "status"])
+
+        jwt_token = SimpleRefreshToken.for_user(user)
+        access_token = str(jwt_token.access_token)
+        refresh_token = str(jwt_token)
+
+        response = Response({
+            "success": True,
+            "message": "Password reset successfully.",
+            "user": UserSerializer(user).data,
+            "token": access_token,
+            "refreshToken": refresh_token,
+        })
+        set_jwt_cookie(response, access_token, refresh_token)
+        return response
 
 
 class SearchUserView(APIView):

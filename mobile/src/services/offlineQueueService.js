@@ -59,7 +59,14 @@ export const syncOfflineQueue = async (onProgress) => {
   for (const item of queue) {
     try {
       if (onProgress) onProgress(item.id, MESSAGE_STATES.SENDING);
-      await apiSendMessage(item.chatId, item.content, item.attachments);
+      await apiSendMessage(
+        item.chatId,
+        item.content,
+        item.clientMessageId || item.id,
+        item.replyTo || null,
+        item.attachments || [],
+        item.messageType || "text"
+      );
       syncedCount++;
       if (onProgress) onProgress(item.id, MESSAGE_STATES.SENT);
     } catch (err) {

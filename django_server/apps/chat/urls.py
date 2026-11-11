@@ -17,6 +17,10 @@ from .views import (
     InspectInvitationLinkView,
     AcceptInvitationLinkView,
     RevokeInvitationLinkView,
+    ToggleRestrictMessagesView,
+    ManageAdminView,
+    GetPinnedMessagesView,
+    PinMessageActionView,
 )
 
 urlpatterns = [
@@ -32,6 +36,10 @@ urlpatterns = [
     path("addmembers/", AddMembersView.as_view(), name="chat-add-members-slash"),
     path("removemember", RemoveMembersView.as_view(), name="chat-remove-member"),
     path("removemember/", RemoveMembersView.as_view(), name="chat-remove-member-slash"),
+    path("add-admin", ManageAdminView.as_view(action="add"), name="chat-add-admin"),
+    path("add-admin/", ManageAdminView.as_view(action="add"), name="chat-add-admin-slash"),
+    path("remove-admin", ManageAdminView.as_view(action="remove"), name="chat-remove-admin"),
+    path("remove-admin/", ManageAdminView.as_view(action="remove"), name="chat-remove-admin-slash"),
     path("leave/<str:id>", LeaveGroupView.as_view(), name="chat-leave"),
     path("leave/<str:id>/", LeaveGroupView.as_view(), name="chat-leave-slash"),
     path("pin/<str:id>", TogglePinConversationView.as_view(), name="chat-pin"),
@@ -40,6 +48,14 @@ urlpatterns = [
     path("mute/<str:id>/", ToggleMuteConversationView.as_view(), name="chat-mute-slash"),
     path("archive/<str:id>", ToggleArchiveConversationView.as_view(), name="chat-archive"),
     path("archive/<str:id>/", ToggleArchiveConversationView.as_view(), name="chat-archive-slash"),
+
+    # Group Restrictions & Pinned Messages
+    path("<str:id>/restrict", ToggleRestrictMessagesView.as_view(), name="chat-restrict"),
+    path("<str:id>/restrict/", ToggleRestrictMessagesView.as_view(), name="chat-restrict-slash"),
+    path("<str:id>/pins", GetPinnedMessagesView.as_view(), name="chat-pins"),
+    path("<str:id>/pins/", GetPinnedMessagesView.as_view(), name="chat-pins-slash"),
+    path("<str:id>/pin/<str:message_id>", PinMessageActionView.as_view(), name="chat-pin-message"),
+    path("<str:id>/pin/<str:message_id>/", PinMessageActionView.as_view(), name="chat-pin-message-slash"),
 
     # Ephemeral / Disappearing Messages
     path("<str:id>/ephemeral", UpdateEphemeralTTLView.as_view(), name="chat-ephemeral"),

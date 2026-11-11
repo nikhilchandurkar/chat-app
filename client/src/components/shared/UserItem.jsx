@@ -2,6 +2,8 @@ import { Add as AddIcon, Remove as RemoveIcon } from "@mui/icons-material";
 import { Avatar, IconButton, ListItem, Stack, Typography } from "@mui/material";
 import React, { memo } from "react";
 
+import { transformImage } from "../../lib/feature";
+
 const UserItem = ({
   user,
   handler,
@@ -9,7 +11,9 @@ const UserItem = ({
   isAdded = false,
   styling = {},
 }) => {
-  const { name, _id, avatar } = user;
+  const { name, username, _id, avatar } = user;
+  const displayName = name || username || "User";
+  const avatarSrc = transformImage(typeof avatar === "string" ? avatar : avatar?.url);
 
   return (
     <ListItem>
@@ -20,14 +24,14 @@ const UserItem = ({
         width={"100%"}
         {...styling}
       >
-        <Avatar src={avatar?.url} alt={name}>
-          {name ? name[0].toUpperCase() : "U"}
+        <Avatar src={avatarSrc} alt={displayName} sx={{ bgcolor: "#236B4A", color: "#fff" }}>
+          {displayName[0].toUpperCase()}
         </Avatar>
 
         <Typography
           variant="body1"
           sx={{
-            flexGlow: 1,
+            flexGrow: 1,
             display: "-webkit-box",
             WebkitLineClamp: 1,
             WebkitBoxOrient: "vertical",
@@ -36,7 +40,7 @@ const UserItem = ({
             width: "100%",
           }}
         >
-          {name}
+          {displayName}
         </Typography>
 
         <IconButton
