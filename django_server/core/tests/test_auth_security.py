@@ -1,6 +1,7 @@
 """Tests for concurrent device/session limits, QR companion login, TOTP MFA, and superadmin promotion."""
 
 from io import StringIO
+from unittest.mock import patch
 
 from django.core.cache import cache
 from django.core.management import call_command
@@ -8,7 +9,7 @@ from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.authentication.models import User, UserSession
+from apps.authentication.models import EmailOTP, User, UserSession
 from apps.authentication.services.mfa_service import compute_totp_code, MFAService
 
 
@@ -237,3 +238,61 @@ class AuthSecurityFeaturesTestCase(APITestCase):
         ):
             res_cl = self.client.get(admin_path)
             self.assertEqual(res_cl.status_code, status.HTTP_200_OK, f"Admin changelist failed on {admin_path}")
+
+    @override_settings(GOOGLE_CLIENT_ID="google-id-secret-value", GITHUB_CLIENT_ID="github-id-secret-value")
+    def test_auth_config_hides_client_ids_and_oauth_start_redirects_safely(self):
+        cfg = self.client.get("/api/v1/auth/config")
+        self.assertEqual(cfg.status_code, status.HTTP_200_OK)
+        self.assertNotIn("google_client_id", cfg.data)
+        self.assertNotIn("github_client_id", cfg.data)
+        self.assertNotIn("facebook_app_id", cfg.data)
+        self.assertTrue(cfg.data["google_enabled"])
+        self.assertTrue(cfg.data["github_enabled"])
+
+        # Valid server-side redirect keeps client ID out of frontend code
+        redir = self.client.get(
+            "/api/v1/auth/oauth/google/start",
+            {"redirect_uri": "https://chat-nikkiii.duckdns.org/login", "platform": "android"},
+        )
+        self.assertEqual(redir.status_code, status.HTTP_302_FOUND)
+        self.assertIn("https://accounts.google.com/o/oauth2/v2/auth", redir["Location"])
+        self.assertIn("state=google_android", redir["Location"])
+
+        # Untrusted open redirect is rejected
+        bad_redir = self.client.get(
+            "/api/v1/auth/oauth/google/start",
+            {"redirect_uri": "https://evil.example.com/login", "platform": "web"},
+        )
+        self.assertEqual(bad_redir.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_forgot_password_otp_reset_revokes_prior_sessions_and_signs_in(self):
+        old_login = self._login("old-laptop", "web")
+        self.assertEqual(old_login.status_code, status.HTTP_200_OK)
+        old_sid = old_login.data["session_id"]
+
+        with patch("apps.authentication.services.otp_service.EmailNotificationService.send_otp", return_value=True), \
+             patch("apps.authentication.services.otp_service.secrets.randbelow", return_value=234567):
+            req = self.client.post("/api/v1/auth/forgot-password/request", {"email": self.user.email}, format="json")
+            self.assertEqual(req.status_code, status.HTTP_200_OK)
+
+        # Verify OTP is hashed at rest and never exposed in API response
+        self.assertNotIn("otp", req.data)
+        otp_obj = EmailOTP.objects.filter(email=self.user.email, purpose="recovery").latest("created_at")
+        self.assertTrue(otp_obj.is_valid("334567"))
+
+        reset_res = self.client.post(
+            "/api/v1/auth/forgot-password/reset",
+            {
+                "email": self.user.email,
+                "otp": "334567",
+                "new_password": "BrandNewPassword123!",
+                "device_id": "new-phone-1",
+                "platform": "android",
+            },
+            format="json",
+        )
+        self.assertEqual(reset_res.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("BrandNewPassword123!"))
+        self.assertTrue(UserSession.objects.get(id=old_sid).is_revoked)
+        self.assertFalse(UserSession.objects.get(id=reset_res.data["session_id"]).is_revoked)

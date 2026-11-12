@@ -193,3 +193,14 @@ class QRClaimSerializer(serializers.Serializer):
     qr_token = serializers.CharField(required=True)
     claim_secret = serializers.CharField(required=True)
     replace_session_id = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class ForgotPasswordOTPResetSerializer(serializers.Serializer):
+    email = serializers.EmailField(required=True)
+    otp = serializers.CharField(required=True, min_length=6, max_length=6)
+    new_password = serializers.CharField(required=True, min_length=8, write_only=True)
+    device_id = serializers.CharField(required=False, default="web-client")
+    device_name = serializers.CharField(required=False, allow_blank=True, default="")
+    platform = serializers.ChoiceField(choices=["android", "web", "ios"], default="web")
+    app_version = serializers.CharField(required=False, default="1.0.0")
+    replace_session_id = serializers.CharField(required=False, allow_blank=True, default="")

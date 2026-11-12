@@ -32,15 +32,14 @@ import {
   Visibility,
   VisibilityOff,
   CheckCircleOutline,
-  QrCode2,
+  Devices,
   Security,
-  ContentCopy,
 } from "@mui/icons-material";
 import axios from "axios";
 import QRCode from "qrcode";
 import toast from "react-hot-toast";
 import { useDispatch } from "react-redux";
-import { useNavigate, useLocation } from "react-router-dom";
+import { useNavigate, useLocation, Link as RouterLink } from "react-router-dom";
 import { Browser } from "@capacitor/browser";
 import { server } from "../constants/config.js";
 import { userExists } from "../redux/reducers/auth.js";
@@ -78,10 +77,6 @@ const GitHubIcon = () => (
   </svg>
 );
 
-const DEFAULT_GOOGLE_CLIENT_ID =
-  "417703095184-trc78n2da0pab0pqa3ihp2v9vj89mmap.apps.googleusercontent.com";
-const DEFAULT_GITHUB_CLIENT_ID = "Ov23li8YB5o8SCTqWXST";
-
 const Login = () => {
   const [tabIndex, setTabIndex] = useState(0); // 0 = Login, 1 = Register
   const [mode, setMode] = useState("password"); // "password" | "otp"
@@ -111,12 +106,10 @@ const Login = () => {
   const [mfaToken, setMfaToken] = useState("");
   const [mfaCode, setMfaCode] = useState("");
   const [deviceLimitState, setDeviceLimitState] = useState(null); // { token, maxDevices, activeSessions }
-  const [qrSession, setQrSession] = useState(null); // { qrToken, claimSecret, qrPayload, qrDataUrl, secondsLeft }
+  const [qrSession, setQrSession] = useState(null); // { qrToken, claimSecret, qrDataUrl, secondsLeft }
   const [authConfig, setAuthConfig] = useState({
-    google_client_id:
-      import.meta.env.VITE_GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID,
-    github_client_id:
-      import.meta.env.VITE_GITHUB_CLIENT_ID || DEFAULT_GITHUB_CLIENT_ID,
+    google_enabled: true,
+    github_enabled: true,
   });
 
   const digitRefs = useRef([]);
@@ -125,15 +118,15 @@ const Login = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Fetch server auth config on mount
+  // Fetch non-sensitive OAuth availability flags on mount
   useEffect(() => {
     axios
       .get(`${server}/api/v1/auth/config`)
       .then(({ data }) => {
-        if (data.google_client_id || data.github_client_id) {
+        if (typeof data.google_enabled === "boolean" || typeof data.github_enabled === "boolean") {
           setAuthConfig((prev) => ({
-            google_client_id: data.google_client_id || prev.google_client_id,
-            github_client_id: data.github_client_id || prev.github_client_id,
+            google_enabled: typeof data.google_enabled === "boolean" ? data.google_enabled : prev.google_enabled,
+            github_enabled: typeof data.github_enabled === "boolean" ? data.github_enabled : prev.github_enabled,
           }));
         }
       })
@@ -266,7 +259,7 @@ const Login = () => {
     }
   };
 
-  // Start / refresh QR Code login session
+  // Start / refresh Shared Session pairing code
   const startQrLogin = async () => {
     setMode("qr_login");
     setIsLoading(true);
@@ -281,13 +274,12 @@ const Login = () => {
       setQrSession({
         qrToken: data.qr_token,
         claimSecret: data.claim_secret,
-        qrPayload: data.qr_payload,
         qrDataUrl: dataUrl,
         secondsLeft: data.expires_in || 120,
         expired: false,
       });
     } catch (err) {
-      toast.error(err?.response?.data?.message || "Failed to generate QR login code");
+      toast.error(err?.response?.data?.message || "Failed to initialize shared session");
       setMode("password");
     } finally {
       setIsLoading(false);
@@ -549,35 +541,25 @@ const Login = () => {
     }
   };
 
-  // Social OAuth Redirect (uses Chrome Custom Tabs on Android Capacitor and returns via custom URL scheme)
+  // Server-initiated OAuth Redirect (never embeds client IDs in client code)
   const handleSocialClick = async (provider) => {
-    const redirectUri = `${window.location.origin}/login`;
-    const nativeAndroid = isCapacitorNative();
-
-    let authUrl = "";
-    if (provider === "Google") {
-      const clientId =
-        authConfig.google_client_id || DEFAULT_GOOGLE_CLIENT_ID;
-      const state = nativeAndroid ? "google_android" : "google";
-      authUrl = `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=${encodeURIComponent(
-        clientId
-      )}&redirect_uri=${encodeURIComponent(
-        redirectUri
-      )}&scope=openid%20email%20profile&access_type=offline&prompt=select_account&state=${encodeURIComponent(
-        state
-      )}`;
-    } else if (provider === "GitHub") {
-      const clientId =
-        authConfig.github_client_id || DEFAULT_GITHUB_CLIENT_ID;
-      const state = nativeAndroid ? "github_android" : "github";
-      authUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(
-        clientId
-      )}&redirect_uri=${encodeURIComponent(
-        redirectUri
-      )}&scope=user:email&state=${encodeURIComponent(state)}`;
+    const providerKey = provider === "GitHub" ? "github" : provider === "Google" ? "google" : "";
+    if (!providerKey) return;
+    if (providerKey === "google" && !authConfig.google_enabled) {
+      toast.error("Google Sign-In is currently unavailable.");
+      return;
+    }
+    if (providerKey === "github" && !authConfig.github_enabled) {
+      toast.error("GitHub Sign-In is currently unavailable.");
+      return;
     }
 
-    if (!authUrl) return;
+    const redirectUri = `${window.location.origin}/login`;
+    const nativeAndroid = isCapacitorNative();
+    const apiBase = server || window.location.origin;
+    const authUrl = `${apiBase}/api/v1/auth/oauth/${providerKey}/start?redirect_uri=${encodeURIComponent(
+      redirectUri
+    )}&platform=${nativeAndroid ? "android" : "web"}`;
 
     if (nativeAndroid) {
       try {
@@ -711,55 +693,63 @@ const Login = () => {
           {tabIndex === 0 && mode === "password" && (
             <Box>
               {/* Social Login Buttons */}
-              <Stack spacing={1.5} mb={2.5}>
-                <Button
-                  fullWidth
-                  variant="outlined"
-                  onClick={() => handleSocialClick("Google")}
-                  startIcon={<GoogleIcon />}
-                  sx={{
-                    borderColor: "#E3E6E1",
-                    color: "#202421",
-                    textTransform: "none",
-                    fontWeight: 600,
-                    py: 1.1,
-                    borderRadius: 1.5,
-                    "&:hover": {
-                      borderColor: "#D0D4CE",
-                      backgroundColor: "#F1F2EF",
-                    },
-                  }}
-                >
-                  Continue with Google
-                </Button>
+              {(authConfig.google_enabled || authConfig.github_enabled) && (
+                <>
+                  <Stack spacing={1.5} mb={2.5}>
+                    {authConfig.google_enabled && (
+                      <Button
+                        fullWidth
+                        variant="outlined"
+                        onClick={() => handleSocialClick("Google")}
+                        startIcon={<GoogleIcon />}
+                        sx={{
+                          borderColor: "#E3E6E1",
+                          color: "#202421",
+                          textTransform: "none",
+                          fontWeight: 600,
+                          py: 1.1,
+                          borderRadius: 1.5,
+                          "&:hover": {
+                            borderColor: "#D0D4CE",
+                            backgroundColor: "#F1F2EF",
+                          },
+                        }}
+                      >
+                        Continue with Google
+                      </Button>
+                    )}
 
-                <Button
-                  fullWidth
-                  variant="outlined"
-                  onClick={() => handleSocialClick("GitHub")}
-                  startIcon={<GitHubIcon />}
-                  sx={{
-                    borderColor: "#E3E6E1",
-                    color: "#202421",
-                    textTransform: "none",
-                    fontWeight: 600,
-                    py: 1.1,
-                    borderRadius: 1.5,
-                    "&:hover": {
-                      borderColor: "#D0D4CE",
-                      backgroundColor: "#F1F2EF",
-                    },
-                  }}
-                >
-                  Continue with GitHub
-                </Button>
-              </Stack>
+                    {authConfig.github_enabled && (
+                      <Button
+                        fullWidth
+                        variant="outlined"
+                        onClick={() => handleSocialClick("GitHub")}
+                        startIcon={<GitHubIcon />}
+                        sx={{
+                          borderColor: "#E3E6E1",
+                          color: "#202421",
+                          textTransform: "none",
+                          fontWeight: 600,
+                          py: 1.1,
+                          borderRadius: 1.5,
+                          "&:hover": {
+                            borderColor: "#D0D4CE",
+                            backgroundColor: "#F1F2EF",
+                          },
+                        }}
+                      >
+                        Continue with GitHub
+                      </Button>
+                    )}
+                  </Stack>
 
-              <Divider sx={{ my: 2 }}>
-                <Typography variant="caption" color="#A6AEA8" fontWeight={500}>
-                  OR SIGN IN WITH PASSWORD
-                </Typography>
-              </Divider>
+                  <Divider sx={{ my: 2 }}>
+                    <Typography variant="caption" color="#A6AEA8" fontWeight={500}>
+                      OR SIGN IN WITH PASSWORD
+                    </Typography>
+                  </Divider>
+                </>
+              )}
 
               {/* Password Login Form */}
               <form onSubmit={handlePasswordLogin}>
@@ -818,7 +808,8 @@ const Login = () => {
 
                 <Box display="flex" justifyContent="flex-end" mb={2}>
                   <Link
-                    href="/forgot-password"
+                    component={RouterLink}
+                    to="/forgot-password"
                     underline="hover"
                     variant="caption"
                     sx={{ color: "#236B4A", fontWeight: 600, cursor: "pointer" }}
@@ -889,7 +880,7 @@ const Login = () => {
                   </Button>
                   <Button
                     size="small"
-                    startIcon={<QrCode2 fontSize="small" />}
+                    startIcon={<Devices fontSize="small" />}
                     onClick={startQrLogin}
                     sx={{
                       textTransform: "none",
@@ -898,7 +889,7 @@ const Login = () => {
                       fontSize: "12px",
                     }}
                   >
-                    Link via QR Code
+                    Sign in via Shared Session
                   </Button>
                 </Stack>
               </Box>
@@ -1477,7 +1468,7 @@ const Login = () => {
             </Box>
           )}
 
-          {/* QR CODE COMPANION LOGIN */}
+          {/* SHARED SESSION COMPANION PAIRING */}
           {mode === "qr_login" && (
             <Box textAlign="center">
               <Box display="flex" alignItems="center" mb={1.5}>
@@ -1485,44 +1476,33 @@ const Login = () => {
                   <ArrowBack fontSize="small" />
                 </IconButton>
                 <Typography variant="h6" fontWeight={700} color="#202421">
-                  Link with Phone (QR Login)
+                  Shared Session Sign In
                 </Typography>
               </Box>
               <Typography variant="body2" color="#737A75" mb={2}>
-                Open ChitChat on your signed-in phone → Security &amp; Linked Devices → <b>Link QR</b> and scan this code.
+                Open ChitChat on a signed-in device → <b>Security &amp; Shared Sessions</b> → <b>Link New Device</b> and scan this code.
               </Typography>
 
               {isLoading && !qrSession?.qrDataUrl ? (
                 <Box py={5}><CircularProgress size={32} /></Box>
               ) : qrSession?.expired ? (
                 <Stack spacing={2} py={3} alignItems="center">
-                  <Alert severity="warning" sx={{ width: "100%" }}>QR code expired after 2 minutes.</Alert>
+                  <Alert severity="warning" sx={{ width: "100%" }}>Pairing session expired after 2 minutes.</Alert>
                   <Button variant="contained" onClick={startQrLogin} sx={{ backgroundColor: "#236B4A" }}>
-                    Refresh QR Code
+                    Refresh Code
                   </Button>
                 </Stack>
               ) : (
                 qrSession?.qrDataUrl && (
                   <Stack spacing={1.5} alignItems="center">
                     <Box sx={{ p: 1.5, borderRadius: 2, border: "1px solid #E3E6E1", bgcolor: "#FFFFFF" }}>
-                      <img src={qrSession.qrDataUrl} alt="ChitChat QR Login" width={200} height={200} />
+                      <img src={qrSession.qrDataUrl} alt="Shared Session Pairing Code" width={200} height={200} />
                     </Box>
                     <Chip
                       label={`Expires in ${qrSession.secondsLeft}s`}
                       size="small"
                       color={qrSession.secondsLeft < 20 ? "warning" : "default"}
                     />
-                    <Button
-                      size="small"
-                      startIcon={<ContentCopy fontSize="small" />}
-                      onClick={() => {
-                        navigator.clipboard?.writeText(qrSession.qrPayload);
-                        toast.success("QR login link copied");
-                      }}
-                      sx={{ textTransform: "none", color: "#236B4A" }}
-                    >
-                      Copy QR Token Link
-                    </Button>
                   </Stack>
                 )
               )}

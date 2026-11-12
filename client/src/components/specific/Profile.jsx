@@ -277,7 +277,7 @@ const Profile = () => {
             onClick={() => setIsSecurityOpen(true)}
             sx={{ maxWidth: "350px", borderRadius: "2rem", py: 1 }}
           >
-            2FA, QR Link & Linked Devices
+            Security &amp; Shared Sessions
           </Button>
 
           <Stack direction="row" spacing={2} mt={1} width="100%" maxWidth="350px">

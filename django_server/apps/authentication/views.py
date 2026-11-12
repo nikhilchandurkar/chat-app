@@ -1,5 +1,6 @@
 import os
-from urllib.parse import quote
+from urllib.parse import quote, urlencode, urlparse
+from django.http import HttpResponseRedirect
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import Exists, OuterRef, Q
@@ -46,6 +47,7 @@ from .serializers import (
     QRClaimSerializer,
     QRCreateSerializer,
     ResolveDeviceLimitSerializer,
+    ForgotPasswordOTPResetSerializer,
 )
 from .services.mfa_service import MFAService
 from .services.otp_service import OTPService
@@ -92,16 +94,109 @@ def set_jwt_cookie(response, access_token: str, refresh_token: str = None):
 
 
 # ─── Public Auth Configuration ───────────────────────────────────────────────
+def _is_allowed_oauth_redirect_uri(redirect_uri: str, request) -> bool:
+    if not redirect_uri:
+        return False
+    try:
+        parsed = urlparse(redirect_uri)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return False
+    if parsed.path not in ("/login", "/login/"):
+        return False
+
+    origin = f"{parsed.scheme}://{parsed.netloc}".lower()
+    allowed_origins = {
+        o.strip().rstrip("/").lower()
+        for o in (
+            list(getattr(settings, "CORS_ALLOWED_ORIGINS", []))
+            + list(getattr(settings, "CSRF_TRUSTED_ORIGINS", []))
+            + [getattr(settings, "API_BASE_URL", "")]
+        )
+        if o and "*" not in o
+    }
+    request_origin = f"{request.scheme}://{request.get_host()}".lower()
+    allowed_origins.add(request_origin)
+    if origin in allowed_origins:
+        return True
+
+    hostname = (parsed.hostname or "").lower()
+    if parsed.scheme == "https" and (
+        hostname.endswith(".duckdns.org") or hostname == getattr(settings, "PUBLIC_DOMAIN", "").lower()
+    ):
+        return True
+    return False
+
+
 class AuthConfigView(APIView):
+    """Returns non-sensitive OAuth availability flags without exposing client IDs."""
     permission_classes = [AllowAny]
 
     def get(self, request):
         return Response({
             "success": True,
-            "google_client_id": getattr(settings, "GOOGLE_CLIENT_ID", ""),
-            "github_client_id": getattr(settings, "GITHUB_CLIENT_ID", ""),
-            "facebook_app_id": getattr(settings, "FACEBOOK_APP_ID", ""),
+            "google_enabled": bool(getattr(settings, "GOOGLE_CLIENT_ID", "")),
+            "github_enabled": bool(getattr(settings, "GITHUB_CLIENT_ID", "")),
+            "facebook_enabled": bool(getattr(settings, "FACEBOOK_APP_ID", "")),
         })
+
+
+class OAuthAuthorizeStartView(APIView):
+    """Builds and redirects to provider OAuth server-side so client IDs stay off UI/JS."""
+    permission_classes = [AllowAny]
+
+    def get(self, request, provider: str):
+        provider_key = (provider or "").strip().lower()
+        if provider_key not in ("google", "github"):
+            return Response(
+                {"success": False, "message": "Unsupported OAuth provider."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        platform = (request.query_params.get("platform") or "web").strip().lower()
+        default_base = (getattr(settings, "API_BASE_URL", "") or f"{request.scheme}://{request.get_host()}").rstrip("/")
+        redirect_uri = (request.query_params.get("redirect_uri") or f"{default_base}/login").strip()
+
+        if not _is_allowed_oauth_redirect_uri(redirect_uri, request):
+            return Response(
+                {"success": False, "message": "Invalid OAuth redirect URI."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        state = f"{provider_key}_android" if platform == "android" else provider_key
+
+        if provider_key == "google":
+            client_id = getattr(settings, "GOOGLE_CLIENT_ID", "")
+            if not client_id:
+                return Response(
+                    {"success": False, "message": "Google Sign-In is not configured on the server."},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            query = urlencode({
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "scope": "openid email profile",
+                "access_type": "offline",
+                "prompt": "select_account",
+                "state": state,
+            })
+            return HttpResponseRedirect(f"https://accounts.google.com/o/oauth2/v2/auth?{query}")
+
+        client_id = getattr(settings, "GITHUB_CLIENT_ID", "")
+        if not client_id:
+            return Response(
+                {"success": False, "message": "GitHub Sign-In is not configured on the server."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        query = urlencode({
+            "client_id": client_id,
+            "redirect_uri": redirect_uri,
+            "scope": "user:email",
+            "state": state,
+        })
+        return HttpResponseRedirect(f"https://github.com/login/oauth/authorize?{query}")
 
 
 # ─── Username / Email + Password Login ──────────────────────────────────────
@@ -937,6 +1032,110 @@ class ResetPasswordView(APIView):
             "refreshToken": refresh_token,
         })
         set_jwt_cookie(response, access_token, refresh_token)
+        return response
+
+
+class ForgotPasswordOTPRequestView(APIView):
+    """Dispatches a 6-digit password reset OTP email without revealing account existence."""
+    permission_classes = [AllowAny]
+    throttle_classes = [OTPRequestThrottle]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        if not email or "@" not in email:
+            return Response(
+                {"success": False, "message": "A valid email address is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user_exists = User.objects.filter(email__iexact=email, is_active=True).exists()
+        if user_exists:
+            ok, msg = OTPService.request_otp(email, purpose="recovery", ip_address=get_client_ip(request))
+            if not ok:
+                return Response({"success": False, "message": msg}, status=status.HTTP_429_TOO_MANY_REQUESTS)
+
+        return Response({
+            "success": True,
+            "message": "If an account exists with that email, a 6-digit password reset code has been sent.",
+        })
+
+
+class ForgotPasswordOTPResetView(APIView):
+    """Verifies a 6-digit email recovery OTP, resets password, revokes old sessions, and signs in."""
+    permission_classes = [AllowAny]
+    throttle_classes = [OTPVerifyThrottle]
+
+    def post(self, request):
+        serializer = ForgotPasswordOTPResetSerializer(data=request.data)
+        if not serializer.is_valid():
+            first_err = next(iter(serializer.errors.values()))[0] if serializer.errors else "Invalid reset details."
+            return Response({"success": False, "message": first_err}, status=status.HTTP_400_BAD_REQUEST)
+
+        email = serializer.validated_data["email"].strip().lower()
+        otp = serializer.validated_data["otp"].strip()
+        new_password = serializer.validated_data["new_password"]
+        device_id = serializer.validated_data.get("device_id", "web-client")
+        device_name = serializer.validated_data.get("device_name", "")
+        platform = serializer.validated_data.get("platform", "web")
+        app_version = serializer.validated_data.get("app_version", "1.0.0")
+        replace_session_id = serializer.validated_data.get("replace_session_id", "").strip() or None
+
+        ok, msg = OTPService.verify_otp_only(email=email, otp=otp, purpose="recovery")
+        if not ok:
+            return Response({"success": False, "message": msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.select_related("profile", "mfa").filter(email__iexact=email, is_active=True).first()
+        if not user:
+            return Response({"success": False, "message": "Account unavailable."}, status=status.HTTP_404_NOT_FOUND)
+
+        ip = get_client_ip(request)
+        ua = request.META.get("HTTP_USER_AGENT", "")
+        with transaction.atomic():
+            user.set_password(new_password)
+            user.status = "online"
+            user.save(update_fields=["password", "status"])
+            SessionService.revoke_all_other_sessions(user)
+            AuditLog.objects.create(
+                user=user,
+                action="auth.password_reset_otp",
+                ip_address=ip,
+                user_agent=ua[:255],
+                details={"revoked_prior_sessions": True},
+            )
+
+        if MFAService.is_mfa_enabled(user):
+            mfa_token = MFAService.issue_login_challenge(
+                user=user,
+                auth_method="password_reset",
+                device_id=device_id,
+                platform=platform,
+                app_version=app_version,
+                device_name=device_name,
+            )
+            return _mfa_challenge_response({"mfa_token": mfa_token, "methods": ["totp", "backup_code"]})
+
+        sess_ok, sess_msg, sess_data = SessionService.create_enforced_session_and_tokens(
+            user=user,
+            device_id=device_id,
+            platform=platform,
+            app_version=app_version,
+            device_name=device_name,
+            ip_address=ip,
+            user_agent=ua,
+            auth_method="password",
+            replace_session_id=replace_session_id,
+            audit_action="LOGIN_AFTER_RESET",
+        )
+        if not sess_ok:
+            return _session_conflict_response(sess_msg, sess_data)
+
+        response = Response({
+            "success": True,
+            "message": "Password reset successfully.",
+            "user": UserSerializer(user).data,
+            "session_id": sess_data["session_id"],
+        })
+        set_jwt_cookie(response, sess_data["access"], sess_data["refresh"])
         return response
 
 

@@ -20,6 +20,7 @@ import {
   requestOtp,
   verifyOtp,
   forgotPassword,
+  resetPasswordWithOtp,
   checkServerReady,
 } from "../api/auth";
 import {
@@ -49,6 +50,9 @@ export default function LoginScreen({ navigation }) {
   // OTP & Forgot password state
   const [otpEmail, setOtpEmail] = useState("");
   const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotStep, setForgotStep] = useState("email"); // "email" | "reset"
+  const [forgotOtp, setForgotOtp] = useState("");
+  const [forgotNewPassword, setForgotNewPassword] = useState("");
   const [otpDigits, setOtpDigits] = useState(["", "", "", "", "", ""]);
   const [countdown, setCountdown] = useState(60);
   const [canResend, setCanResend] = useState(false);
@@ -214,11 +218,42 @@ export default function LoginScreen({ navigation }) {
     setLoading(true);
     try {
       const res = await forgotPassword(email);
-      Alert.alert("Check Your Email", res?.message || "Reset instructions sent.", [
-        { text: "OK", onPress: () => setAuthMode("login") },
-      ]);
+      setForgotEmail(email);
+      setForgotStep("reset");
+      setForgotOtp("");
+      setForgotNewPassword("");
+      Alert.alert("Check Your Email", res?.message || "A 6-digit recovery code has been sent.");
     } catch (err) {
       Alert.alert("Error", err?.response?.data?.message || "Failed to request password reset.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotResetSubmit = async () => {
+    const cleanOtp = forgotOtp.replace(/\D/g, "");
+    if (cleanOtp.length !== 6) {
+      Alert.alert("Invalid Code", "Please enter the 6-digit recovery code from your email.");
+      return;
+    }
+    if (!forgotNewPassword || forgotNewPassword.length < 8) {
+      Alert.alert("Weak Password", "Password must be at least 8 characters long.");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await resetPasswordWithOtp(forgotEmail, cleanOtp, forgotNewPassword);
+      if (res?.mfaRequired) {
+        Alert.alert("Password Updated", "Password reset complete. Sign in with your new password and 2FA code.");
+        setForgotStep("email");
+        setAuthMode("login");
+        return;
+      }
+      registerForNativeFCM().catch(() => {});
+      navigation.replace("ChatList");
+    } catch (err) {
+      Alert.alert("Reset Failed", err?.response?.data?.message || "Invalid or expired recovery code.");
     } finally {
       setLoading(false);
     }
@@ -343,6 +378,7 @@ export default function LoginScreen({ navigation }) {
                   style={styles.forgotAlign}
                   onPress={() => {
                     setForgotEmail("");
+                    setForgotStep("email");
                     setAuthMode("forgot");
                   }}
                 >
@@ -590,34 +626,89 @@ export default function LoginScreen({ navigation }) {
             {/* 6. FORGOT PASSWORD */}
             {authMode === "forgot" && (
               <>
-                <Text style={styles.otpDescription}>
-                  Enter your account email and we will send a recovery link.
-                </Text>
-                <Text style={styles.inputLabel}>Account Email</Text>
-                <TextInput
-                  style={styles.input}
-                  placeholder="name@example.com"
-                  placeholderTextColor="#A6AEA8"
-                  value={forgotEmail}
-                  onChangeText={setForgotEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  editable={!loading}
-                />
+                {forgotStep === "email" ? (
+                  <>
+                    <Text style={styles.otpDescription}>
+                      Enter your account email and we will send a 6-digit recovery code.
+                    </Text>
+                    <Text style={styles.inputLabel}>Account Email</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="name@example.com"
+                      placeholderTextColor="#A6AEA8"
+                      value={forgotEmail}
+                      onChangeText={setForgotEmail}
+                      autoCapitalize="none"
+                      keyboardType="email-address"
+                      editable={!loading}
+                    />
+
+                    <TouchableOpacity
+                      style={[styles.primaryButton, loading && styles.disabledButton]}
+                      onPress={handleForgotSubmit}
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <ActivityIndicator color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.primaryButtonText}>Send 6-Digit Reset Code</Text>
+                      )}
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.otpDescription}>
+                      Enter the 6-digit code sent to{"\n"}
+                      <Text style={styles.emailHighlight}>{forgotEmail}</Text>
+                    </Text>
+                    <Text style={styles.inputLabel}>6-Digit Recovery Code</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="123456"
+                      placeholderTextColor="#A6AEA8"
+                      value={forgotOtp}
+                      onChangeText={(val) => setForgotOtp(val.replace(/\D/g, "").slice(0, 6))}
+                      keyboardType="number-pad"
+                      maxLength={6}
+                      editable={!loading}
+                    />
+
+                    <Text style={styles.inputLabel}>New Password (min 8 chars)</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Choose a new password"
+                      placeholderTextColor="#A6AEA8"
+                      value={forgotNewPassword}
+                      onChangeText={setForgotNewPassword}
+                      secureTextEntry
+                      editable={!loading}
+                    />
+
+                    <TouchableOpacity
+                      style={[styles.primaryButton, loading && styles.disabledButton]}
+                      onPress={handleForgotResetSubmit}
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <ActivityIndicator color="#FFFFFF" />
+                      ) : (
+                        <Text style={styles.primaryButtonText}>Reset Password & Sign In</Text>
+                      )}
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={styles.linkButton} onPress={() => setForgotStep("email")}>
+                      <Text style={styles.linkButtonText}>Change Email / Resend Code</Text>
+                    </TouchableOpacity>
+                  </>
+                )}
 
                 <TouchableOpacity
-                  style={[styles.primaryButton, loading && styles.disabledButton]}
-                  onPress={handleForgotSubmit}
-                  disabled={loading}
+                  style={styles.linkButton}
+                  onPress={() => {
+                    setForgotStep("email");
+                    setAuthMode("login");
+                  }}
                 >
-                  {loading ? (
-                    <ActivityIndicator color="#FFFFFF" />
-                  ) : (
-                    <Text style={styles.primaryButtonText}>Send Reset Link</Text>
-                  )}
-                </TouchableOpacity>
-
-                <TouchableOpacity style={styles.linkButton} onPress={() => setAuthMode("login")}>
                   <Text style={styles.linkButtonText}>Back to Sign In</Text>
                 </TouchableOpacity>
               </>

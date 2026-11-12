@@ -551,7 +551,7 @@ const AdminDashboard = () => {
               </Grid>
               <Grid item xs={12} sm={6} md={2}>
                 <StatCard
-                  label="QR Logins"
+                  label="Shared Sessions"
                   value={stats?.qrApprovedCount ?? 0}
                   sub="Linked companions"
                   adminHref={`${server}${adminUrls.qrLogins}`}

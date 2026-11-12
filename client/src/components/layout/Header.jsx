@@ -140,7 +140,7 @@ const Header = ({ unreadMessagesCount = 0 }) => {
               <Box sx={{ display: { xs: "none", md: "inline-flex" }, alignItems: "center" }}>
                 <IconBtn title="Starred Messages" icon={<StarIcon />} onClick={() => setShowStarred(true)} />
                 <IconBtn title="Appearance & Experience" icon={<PaletteIcon />} onClick={() => setShowAppearance(true)} />
-                <IconBtn title="Security, 2FA & Linked Devices" icon={<SecurityIcon />} onClick={() => setShowSecurity(true)} />
+                <IconBtn title="Security & Shared Sessions" icon={<SecurityIcon />} onClick={() => setShowSecurity(true)} />
                 {isAdminUser && (
                   <IconBtn title="Superadmin Dashboard" icon={<AdminIcon color="secondary" />} onClick={() => navigate("/admin-panel")} />
                 )}
@@ -174,7 +174,7 @@ const Header = ({ unreadMessagesCount = 0 }) => {
                   </MenuItem>
                   <MenuItem onClick={() => { setMobileMenuAnchor(null); setShowSecurity(true); }}>
                     <ListItemIcon><SecurityIcon fontSize="small" /></ListItemIcon>
-                    <ListItemText>Security, 2FA &amp; Devices</ListItemText>
+                    <ListItemText>Security &amp; Shared Sessions</ListItemText>
                   </MenuItem>
                   {isAdminUser && (
                     <MenuItem onClick={() => { setMobileMenuAnchor(null); navigate("/admin-panel"); }}>

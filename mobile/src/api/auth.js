@@ -154,7 +154,24 @@ export const verifyOtp = async (email, otp, deviceId = null) => {
 };
 
 export const forgotPassword = async (email) => {
-  const response = await api.post("/user/forgot-password", { email: email.toLowerCase().trim() });
+  const response = await api.post("/auth/forgot-password/request", { email: email.toLowerCase().trim() });
+  return response.data;
+};
+
+export const resetPasswordWithOtp = async (email, otp, newPassword, deviceId = null) => {
+  const activeDeviceId = deviceId || (await getOrCreateDeviceId());
+  const response = await api.post("/auth/forgot-password/reset", {
+    email: email.toLowerCase().trim(),
+    otp: otp.trim(),
+    new_password: newPassword,
+    device_id: activeDeviceId,
+    device_name: "ChitChat Android Mobile",
+    platform: "android",
+    app_version: "1.0.0",
+  });
+  if (!response.data?.mfaRequired) {
+    await persistAuthSession(response.data, activeDeviceId);
+  }
   return response.data;
 };
 

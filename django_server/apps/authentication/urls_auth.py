@@ -4,8 +4,11 @@ from .views import (
     RegisterRequestView,
     RegisterVerifyView,
     AuthConfigView,
+    OAuthAuthorizeStartView,
     RequestOTPView,
     VerifyOTPView,
+    ForgotPasswordOTPRequestView,
+    ForgotPasswordOTPResetView,
     AccountRecoveryView,
     GoogleAuthView,
     GitHubAuthView,
@@ -58,11 +61,17 @@ urlpatterns = [
     path("otp/verify", VerifyOTPView.as_view(), name="auth-otp-verify"),
     path("otp/verify/", VerifyOTPView.as_view(), name="auth-otp-verify-slash"),
 
-    # Account Recovery
+    # Account Recovery & Forgot Password OTP
     path("recovery", AccountRecoveryView.as_view(), name="auth-recovery"),
     path("recovery/", AccountRecoveryView.as_view(), name="auth-recovery-slash"),
+    path("forgot-password/request", ForgotPasswordOTPRequestView.as_view(), name="auth-forgot-otp-request"),
+    path("forgot-password/request/", ForgotPasswordOTPRequestView.as_view(), name="auth-forgot-otp-request-slash"),
+    path("forgot-password/reset", ForgotPasswordOTPResetView.as_view(), name="auth-forgot-otp-reset"),
+    path("forgot-password/reset/", ForgotPasswordOTPResetView.as_view(), name="auth-forgot-otp-reset-slash"),
 
     # Social OAuth
+    path("oauth/<str:provider>/start", OAuthAuthorizeStartView.as_view(), name="auth-oauth-start"),
+    path("oauth/<str:provider>/start/", OAuthAuthorizeStartView.as_view(), name="auth-oauth-start-slash"),
     path("oauth/google", GoogleAuthView.as_view(), name="auth-google"),
     path("oauth/google/", GoogleAuthView.as_view(), name="auth-google-slash"),
     path("oauth/github", GitHubAuthView.as_view(), name="auth-github"),

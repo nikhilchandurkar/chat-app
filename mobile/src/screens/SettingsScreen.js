@@ -233,17 +233,17 @@ export default function SettingsScreen({ navigation }) {
           </View>
         </View>
 
-        {/* Active Device Sessions */}
-        <Text style={styles.sectionHeader}>ACTIVE DEVICES & SESSIONS</Text>
+        {/* Security & Shared Sessions */}
+        <Text style={styles.sectionHeader}>SECURITY & SHARED SESSIONS</Text>
         <View style={styles.card}>
           {sessions.map((sess) => (
             <View key={sess.id} style={styles.sessionItem}>
               <View style={{ flex: 1 }}>
                 <Text style={styles.deviceTitle}>
-                  {sess.platform ? sess.platform.toUpperCase() : "DEVICE"} (v{sess.app_version})
+                  {sess.device_name || (sess.platform ? sess.platform.toUpperCase() : "DEVICE")} (v{sess.app_version})
                 </Text>
                 <Text style={styles.deviceMeta}>
-                  {sess.device_id} • {sess.ip_address || "Local IP"}
+                  {(sess.platform || "device").toUpperCase()} • {sess.ip_address || "Unknown IP"}
                 </Text>
               </View>
               <TouchableOpacity

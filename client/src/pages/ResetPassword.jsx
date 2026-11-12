@@ -13,8 +13,8 @@ const ResetPassword = () => {
   const navigate = useNavigate();
   const dispatch = useDispatch();
 
-  const token = searchParams.get("token");
-  const email = searchParams.get("email");
+  const [token] = useState(() => searchParams.get("token") || "");
+  const [email] = useState(() => searchParams.get("email") || "");
 
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -23,6 +23,10 @@ const ResetPassword = () => {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    // Scrub reset token & email from browser URL/history immediately
+    if (window.location.search) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
     if (!token || !email) {
       toast.error("Invalid reset link");
       navigate("/forgot-password");
