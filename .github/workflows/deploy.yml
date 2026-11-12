@@ -802,21 +802,25 @@ jobs:
             sleep 3
           done
 
-      # ── Redis 7 ───────────────────────────────────────────────────────────
-      - name: Ensure Redis 7 container is running
+      # ── Redis 7 (pure in-memory cache/broker, no disk RDB/AOF snapshots) ───
+      - name: Ensure Redis 7 container is running (no disk snapshots)
         run: |
-          if ! docker ps --format '{{.Names}}' | grep -q '^chat_redis$'; then
-            echo "🔴 Starting Redis 7..."
+          REDIS_ARGS=$(docker inspect -f '{{join .Args " "}}' chat_redis 2>/dev/null || true)
+          if ! docker ps --format '{{.Names}}' | grep -q '^chat_redis$' || ! echo "$REDIS_ARGS" | grep -q -- 'appendonly no'; then
+            echo "🔴 Starting Redis 7 (in-memory only, RDB/AOF disabled)..."
+            docker stop chat_redis 2>/dev/null || true
+            docker rm chat_redis 2>/dev/null || true
             docker run -d \
               --name chat_redis \
               --restart unless-stopped \
               -p 127.0.0.1:6379:6379 \
               -v /opt/chat-app/redis_data:/data \
               redis:7-alpine \
-              redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
+              redis-server --save "" --appendonly no --maxmemory 128mb --maxmemory-policy allkeys-lru
             sleep 3
           fi
-          docker exec chat_redis redis-cli ping | grep -q PONG && echo "✅ Redis healthy" || echo "⚠️ Redis not responding"
+          docker exec chat_redis sh -c 'redis-cli CONFIG SET save "" >/dev/null 2>&1 || true; redis-cli CONFIG SET appendonly no >/dev/null 2>&1 || true; rm -rf /data/dump.rdb /data/appendonlydir'
+          docker exec chat_redis redis-cli ping | grep -q PONG && echo "✅ Redis healthy (persistence off)" || echo "⚠️ Redis not responding"
 
       # ── Grant MySQL privileges ─────────────────────────────────────────────
       - name: Grant MySQL user privileges
