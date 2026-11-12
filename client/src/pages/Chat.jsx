@@ -60,6 +60,7 @@ import {
 
 // Lazy-load emoji picker (heavy component, ~200KB)
 const EmojiPicker = lazy(() => import("emoji-picker-react"));
+const UserProfileDialog = lazy(() => import("../components/dialogs/UserProfileDialog"));
 
 const QUICK_EMOJIS = ["❤️", "🔥", "😂", "👍", "🙏", "🎉", "😍", "🥳", "🚀", "👏"];
 const LAST_SEEN_KEY = "chat_last_seen";
@@ -445,6 +446,7 @@ const Chat = ({ chatId, user }) => {
   const [enterToSend, setEnterToSend] = useState(isEnterToSendEnabled);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [chatBursts, setChatBursts] = useState([]);
+  const [viewingUser, setViewingUser] = useState(null);
 
   const chatDetails = useChatDetailsQuery({ chatId, populate: true }, { skip: !chatId });
   const oldMessageChunk = useGetMessagesQuery({ chatId, page }, { skip: !chatId });
@@ -518,6 +520,9 @@ const Chat = ({ chatId, user }) => {
     setReplyingTo(null);
     setVoiceActive(false);
     setShowScrollBottom(false);
+    setShowInfo(false);
+    setShowSearch(false);
+    setViewingUser(null);
     nearBottomRef.current = true;
   }, [chatId]);
 
@@ -917,6 +922,7 @@ const Chat = ({ chatId, user }) => {
                     onDelete={handleLocalDelete}
                     onReply={handleSetReply}
                     onReact={handleLocalReact}
+                    onViewProfile={setViewingUser}
                   />
                 </div>
               </React.Fragment>
@@ -990,7 +996,19 @@ const Chat = ({ chatId, user }) => {
         onClose={() => setShowInfo(false)}
         chatId={chatId}
         isGroupChat={chatDetails?.data?.chat?.groupChat}
+        onViewMemberProfile={setViewingUser}
       />
+
+      {viewingUser && (
+        <Suspense fallback={null}>
+          <UserProfileDialog
+            open={Boolean(viewingUser)}
+            onClose={() => setViewingUser(null)}
+            userId={viewingUser?._id || viewingUser?.id}
+            initialUser={viewingUser}
+          />
+        </Suspense>
+      )}
     </Box>
   );
 };

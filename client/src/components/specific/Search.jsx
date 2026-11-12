@@ -11,7 +11,7 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
-import React, { useEffect, useState } from "react";
+import React, { lazy, Suspense, useEffect, useState } from "react";
 import { useInputValidation } from "6pp";
 import { Close as CloseIcon, Search as SearchIcon } from "@mui/icons-material";
 import UserItem from "../shared/UserItem";
@@ -19,6 +19,8 @@ import { useDispatch, useSelector } from "react-redux";
 import { setIsSearch } from "../../redux/reducers/misc";
 import { useLazySearchUserQuery, useSendFriendRequestMutation } from "../../redux/api/api";
 import { useAsyncMutation } from "../../hooks/hook";
+
+const UserProfileDialog = lazy(() => import("../dialogs/UserProfileDialog"));
 
 const useDebounce = (value, delay) => {
   const [debouncedValue, setDebouncedValue] = useState(value);
@@ -42,6 +44,7 @@ const Search = () => {
   const [users, setUsers] = useState([]);
   const [error, setError] = useState("");
   const [loadingIds, setLoadingIds] = useState([]);
+  const [selectedUser, setSelectedUser] = useState(null);
 
   const searchCloseHandler = () => dispatch(setIsSearch(false));
 
@@ -154,12 +157,23 @@ const Search = () => {
                   key={user._id}
                   handler={addFriendHandler}
                   handlerIsLoading={loadingIds.includes(user._id)}
+                  onSelectUser={(u) => setSelectedUser(u)}
                 />
               ))
             )}
           </List>
         </Stack>
       </DialogContent>
+      {selectedUser && (
+        <Suspense fallback={null}>
+          <UserProfileDialog
+            open={Boolean(selectedUser)}
+            onClose={() => setSelectedUser(null)}
+            userId={selectedUser?._id || selectedUser?.id}
+            initialUser={selectedUser}
+          />
+        </Suspense>
+      )}
     </Dialog>
   );
 };

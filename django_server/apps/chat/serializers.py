@@ -6,6 +6,7 @@ from .models import Chat
 class MemberSimpleSerializer(serializers.Serializer):
     _id = serializers.CharField(source="id", read_only=True)
     name = serializers.CharField(read_only=True)
+    username = serializers.CharField(read_only=True)
     avatar = serializers.SerializerMethodField()
 
     def get_avatar(self, obj):

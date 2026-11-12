@@ -59,7 +59,52 @@ const api = createApi({
         credentials: "include",
         body: data,
       }),
+      invalidatesTags: ["Chat", "User"],
+    }),
+
+    getUserProfile: builder.query({
+      query: (userId) => ({
+        url: `user/profile/${userId}`,
+        credentials: "include",
+      }),
+      providesTags: ["User"],
+    }),
+
+    createDirectChat: builder.mutation({
+      query: (userId) => ({
+        url: "chat/direct",
+        method: "POST",
+        credentials: "include",
+        body: { userId },
+      }),
       invalidatesTags: ["Chat"],
+    }),
+
+    blockUser: builder.mutation({
+      query: (userId) => ({
+        url: `user/block/${userId}`,
+        method: "POST",
+        credentials: "include",
+      }),
+      invalidatesTags: ["User", "Chat"],
+    }),
+
+    unblockUser: builder.mutation({
+      query: (userId) => ({
+        url: `user/block/${userId}`,
+        method: "DELETE",
+        credentials: "include",
+      }),
+      invalidatesTags: ["User", "Chat"],
+    }),
+
+    reportUser: builder.mutation({
+      query: ({ userId, reason }) => ({
+        url: "user/report",
+        method: "POST",
+        credentials: "include",
+        body: { userId, reason },
+      }),
     }),
 
     chatDetails: builder.query({
@@ -403,4 +448,9 @@ export const {
   useToggleRestrictMessagesMutation,
   useAddAdminMutation,
   useRemoveAdminMutation,
+  useGetUserProfileQuery,
+  useCreateDirectChatMutation,
+  useBlockUserMutation,
+  useUnblockUserMutation,
+  useReportUserMutation,
 } = api;

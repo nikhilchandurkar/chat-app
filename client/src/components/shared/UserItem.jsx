@@ -10,6 +10,7 @@ const UserItem = ({
   handlerIsLoading,
   isAdded = false,
   styling = {},
+  onSelectUser,
 }) => {
   const { name, username, _id, avatar } = user;
   const displayName = name || username || "User";
@@ -25,27 +26,41 @@ const UserItem = ({
         minWidth={0}
         {...styling}
       >
-        <Avatar
-          src={avatarSrc}
-          alt={displayName}
-          sx={{ bgcolor: "#236B4A", color: "#fff", width: 38, height: 38, flexShrink: 0 }}
+        <Box
+          onClick={() => onSelectUser?.(user)}
+          sx={{
+            display: "flex",
+            alignItems: "center",
+            gap: 1.25,
+            flex: 1,
+            minWidth: 0,
+            cursor: onSelectUser ? "pointer" : "default",
+            borderRadius: 1.5,
+            "&:hover": onSelectUser ? { opacity: 0.85 } : undefined,
+          }}
         >
-          {displayName[0].toUpperCase()}
-        </Avatar>
-
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <Typography
-            variant="body2"
-            fontWeight={600}
-            noWrap
+          <Avatar
+            src={avatarSrc}
+            alt={displayName}
+            sx={{ bgcolor: "#236B4A", color: "#fff", width: 38, height: 38, flexShrink: 0 }}
           >
-            {displayName}
-          </Typography>
-          {username && (
-            <Typography variant="caption" color="text.secondary" noWrap display="block">
-              @{username}
+            {displayName[0].toUpperCase()}
+          </Avatar>
+
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Typography
+              variant="body2"
+              fontWeight={600}
+              noWrap
+            >
+              {displayName}
             </Typography>
-          )}
+            {username && (
+              <Typography variant="caption" color="text.secondary" noWrap display="block">
+                @{username}
+              </Typography>
+            )}
+          </Box>
         </Box>
 
         <IconButton

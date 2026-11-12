@@ -1,4 +1,5 @@
 import {
+  Avatar,
   Box,
   Typography,
   IconButton,
@@ -11,6 +12,7 @@ import {
   CircularProgress,
   Paper,
   Divider,
+  Stack,
 } from "@mui/material";
 import {
   Edit as EditIcon,
@@ -25,10 +27,11 @@ import {
   ContentCopy as CopyIcon,
   Favorite as HeartIcon,
   MoreHoriz as MoreIcon,
+  Person as PersonIcon,
 } from "@mui/icons-material";
 import React, { memo, useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
-import { fileFormat, formatTimeAgo } from "../../lib/feature";
+import { fileFormat, formatTimeAgo, transformImage } from "../../lib/feature";
 import RenderAttachment from "./RenderAttachment";
 import LinkPreview from "./LinkPreview";
 import EmojiBurst from "./EmojiBurst";
@@ -51,7 +54,7 @@ const SWIPE_THRESHOLD = 46;
 const HOLD_DELAY_MS = 340;
 const DOUBLE_TAP_WINDOW_MS = 340;
 
-const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId, isGroupAdmin }) => {
+const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, onViewProfile, chatId, isGroupAdmin }) => {
   const { user } = useSelector((state) => state.auth);
   const { themeMode } = useSelector((state) => state.misc);
   const isDark = themeMode === "dark";
@@ -488,6 +491,18 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
                 <ListItemIcon><ForwardIcon fontSize="small" /></ListItemIcon>
                 <ListItemText>Forward</ListItemText>
               </MenuItem>
+              {!sameSender && senderId && onViewProfile && (
+                <MenuItem
+                  onClick={() => {
+                    setHoldSpotlightOpen(false);
+                    onViewProfile(sender);
+                  }}
+                  sx={{ py: 1.25 }}
+                >
+                  <ListItemIcon><PersonIcon fontSize="small" color="primary" /></ListItemIcon>
+                  <ListItemText>View Profile</ListItemText>
+                </MenuItem>
+              )}
               {isGroupAdmin && chatId && (
                 <MenuItem onClick={handlePin} sx={{ py: 1.25 }}>
                   <ListItemIcon><PinIcon fontSize="small" color="primary" /></ListItemIcon>
@@ -670,16 +685,55 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
               boxShadow: isDark ? "none" : "0 1px 3px rgba(32, 36, 33, 0.05)",
             }}
           >
-            {!sameSender && sender?.name && (
-              <Typography
-                sx={{ color: isDark ? "#4B9B70" : "#236B4A" }}
-                fontWeight="600"
-                variant="caption"
-                display="block"
-                mb={0.25}
+            {!sameSender && (sender?.name || sender?.username) && (
+              <Stack
+                direction="row"
+                alignItems="center"
+                spacing={0.7}
+                mb={0.45}
+                onTouchStart={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (senderId && onViewProfile) {
+                    triggerHaptic(8);
+                    onViewProfile(sender);
+                  }
+                }}
+                sx={{
+                  cursor: senderId && onViewProfile ? "pointer" : "default",
+                  width: "fit-content",
+                  maxWidth: "100%",
+                  borderRadius: "999px",
+                  pr: 0.75,
+                  py: 0.15,
+                  "&:hover .sender-name-label": senderId && onViewProfile ? { textDecoration: "underline" } : undefined,
+                }}
               >
-                {sender.name}
-              </Typography>
+                <Avatar
+                  src={transformImage(typeof sender?.avatar === "string" ? sender.avatar : sender?.avatar?.url)}
+                  alt={sender.name || sender.username}
+                  imgProps={{ draggable: false }}
+                  sx={{
+                    width: 20,
+                    height: 20,
+                    fontSize: "0.68rem",
+                    fontWeight: 700,
+                    bgcolor: "#236B4A",
+                    color: "#FFFFFF",
+                  }}
+                >
+                  {(sender.name || sender.username || "U")[0].toUpperCase()}
+                </Avatar>
+                <Typography
+                  className="sender-name-label"
+                  sx={{ color: isDark ? "#4B9B70" : "#236B4A" }}
+                  fontWeight={700}
+                  variant="caption"
+                  noWrap
+                >
+                  {sender.name || sender.username}
+                </Typography>
+              </Stack>
             )}
 
             {isDeleted ? (
@@ -734,7 +788,21 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
                       borderLeft: `3px solid ${isDark ? "#4B9B70" : "#236B4A"}`,
                     }}
                   >
-                    <Typography variant="caption" fontWeight="bold" sx={{ color: isDark ? "#4B9B70" : "#236B4A" }}>
+                    <Typography
+                      variant="caption"
+                      fontWeight="bold"
+                      onTouchStart={(e) => e.stopPropagation()}
+                      onClick={(e) => {
+                        if ((replyTo.sender?._id || replyTo.sender?.id) && onViewProfile) {
+                          e.stopPropagation();
+                          onViewProfile(replyTo.sender);
+                        }
+                      }}
+                      sx={{
+                        color: isDark ? "#4B9B70" : "#236B4A",
+                        cursor: (replyTo.sender?._id || replyTo.sender?.id) && onViewProfile ? "pointer" : "default",
+                      }}
+                    >
                       {replyTo.sender?.name || "Unknown"}
                     </Typography>
                     <Typography

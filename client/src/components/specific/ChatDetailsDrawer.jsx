@@ -52,7 +52,7 @@ import { isScreenshotBlockEnabled } from "../../utils/feedback";
 const ConfirmDeleteDialog = lazy(() => import("../dialogs/ConfirmDeleteDialog"));
 const AddMemberDialog = lazy(() => import("../dialogs/AddMemberDialog"));
 
-const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
+const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberProfile }) => {
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const { user } = useSelector((state) => state.auth);
@@ -282,6 +282,16 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
               variant="outlined"
               sx={{ mt: 1 }}
             />
+            {!isGroupChat && dmPartner && onViewMemberProfile && (
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => onViewMemberProfile(dmPartner)}
+                sx={{ mt: 1.25, borderRadius: 2 }}
+              >
+                View Full Profile · Block / Report
+              </Button>
+            )}
             
             {isGroupChat && (
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
@@ -313,17 +323,42 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
               )}
               {groupDetails?.members?.map((member) => (
                 <Box key={member._id} sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-                  <Avatar src={member.avatar}>
-                    {member.name ? member.name[0].toUpperCase() : "U"}
-                  </Avatar>
-                  <Box sx={{ flex: 1 }}>
-                    <Typography variant="body1" fontWeight={500}>{member.name}</Typography>
-                    {groupDetails?.creator === member._id && (
-                      <Typography variant="caption" color="primary">Group Creator</Typography>
-                    )}
-                    {groupDetails?.admins?.includes(member._id) && (
-                      <Typography variant="caption" color="secondary" sx={{ ml: 1 }}>Admin</Typography>
-                    )}
+                  <Box
+                    onClick={() => onViewMemberProfile?.(member)}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 2,
+                      flex: 1,
+                      minWidth: 0,
+                      cursor: onViewMemberProfile ? "pointer" : "default",
+                      borderRadius: 1.5,
+                      p: 0.5,
+                      "&:hover": onViewMemberProfile ? { bgcolor: "action.hover" } : undefined,
+                    }}
+                  >
+                    <Avatar
+                      src={typeof member.avatar === "string" ? member.avatar : member.avatar?.url}
+                      imgProps={{ draggable: false }}
+                    >
+                      {member.name ? member.name[0].toUpperCase() : "U"}
+                    </Avatar>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Typography variant="body1" fontWeight={500} noWrap>
+                        {member.name}
+                      </Typography>
+                      {member.username && (
+                        <Typography variant="caption" color="text.secondary" display="block" noWrap>
+                          @{member.username}
+                        </Typography>
+                      )}
+                      {groupDetails?.creator === member._id && (
+                        <Typography variant="caption" color="primary">Group Creator</Typography>
+                      )}
+                      {groupDetails?.admins?.includes(member._id) && (
+                        <Typography variant="caption" color="secondary" sx={{ ml: groupDetails?.creator === member._id ? 1 : 0 }}>Admin</Typography>
+                      )}
+                    </Box>
                   </Box>
                   {isAdmin && member._id !== user?._id && (
                     <IconButton size="small" onClick={(e) => handleMenuOpen(e, member)}>

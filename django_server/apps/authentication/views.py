@@ -14,7 +14,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
-from .models import User, UserProfile, Request, SocialAccount, BlockedUser, Report, AuditLog, Device, UserSession
+from .models import User, UserProfile, Contact, Request, SocialAccount, BlockedUser, Report, AuditLog, Device, UserSession
 from .throttles import (
     MFAVerifyThrottle,
     OTPRequestThrottle,
@@ -809,6 +809,127 @@ class GetMyProfileView(APIView):
         return Response({
             "success": True,
             "user": UserSerializer(user).data
+        })
+
+
+class PublicUserProfileView(APIView):
+    """Returns a user's privacy-filtered public profile plus relationship metadata."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id):
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        from apps.chat.models import Conversation
+
+        try:
+            target = User.objects.select_related("profile").filter(id=user_id, is_active=True).first()
+        except (ValueError, DjangoValidationError):
+            target = None
+
+        if not target:
+            return Response({"success": False, "message": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        is_self = target.id == request.user.id
+        is_blocked = (not is_self) and BlockedUser.objects.filter(user=request.user, blocked_user=target).exists()
+        has_blocked_me = (not is_self) and BlockedUser.objects.filter(user=target, blocked_user=request.user).exists()
+
+        direct_conv = None
+        if not is_self:
+            direct_conv = (
+                Conversation.objects.filter(type="direct", member_records__user=request.user)
+                .filter(member_records__user=target)
+                .first()
+            )
+
+        is_contact = bool(direct_conv) or (
+            not is_self and Contact.objects.filter(user=target, contact_user=request.user).exists()
+        )
+
+        # Relationship status
+        relationship = "self" if is_self else ("friends" if direct_conv else "none")
+        pending_request_id = None
+        if not is_self and relationship != "friends":
+            accepted_req = Request.objects.filter(
+                (Q(sender=request.user, receiver=target) | Q(sender=target, receiver=request.user)),
+                status="accepted",
+            ).first()
+            if accepted_req:
+                relationship = "friends"
+                is_contact = True
+            else:
+                sent_req = Request.objects.filter(sender=request.user, receiver=target, status="pending").first()
+                if sent_req:
+                    relationship = "sent"
+                    pending_request_id = str(sent_req.id)
+                else:
+                    recv_req = Request.objects.filter(sender=target, receiver=request.user, status="pending").first()
+                    if recv_req:
+                        relationship = "received"
+                        pending_request_id = str(recv_req.id)
+
+        profile = getattr(target, "profile", None)
+        blocked_either = is_blocked or has_blocked_me
+
+        def _can_view(setting):
+            if is_self:
+                return True
+            if blocked_either:
+                return False
+            val = str(setting or "everyone").lower()
+            if val == "nobody":
+                return False
+            if val in ("contacts", "friends"):
+                return is_contact
+            return True
+
+        avatar_allowed = _can_view(getattr(profile, "privacy_avatar", "everyone"))
+        online_allowed = _can_view(getattr(profile, "privacy_online", "everyone"))
+        last_seen_allowed = _can_view(getattr(profile, "privacy_last_seen", "everyone"))
+        bio_allowed = _can_view((target.privacy or {}).get("profile", "everyone"))
+
+        raw_avatar = target.avatar.get("url") if isinstance(target.avatar, dict) else None
+        avatar_payload = {"url": raw_avatar} if (avatar_allowed and raw_avatar) else None
+        bio_text = (getattr(profile, "about", "") or target.bio or "") if bio_allowed else ""
+
+        shared_groups = []
+        if not is_self and not blocked_either:
+            shared_qs = (
+                Conversation.objects.filter(group_chat=True, member_records__user=request.user)
+                .filter(member_records__user=target)
+                .distinct()
+                .order_by("-updated_at")[:10]
+            )
+            for grp in shared_qs:
+                grp_avatar = grp.avatar.get("url") if isinstance(grp.avatar, dict) else None
+                shared_groups.append({
+                    "_id": str(grp.id),
+                    "name": grp.name or "Group Chat",
+                    "avatar": grp_avatar,
+                })
+
+        last_seen_iso = None
+        if last_seen_allowed and profile and profile.last_seen:
+            last_seen_iso = profile.last_seen.isoformat()
+
+        return Response({
+            "success": True,
+            "user": {
+                "_id": str(target.id),
+                "id": str(target.id),
+                "name": target.name or target.username,
+                "username": target.username,
+                "bio": bio_text,
+                "avatar": avatar_payload,
+                "status": target.status if online_allowed else "hidden",
+                "lastSeen": last_seen_iso,
+                "createdAt": target.created_at.isoformat() if target.created_at else None,
+                "isSelf": is_self,
+                "isBlocked": is_blocked,
+                "hasBlockedMe": has_blocked_me,
+                "relationship": relationship,
+                "pendingRequestId": pending_request_id,
+                "directChatId": str(direct_conv.id) if direct_conv else None,
+                "sharedGroups": shared_groups,
+            },
         })
 
 
