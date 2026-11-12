@@ -777,7 +777,8 @@ jobs:
             docker run -d \
               --name chat_mysql \
               --restart unless-stopped \
-              --memory=512m \
+              --memory=640m \
+              --memory-swap=1280m \
               -e MYSQL_DATABASE=chat_db \
               -e MYSQL_USER=chat_user \
               -e MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD || 'chat_password' }} \
@@ -788,17 +789,18 @@ jobs:
               --character-set-server=utf8mb4 \
               --collation-server=utf8mb4_unicode_ci \
               --default-authentication-plugin=mysql_native_password \
-              --innodb-buffer-pool-size=160M \
+              --innodb-buffer-pool-size=128M \
               --max-connections=250 \
               --innodb-flush-log-at-trx-commit=2 \
               --wait-timeout=120 \
-              --thread-cache-size=32 \
+              --thread-cache-size=64 \
               --table-open-cache=400 \
               --performance-schema=OFF
             echo "⏳ Waiting for MySQL to initialize (20s)..."
             sleep 20
           else
             echo "✅ MySQL already running"
+            docker update --memory=640m --memory-swap=1280m chat_mysql >/dev/null 2>&1 || true
           fi
           for i in $(seq 1 20); do
             if docker exec chat_mysql mysqladmin ping -uchat_user -p${{ secrets.MYSQL_PASSWORD || 'chat_password' }} --silent 2>/dev/null; then
@@ -837,8 +839,9 @@ jobs:
             CREATE USER IF NOT EXISTS 'chat_user'@'%' IDENTIFIED WITH mysql_native_password BY '${{ secrets.MYSQL_PASSWORD || 'chat_password' }}';
             ALTER USER 'chat_user'@'%' IDENTIFIED WITH mysql_native_password BY '${{ secrets.MYSQL_PASSWORD || 'chat_password' }}';
             GRANT ALL PRIVILEGES ON chat_db.* TO 'chat_user'@'%';
-            SET GLOBAL max_connections = 300;
+            SET GLOBAL max_connections = 250;
             SET GLOBAL thread_cache_size = 64;
+            SET GLOBAL innodb_buffer_pool_size = 134217728;
             FLUSH PRIVILEGES;
           " 2>/dev/null && echo "✅ MySQL privileges & max_connections=300 applied" || echo "⚠️ MySQL grant completed with warnings"
 

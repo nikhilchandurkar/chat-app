@@ -228,6 +228,8 @@ class BenchmarkRecorder:
         resource_rows: list[dict[str, Any]],
         error_rows: list[dict[str, Any]],
     ) -> int:
+        if self.conn is not None:
+            self.conn.ping(reconnect=True)
         with self.conn.cursor() as cur:
             cur.execute(
                 """
