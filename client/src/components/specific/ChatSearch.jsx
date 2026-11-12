@@ -64,7 +64,7 @@ const ChatSearch = ({ chatId, onScrollToMessage, onClose }) => {
       }}
     >
       {/* Search Input Bar */}
-      <Box sx={{ display: "flex", alignItems: "center", p: 1, gap: 1, bgcolor: "white" }}>
+      <Box sx={{ display: "flex", alignItems: "center", p: 1, gap: 1, bgcolor: "background.paper" }}>
         <SearchIcon color="action" />
         <TextField
           autoFocus

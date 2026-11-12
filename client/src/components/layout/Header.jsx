@@ -105,16 +105,17 @@ const Header = ({ unreadMessagesCount = 0 }) => {
           }}
         >
           <Toolbar >
-            <Typography 
+              <Typography 
               variant="h6" 
-              sx={{ display: { xs: "none", sm: "block" }, cursor: "pointer" }}
+              fontWeight={700}
+              sx={{ display: { xs: "none", sm: "block" }, cursor: "pointer", letterSpacing: "-0.3px" }}
               onClick={() => {
                 dispatch(setActiveChatId(null));
                 dispatch(setIsNotification(false));
                 navigate("/");
               }}
             >
-              Chat App
+              ChitChat
             </Typography>
 
             <Box sx={{ display: { xs: "block", sm: "none" } }}>

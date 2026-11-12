@@ -10,8 +10,8 @@ import {
   Send as SendIcon,
 } from "@mui/icons-material";
 import {
+  Avatar,
   Box,
-  Chip,
   ClickAwayListener,
   Fab,
   IconButton,
@@ -30,6 +30,7 @@ import ChatSearch from "../components/specific/ChatSearch";
 import PinnedMessages from "../components/specific/PinnedMessages";
 import MessageComponent from "../components/shared/MessageComponent";
 import UnreadDivider from "../components/shared/UnreadDivider";
+import { transformImage } from "../lib/feature";
 import EmojiBurst from "../components/shared/EmojiBurst";
 
 import { useDispatch, useSelector } from "react-redux";
@@ -733,6 +734,16 @@ const Chat = ({ chatId, user }) => {
 
   const chat = chatDetails?.data?.chat;
   const isGroupChat = Boolean(chat?.groupChat);
+  const myIdStr = String(user?._id || user?.id || "");
+  const otherMember = !isGroupChat && Array.isArray(members)
+    ? members.find((m) => String(m?._id || m?.id || m) !== myIdStr)
+    : null;
+  const chatDisplayName =
+    (isGroupChat ? chat?.name : otherMember?.name || otherMember?.username || chat?.name) || "Conversation";
+  const rawChatAvatar = isGroupChat
+    ? chat?.avatar?.url || chat?.avatar
+    : otherMember?.avatar?.url || otherMember?.avatar;
+  const chatAvatarSrc = transformImage(typeof rawChatAvatar === "string" ? rawChatAvatar : rawChatAvatar?.url);
   const isRestricted = isGroupChat && Boolean(chat?.restrictedMessages);
   const isCreator =
     chat?.creator?.toString() === user?._id?.toString() || chat?.creator?.toString() === user?.id?.toString();
@@ -775,6 +786,85 @@ const Chat = ({ chatId, user }) => {
         position: "relative",
       }}
     >
+      <EmojiBurst bursts={chatBursts} />
+
+      {/* Crisp Sticky Conversation Header Bar (no overlapping floating icons) */}
+      <Box
+        sx={{
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 1,
+          px: { xs: 1, sm: 2 },
+          py: 0.75,
+          minHeight: 52,
+          borderBottom: "1px solid",
+          borderColor: isDark ? "#343B36" : "#E3E6E1",
+          bgcolor: isDark ? "#1E2320" : "#FFFFFF",
+          zIndex: 12,
+        }}
+      >
+        <Stack direction="row" alignItems="center" spacing={1} minWidth={0} flex={1}>
+          <IconButton
+            size="small"
+            onClick={() => dispatch(setIsMobile(true))}
+            aria-label="Open conversations"
+            sx={{ display: { xs: "inline-flex", sm: "none" }, flexShrink: 0 }}
+          >
+            <BackIcon fontSize="small" />
+          </IconButton>
+
+          <Stack
+            direction="row"
+            alignItems="center"
+            spacing={1}
+            minWidth={0}
+            flex={1}
+            onClick={() => setShowInfo(true)}
+            sx={{ cursor: "pointer" }}
+          >
+            <Avatar
+              src={chatAvatarSrc}
+              alt={chatDisplayName}
+              sx={{ width: 34, height: 34, bgcolor: "#236B4A", fontSize: "0.95rem", flexShrink: 0 }}
+            >
+              {chatDisplayName[0]?.toUpperCase() || "C"}
+            </Avatar>
+            <Box minWidth={0}>
+              <Typography variant="subtitle2" fontWeight={700} noWrap>
+                {chatDisplayName}
+              </Typography>
+              <Typography variant="caption" color={userTyping ? "primary" : "text.secondary"} noWrap display="block">
+                {userTyping ? "Typing..." : "Hold or swipe messages · Tap for info"}
+              </Typography>
+            </Box>
+          </Stack>
+        </Stack>
+
+        <Stack direction="row" spacing={0.25} flexShrink={0}>
+          <Tooltip title="Emoji Burst Wave">
+            <IconButton size="small" onClick={() => triggerShakeAction()} sx={{ color: "primary.main" }}>
+              <SparkleIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Search messages">
+            <IconButton
+              size="small"
+              onClick={() => setShowSearch((s) => !s)}
+              sx={{ color: showSearch ? "primary.main" : "text.secondary" }}
+            >
+              <SearchIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Chat Info & Media">
+            <IconButton size="small" onClick={() => setShowInfo(true)} sx={{ color: "text.secondary" }}>
+              <InfoIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        </Stack>
+      </Box>
+
       <PinnedMessages chatId={chatId} onScrollToMessage={handleScrollToMessage} />
 
       <Box
@@ -787,69 +877,9 @@ const Chat = ({ chatId, user }) => {
           overflow: "hidden",
         }}
       >
-        <EmojiBurst bursts={chatBursts} align="center" />
-
         {showSearch && (
           <ChatSearch chatId={chatId} onScrollToMessage={handleScrollToMessage} onClose={() => setShowSearch(false)} />
         )}
-
-        {/* Mobile quick back-to-chats pill */}
-        <Box sx={{ display: { xs: "block", sm: "none" }, position: "absolute", top: 8, left: 10, zIndex: 10 }}>
-          <Chip
-            icon={<BackIcon fontSize="small" />}
-            label={chat?.name || "Chats"}
-            size="small"
-            onClick={() => dispatch(setIsMobile(true))}
-            sx={{
-              bgcolor: isDark ? "rgba(32,37,34,0.9)" : "rgba(255,255,255,0.92)",
-              boxShadow: 1,
-              maxWidth: 160,
-            }}
-          />
-        </Box>
-
-        {/* Compact Top-Right Action Cluster */}
-        <Stack direction="row" spacing={0.75} sx={{ position: "absolute", top: 8, right: 12, zIndex: 10 }}>
-          <Tooltip title="Emoji Wave">
-            <IconButton
-              size="small"
-              onClick={() => triggerShakeAction()}
-              sx={{
-                bgcolor: isDark ? "rgba(32,37,34,0.88)" : "rgba(255,255,255,0.9)",
-                boxShadow: 1,
-                "&:hover": { color: "primary.main" },
-              }}
-            >
-              <SparkleIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Search messages">
-            <IconButton
-              size="small"
-              onClick={() => setShowSearch((s) => !s)}
-              sx={{
-                bgcolor: showSearch ? "primary.main" : isDark ? "rgba(32,37,34,0.88)" : "rgba(255,255,255,0.9)",
-                color: showSearch ? "white" : "inherit",
-                boxShadow: 1,
-                "&:hover": { color: showSearch ? "white" : "primary.main" },
-              }}
-            >
-              <SearchIcon fontSize="small" />
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Chat Info & Media">
-            <IconButton
-              size="small"
-              onClick={() => setShowInfo(true)}
-              sx={{
-                bgcolor: isDark ? "rgba(32,37,34,0.88)" : "rgba(255,255,255,0.9)",
-                boxShadow: 1,
-              }}
-            >
-              <InfoIcon fontSize="small" color="primary" />
-            </IconButton>
-          </Tooltip>
-        </Stack>
 
         {/* Message list */}
         <Stack
@@ -857,7 +887,7 @@ const Chat = ({ chatId, user }) => {
           boxSizing="border-box"
           sx={{
             px: { xs: 1.25, sm: 2 },
-            pt: 6,
+            pt: 1.5,
             pb: 2,
             overflowX: "hidden",
             overflowY: "auto",

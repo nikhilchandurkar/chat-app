@@ -20,65 +20,87 @@ const ChatItem = ({
 }) => {
   const dispatch = useDispatch();
   const theme = useTheme();
-  
-  const handleClick = (e) => {
+  const isDarkMode = theme.palette.mode === "dark";
+
+  const handleClick = () => {
     dispatch(setActiveChatId(_id));
     dispatch(setIsMobile(false));
   };
 
-  const isDarkMode = theme.palette.mode === 'dark';
-
   return (
     <Box
       onClick={handleClick}
-      onContextMenu={(e) => handleDeleteChat(e, _id, groupChat)}
-      sx={{ cursor: "pointer", padding: "0" }}
+      onContextMenu={(e) => handleDeleteChat?.(e, _id, groupChat)}
+      sx={{
+        cursor: "pointer",
+        display: "flex",
+        gap: 1.5,
+        alignItems: "center",
+        bgcolor: sameSender ? "primary.main" : "transparent",
+        color: sameSender ? "#ffffff" : "text.primary",
+        position: "relative",
+        px: 2,
+        py: 1.5,
+        borderBottom: `1px solid ${theme.palette.divider}`,
+        transition: "background-color 0.16s ease",
+        WebkitTapHighlightColor: "transparent",
+        "@media (hover: hover)": {
+          "&:hover": {
+            bgcolor: sameSender
+              ? "primary.dark"
+              : isDarkMode
+              ? "rgba(255,255,255,0.06)"
+              : "rgba(35, 107, 74, 0.06)",
+          },
+        },
+        "&:active": {
+          bgcolor: sameSender
+            ? "primary.dark"
+            : isDarkMode
+            ? "rgba(255,255,255,0.1)"
+            : "rgba(35, 107, 74, 0.1)",
+        },
+      }}
     >
       <motion.div
-        initial={{ opacity: 0, y: 10 }}
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 0.05 * index, duration: 0.3 }}
-        style={{
-          display: "flex",
-          gap: "1rem",
-          alignItems: "center",
-          backgroundColor: sameSender ? theme.palette.primary.main : "transparent",
-          color: sameSender ? "#ffffff" : theme.palette.text.primary,
-          position: "relative",
-          padding: "1rem",
-          borderBottom: `1px solid ${theme.palette.divider}`,
-          transition: "background-color 0.2s",
-        }}
-        onMouseOver={(e) => {
-          if (!sameSender) e.currentTarget.style.backgroundColor = isDarkMode ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)";
-        }}
-        onMouseOut={(e) => {
-          if (!sameSender) e.currentTarget.style.backgroundColor = "transparent";
-        }}
+        transition={{ delay: Math.min(0.25, 0.03 * index), duration: 0.22 }}
+        style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", minWidth: 0 }}
       >
         <AvatarCard avatar={avatar} name={name} />
 
-        <Stack flexGrow={1}>
-          <Typography fontWeight={sameSender ? 600 : 500}>{name}</Typography>
-          <Stack direction="row" alignItems="center" gap="0.5rem">
+        <Stack flex={1} minWidth={0}>
+          <Typography fontWeight={sameSender ? 600 : 500} noWrap>
+            {name}
+          </Typography>
+          <Stack direction="row" alignItems="center" gap="0.5rem" minWidth={0}>
             {isTyping ? (
-              <Typography variant="caption" sx={{ color: "#48bb78", fontStyle: "italic", fontWeight: 600 }}>
+              <Typography variant="caption" sx={{ color: sameSender ? "#d1fae5" : "#48bb78", fontStyle: "italic", fontWeight: 600 }}>
                 Typing...
               </Typography>
             ) : newMessageAlert ? (
-              <Typography variant="caption" sx={{ color: "text.secondary", fontStyle: "italic", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "150px" }}>
+              <Typography
+                variant="caption"
+                noWrap
+                sx={{ color: sameSender ? "rgba(255,255,255,0.85)" : "text.secondary", fontStyle: "italic" }}
+              >
                 {newMessageAlert.message?.content || `${newMessageAlert.count} New Message`}
               </Typography>
             ) : (
               <>
                 {groupChat && memberNames?.length > 0 && (
-                  <Typography variant="caption" sx={{ color: "text.secondary", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: "150px" }}>
+                  <Typography
+                    variant="caption"
+                    noWrap
+                    sx={{ color: sameSender ? "rgba(255,255,255,0.8)" : "text.secondary" }}
+                  >
                     {memberNames.join(", ")}
                   </Typography>
                 )}
                 {sameSender && !groupChat && (
-                  <Typography variant="caption" sx={{ color: "#a0aec0", fontStyle: "italic" }}>
-                    In Chat
+                  <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.85)", fontStyle: "italic" }}>
+                    Active Chat
                   </Typography>
                 )}
                 {!sameSender && isOnline && !groupChat && (
@@ -94,14 +116,11 @@ const ChatItem = ({
         {isOnline && !groupChat && (
           <Box
             sx={{
-              width: "12px",
-              height: "12px",
+              width: "10px",
+              height: "10px",
               borderRadius: "50%",
-              backgroundColor: "#48bb78",
-              position: "absolute",
-              top: "50%",
-              right: "1rem",
-              transform: "translateY(-50%)",
+              flexShrink: 0,
+              backgroundColor: sameSender ? "#A7F3D0" : "#48bb78",
               boxShadow: "0 0 8px rgba(72, 187, 120, 0.6)",
             }}
           />

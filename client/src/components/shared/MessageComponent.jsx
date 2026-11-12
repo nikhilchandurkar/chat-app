@@ -9,7 +9,8 @@ import {
   ListItemIcon,
   ListItemText,
   CircularProgress,
-  ClickAwayListener,
+  Paper,
+  Divider,
 } from "@mui/material";
 import {
   Edit as EditIcon,
@@ -22,14 +23,16 @@ import {
   Reply as ReplyIcon,
   DoneAll as DoneAllIcon,
   ContentCopy as CopyIcon,
+  Favorite as HeartIcon,
   MoreHoriz as MoreIcon,
 } from "@mui/icons-material";
 import React, { memo, useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
+import { createPortal } from "react-dom";
 import { fileFormat, formatTimeAgo } from "../../lib/feature";
 import RenderAttachment from "./RenderAttachment";
 import LinkPreview from "./LinkPreview";
 import EmojiBurst from "./EmojiBurst";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, animate, motion, useMotionValue, useTransform } from "framer-motion";
 import { useSelector } from "react-redux";
 import {
   useEditMessageMutation,
@@ -43,7 +46,10 @@ import toast from "react-hot-toast";
 
 const ForwardMessageDialog = lazy(() => import("../dialogs/ForwardMessageDialog"));
 
-const COMMON_REACTIONS = ["👍", "❤️", "😂", "😮", "🎉", "🔥"];
+const COMMON_REACTIONS = ["👍", "❤️", "😂", "😮", "🔥", "🎉", "👏"];
+const SWIPE_THRESHOLD = 46;
+const HOLD_DELAY_MS = 340;
+const DOUBLE_TAP_WINDOW_MS = 340;
 
 const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId, isGroupAdmin }) => {
   const { user } = useSelector((state) => state.auth);
@@ -67,18 +73,26 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
   const [pinMessageMutation] = usePinMessageMutation();
   const [reactMessageMutation] = useReactMessageMutation();
 
-  const [isHovered, setIsHovered] = useState(false);
-  const [holdTrayOpen, setHoldTrayOpen] = useState(false);
+  const [isDesktopHover, setIsDesktopHover] = useState(false);
+  const [holdSpotlightOpen, setHoldSpotlightOpen] = useState(false);
   const [showForwardDialog, setShowForwardDialog] = useState(false);
   const [bursts, setBursts] = useState([]);
-  const [swipeOffset, setSwipeOffset] = useState(0);
 
+  // 60fps Framer Motion values (zero React re-renders during drag/hold)
+  const dragX = useMotionValue(0);
+  const bubbleScale = useMotionValue(1);
+  const replyIconScale = useTransform(dragX, [8, SWIPE_THRESHOLD, 80], [0.25, 1.15, 1.25]);
+  const replyIconOpacity = useTransform(dragX, [8, SWIPE_THRESHOLD], [0, 1]);
+  const heartIconScale = useTransform(dragX, [-80, -SWIPE_THRESHOLD, -8], [1.25, 1.15, 0.25]);
+  const heartIconOpacity = useTransform(dragX, [-SWIPE_THRESHOLD, -8], [1, 0]);
+
+  const wrapperRef = useRef(null);
   const burstCounterRef = useRef(0);
   const longPressTimerRef = useRef(null);
-  const pointerStateRef = useRef(null);
-  const swipeTriggeredRef = useRef(false);
-  const lastTapTimeRef = useRef(0);
-  const holdOpenedAtRef = useRef(0);
+  const touchStateRef = useRef(null);
+  const hapticFiredRef = useRef(false);
+  const lastTapRef = useRef({ time: 0, x: 0, y: 0 });
+  const lastBurstTapAtRef = useRef(0);
 
   useEffect(() => {
     const onPrefs = () => setFontSize(getChatFontSize());
@@ -94,24 +108,18 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
 
   const spawnBurst = useCallback((emoji) => {
     const id = ++burstCounterRef.current;
-    setBursts((prev) => [...prev.slice(-4), { id, emoji }]);
+    setBursts((prev) => [...prev.slice(-3), { id, emoji }]);
     setTimeout(() => {
       setBursts((prev) => prev.filter((b) => b.id !== id));
-    }, 950);
+    }, 1050);
   }, []);
 
-  const handleContextMenu = (e) => {
-    if (isDeleted) return;
-    e.preventDefault();
-    setHoldTrayOpen(false);
-    setContextMenu({ mouseX: e.clientX, mouseY: e.clientY });
-  };
   const handleCloseMenu = () => setContextMenu(null);
 
   const handleEditStart = () => {
     setEditValue(content || "");
     setEditMode(true);
-    setHoldTrayOpen(false);
+    setHoldSpotlightOpen(false);
     handleCloseMenu();
   };
 
@@ -136,7 +144,7 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
 
   const handleDelete = async () => {
     handleCloseMenu();
-    setHoldTrayOpen(false);
+    setHoldSpotlightOpen(false);
     try {
       const res = await deleteMessageMutation(_id);
       if (res.data?.success) {
@@ -152,7 +160,7 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
 
   const handleStar = async () => {
     handleCloseMenu();
-    setHoldTrayOpen(false);
+    setHoldSpotlightOpen(false);
     try {
       const res = await toggleStar(_id);
       if (res.data?.success) toast.success(res.data.message);
@@ -163,7 +171,7 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
 
   const handlePin = async () => {
     handleCloseMenu();
-    setHoldTrayOpen(false);
+    setHoldSpotlightOpen(false);
     if (!chatId) return;
     try {
       const res = await pinMessageMutation({ chatId, messageId: _id });
@@ -176,111 +184,168 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
 
   const handleCopy = () => {
     handleCloseMenu();
-    setHoldTrayOpen(false);
+    setHoldSpotlightOpen(false);
     if (!content) return;
     navigator.clipboard?.writeText(content);
-    toast.success("Copied");
+    toast.success("Copied to clipboard");
   };
 
-  const handleReact = async (emoji) => {
-    setHoldTrayOpen(false);
-    triggerHaptic(14);
-    spawnBurst(emoji);
-    try {
-      const res = await reactMessageMutation({ messageId: _id, emoji });
-      if (res.data?.success && res.data?.reactions) {
-        onReact?.(_id, res.data.reactions);
+  const handleReact = useCallback(
+    async (emoji) => {
+      setHoldSpotlightOpen(false);
+      triggerHaptic([12, 24, 12]);
+      spawnBurst(emoji);
+      try {
+        const res = await reactMessageMutation({ messageId: _id, emoji });
+        if (res.data?.success && res.data?.reactions) {
+          onReact?.(_id, res.data.reactions);
+        }
+      } catch {
+        toast.error("Failed to react");
       }
-    } catch {
-      toast.error("Failed to react");
-    }
-  };
+    },
+    [_id, onReact, reactMessageMutation, spawnBurst]
+  );
 
   const handleForwardClick = () => {
     handleCloseMenu();
-    setHoldTrayOpen(false);
+    setHoldSpotlightOpen(false);
     setShowForwardDialog(true);
   };
 
-  const handleReplyClick = () => {
+  const handleReplyClick = useCallback(() => {
     handleCloseMenu();
-    setHoldTrayOpen(false);
-    triggerHaptic(12);
+    setHoldSpotlightOpen(false);
+    triggerHaptic(14);
     onReply?.(message);
-  };
+  }, [message, onReply]);
 
-  // Unified touch + mouse gesture handlers: long-press (hold to react), swipe-right to reply, double-tap ❤️
-  const handlePointerDown = (e) => {
-    if (isDeleted || editMode) return;
-    if (e.button !== undefined && e.button !== 0) return;
+  // Attach native non-passive touch listeners so Chrome Android WebView never cancels mid-swipe
+  useEffect(() => {
+    const el = wrapperRef.current;
+    if (!el || isDeleted || editMode) return undefined;
 
-    swipeTriggeredRef.current = false;
-    pointerStateRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      moved: false,
-      axis: null,
-      pointerType: e.pointerType || "mouse",
-    };
-
-    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
-    longPressTimerRef.current = setTimeout(() => {
-      if (pointerStateRef.current && pointerStateRef.current.axis !== "scroll") {
-        holdOpenedAtRef.current = Date.now();
-        triggerHaptic(18);
-        setHoldTrayOpen(true);
-      }
-    }, 400);
-  };
-
-  const handlePointerMove = (e) => {
-    const st = pointerStateRef.current;
-    if (!st || isDeleted || editMode) return;
-
-    const dx = e.clientX - st.startX;
-    const dy = e.clientY - st.startY;
-
-    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
-      st.moved = true;
+    const clearHold = () => {
       if (longPressTimerRef.current) {
         clearTimeout(longPressTimerRef.current);
         longPressTimerRef.current = null;
       }
-    }
+      animate(bubbleScale, 1, { duration: 0.14 });
+    };
 
-    if (!st.axis && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
-      st.axis = dx > 10 && dx > Math.abs(dy) * 1.4 ? "swipe" : "scroll";
-    }
+    const onTouchStart = (e) => {
+      const t = e.touches?.[0];
+      if (!t) return;
+      hapticFiredRef.current = false;
+      touchStateRef.current = {
+        startX: t.clientX,
+        startY: t.clientY,
+        axis: null,
+        moved: false,
+        holdTriggered: false,
+      };
+      animate(bubbleScale, 0.97, { duration: 0.25 });
 
-    if (st.axis === "swipe") {
-      const clamped = Math.max(0, Math.min(68, dx));
-      setSwipeOffset(clamped);
-      if (clamped >= 48 && !swipeTriggeredRef.current) {
-        swipeTriggeredRef.current = true;
-        triggerHaptic(12);
+      clearHold();
+      animate(bubbleScale, 0.96, { duration: 0.25 });
+      longPressTimerRef.current = setTimeout(() => {
+        if (touchStateRef.current && touchStateRef.current.axis !== "scroll" && !touchStateRef.current.moved) {
+          touchStateRef.current.holdTriggered = true;
+          animate(bubbleScale, 1.03, { type: "spring", stiffness: 450, damping: 20 });
+          triggerHaptic(22);
+          setHoldSpotlightOpen(true);
+        }
+      }, HOLD_DELAY_MS);
+    };
+
+    const onTouchMove = (e) => {
+      const st = touchStateRef.current;
+      const t = e.touches?.[0];
+      if (!st || !t) return;
+
+      const dx = t.clientX - st.startX;
+      const dy = t.clientY - st.startY;
+
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+        st.moved = true;
+        clearHold();
       }
-    }
-  };
 
-  const finishPointerGesture = () => {
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current);
-      longPressTimerRef.current = null;
-    }
-    const st = pointerStateRef.current;
-    if (swipeOffset >= 48 && !isDeleted && !editMode) {
-      onReply?.(message);
-    } else if (st && !st.moved && st.pointerType === "touch" && !holdTrayOpen && !isDeleted && !editMode) {
-      const now = Date.now();
-      if (now - lastTapTimeRef.current < 260) {
-        lastTapTimeRef.current = 0;
-        handleReact("❤️");
-      } else {
-        lastTapTimeRef.current = now;
+      if (!st.axis && (Math.abs(dx) > 10 || Math.abs(dy) > 10)) {
+        st.axis = Math.abs(dx) > Math.abs(dy) * 1.2 ? "swipe" : "scroll";
       }
-    }
-    setSwipeOffset(0);
-    pointerStateRef.current = null;
+
+      if (st.axis === "swipe") {
+        if (e.cancelable) e.preventDefault();
+        const dampened = Math.max(-84, Math.min(84, dx * 0.68));
+        dragX.set(dampened);
+
+        if (Math.abs(dampened) >= SWIPE_THRESHOLD && !hapticFiredRef.current) {
+          hapticFiredRef.current = true;
+          triggerHaptic(14);
+        }
+      }
+    };
+
+    const onTouchEnd = (e) => {
+      clearHold();
+      const st = touchStateRef.current;
+      touchStateRef.current = null;
+      const currentDrag = dragX.get();
+      animate(dragX, 0, { type: "spring", stiffness: 520, damping: 28 });
+
+      if (!st) return;
+
+      if (st.axis === "swipe") {
+        if (currentDrag >= SWIPE_THRESHOLD) {
+          onReply?.(message);
+        } else if (currentDrag <= -SWIPE_THRESHOLD) {
+          handleReact("❤️");
+        }
+        return;
+      }
+
+      if (!st.moved && !st.holdTriggered) {
+        const t = e.changedTouches?.[0];
+        const cx = t?.clientX || st.startX;
+        const cy = t?.clientY || st.startY;
+        const now = Date.now();
+        const prev = lastTapRef.current;
+        if (
+          now - prev.time < DOUBLE_TAP_WINDOW_MS &&
+          Math.hypot(cx - prev.x, cy - prev.y) < 48
+        ) {
+          lastTapRef.current = { time: 0, x: 0, y: 0 };
+          lastBurstTapAtRef.current = now;
+          handleReact("❤️");
+        } else {
+          lastTapRef.current = { time: now, x: cx, y: cy };
+        }
+      }
+    };
+
+    const onTouchCancel = () => {
+      clearHold();
+      touchStateRef.current = null;
+      animate(dragX, 0, { type: "spring", stiffness: 520, damping: 28 });
+    };
+
+    el.addEventListener("touchstart", onTouchStart, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    el.addEventListener("touchend", onTouchEnd, { passive: true });
+    el.addEventListener("touchcancel", onTouchCancel, { passive: true });
+    return () => {
+      el.removeEventListener("touchstart", onTouchStart);
+      el.removeEventListener("touchmove", onTouchMove);
+      el.removeEventListener("touchend", onTouchEnd);
+      el.removeEventListener("touchcancel", onTouchCancel);
+    };
+  }, [bubbleScale, dragX, editMode, handleReact, isDeleted, message, onReply]);
+
+  const handleContextMenu = (e) => {
+    if (isDeleted) return;
+    e.preventDefault();
+    setHoldSpotlightOpen(true);
   };
 
   // Group reactions by emoji
@@ -300,163 +365,311 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
       .filter(Boolean)
   );
 
-  const showQuickBar = !isDeleted && !editMode && (holdTrayOpen || isHovered);
+  // Hold-to-React Spotlight Portal (Telegram / WhatsApp style — never clips on edges)
+  const holdSpotlightPortal =
+    holdSpotlightOpen &&
+    typeof document !== "undefined" &&
+    createPortal(
+      <AnimatePresence>
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.16 }}
+          onClick={() => setHoldSpotlightOpen(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 3000,
+            backgroundColor: "rgba(12, 16, 14, 0.56)",
+            backdropFilter: "blur(6px)",
+            WebkitBackdropFilter: "blur(6px)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "16px",
+          }}
+        >
+          <motion.div
+            initial={{ opacity: 0, scale: 0.88, y: 18 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 12 }}
+            transition={{ type: "spring", stiffness: 460, damping: 28 }}
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "100%", maxWidth: 360, display: "flex", flexDirection: "column", gap: "12px" }}
+          >
+            {/* Spring Reaction Pill */}
+            <Paper
+              elevation={8}
+              sx={{
+                display: "flex",
+                justifyContent: "space-around",
+                alignItems: "center",
+                px: 1.5,
+                py: 1,
+                borderRadius: "999px",
+                bgcolor: isDark ? "#232A25" : "#FFFFFF",
+                border: `1px solid ${isDark ? "#38443C" : "#E1E7E2"}`,
+              }}
+            >
+              {COMMON_REACTIONS.map((emoji, idx) => (
+                <motion.button
+                  key={emoji}
+                  type="button"
+                  initial={{ opacity: 0, scale: 0.4, y: 8 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  transition={{ delay: idx * 0.025, type: "spring", stiffness: 520, damping: 22 }}
+                  whileTap={{ scale: 1.35 }}
+                  onClick={() => handleReact(emoji)}
+                  style={{
+                    border: "none",
+                    background: myReactedEmojis.has(emoji) ? "rgba(35, 107, 74, 0.18)" : "transparent",
+                    borderRadius: "50%",
+                    width: 40,
+                    height: 40,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "1.45rem",
+                    cursor: "pointer",
+                  }}
+                >
+                  {emoji}
+                </motion.button>
+              ))}
+            </Paper>
 
-  const quickBarContent = (
-    <motion.div
-      initial={{ opacity: 0, scale: 0.85, y: 6 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.85, y: 6 }}
-      transition={{ duration: 0.14 }}
-      style={{
-        position: "absolute",
-        top: -46,
-        ...(sameSender ? { right: 0 } : { left: 0 }),
-        zIndex: 40,
-        display: "flex",
-        alignItems: "center",
-        gap: "2px",
-        padding: "3px 6px",
-        borderRadius: "999px",
-        backgroundColor: isDark ? "#262D28" : "#FFFFFF",
-        border: `1px solid ${isDark ? "#3A443D" : "#DCE3DD"}`,
-        boxShadow: "0 6px 20px rgba(0, 0, 0, 0.14)",
-        maxWidth: "calc(100vw - 24px)",
-        overflowX: "auto",
-      }}
-    >
-      {COMMON_REACTIONS.map((emoji) => (
-        <IconButton
-          key={emoji}
-          size="small"
-          onClick={() => handleReact(emoji)}
-          sx={{
-            p: "4px",
-            transition: "transform 0.12s ease",
-            "&:hover": { transform: "scale(1.25)" },
-          }}
-        >
-          <span style={{ fontSize: "1.05rem", lineHeight: 1 }}>{emoji}</span>
-        </IconButton>
-      ))}
-      <Tooltip title="Reply">
-        <IconButton size="small" onClick={handleReplyClick} sx={{ p: "4px", color: "primary.main" }}>
-          <ReplyIcon fontSize="small" />
-        </IconButton>
-      </Tooltip>
-      <Tooltip title="More options">
-        <IconButton
-          size="small"
-          onClick={(e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            setHoldTrayOpen(false);
-            setContextMenu({ mouseX: rect.left, mouseY: rect.bottom });
-          }}
-          sx={{ p: "4px", color: "text.secondary" }}
-        >
-          <MoreIcon fontSize="small" />
-        </IconButton>
-      </Tooltip>
-    </motion.div>
-  );
+            {/* Held Message Preview */}
+            <Paper
+              elevation={4}
+              sx={{
+                p: 1.5,
+                borderRadius: 2.5,
+                bgcolor: sameSender ? (isDark ? "#24382D" : "#E8F3ED") : isDark ? "#202522" : "#FFFFFF",
+                color: isDark ? "#F1F3F0" : "#202421",
+                maxHeight: 110,
+                overflow: "hidden",
+              }}
+            >
+              {sender?.name && (
+                <Typography variant="caption" fontWeight={700} color="primary" display="block" mb={0.25}>
+                  {sameSender ? "You" : sender.name}
+                </Typography>
+              )}
+              <Typography variant="body2" sx={{ display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
+                {content || "📎 Attachment"}
+              </Typography>
+            </Paper>
+
+            {/* Quick Actions Menu Card */}
+            <Paper
+              elevation={8}
+              sx={{
+                borderRadius: 2.5,
+                overflow: "hidden",
+                bgcolor: isDark ? "#232A25" : "#FFFFFF",
+              }}
+            >
+              <MenuItem onClick={handleReplyClick} sx={{ py: 1.25 }}>
+                <ListItemIcon><ReplyIcon fontSize="small" color="primary" /></ListItemIcon>
+                <ListItemText>Reply</ListItemText>
+              </MenuItem>
+              {content && (
+                <MenuItem onClick={handleCopy} sx={{ py: 1.25 }}>
+                  <ListItemIcon><CopyIcon fontSize="small" /></ListItemIcon>
+                  <ListItemText>Copy Text</ListItemText>
+                </MenuItem>
+              )}
+              <MenuItem onClick={handleStar} sx={{ py: 1.25 }}>
+                <ListItemIcon><StarIcon fontSize="small" sx={{ color: "#f59e0b" }} /></ListItemIcon>
+                <ListItemText>Star Message</ListItemText>
+              </MenuItem>
+              <MenuItem onClick={handleForwardClick} sx={{ py: 1.25 }}>
+                <ListItemIcon><ForwardIcon fontSize="small" /></ListItemIcon>
+                <ListItemText>Forward</ListItemText>
+              </MenuItem>
+              {isGroupAdmin && chatId && (
+                <MenuItem onClick={handlePin} sx={{ py: 1.25 }}>
+                  <ListItemIcon><PinIcon fontSize="small" color="primary" /></ListItemIcon>
+                  <ListItemText>Pin Message</ListItemText>
+                </MenuItem>
+              )}
+              {sameSender && content && !attachments.length && (
+                <MenuItem onClick={handleEditStart} sx={{ py: 1.25 }}>
+                  <ListItemIcon><EditIcon fontSize="small" /></ListItemIcon>
+                  <ListItemText>Edit</ListItemText>
+                </MenuItem>
+              )}
+              {(sameSender || isGroupAdmin) && (
+                <>
+                  <Divider />
+                  <MenuItem onClick={handleDelete} disabled={isDeleting} sx={{ py: 1.25 }}>
+                    <ListItemIcon><DeleteIcon fontSize="small" color="error" /></ListItemIcon>
+                    <ListItemText sx={{ color: "error.main" }}>Delete</ListItemText>
+                  </MenuItem>
+                </>
+              )}
+            </Paper>
+          </motion.div>
+        </motion.div>
+      </AnimatePresence>,
+      document.body
+    );
 
   return (
     <>
+      <EmojiBurst bursts={bursts} />
+      {holdSpotlightPortal}
+
       <Box
+        ref={wrapperRef}
         sx={{
           position: "relative",
           maxWidth: { xs: "84%", sm: "72%", md: "560px" },
           display: "flex",
           alignItems: "center",
           touchAction: "pan-y",
-          userSelect: holdTrayOpen ? "none" : "text",
+          WebkitTouchCallout: "none",
+          WebkitUserSelect: "none",
+          userSelect: "none",
         }}
         onContextMenu={handleContextMenu}
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={finishPointerGesture}
-        onPointerCancel={finishPointerGesture}
+        onPointerEnter={(e) => {
+          if (e.pointerType === "mouse") setIsDesktopHover(true);
+        }}
+        onPointerLeave={(e) => {
+          if (e.pointerType === "mouse") setIsDesktopHover(false);
+        }}
         onDoubleClick={() => {
+          if (Date.now() - lastBurstTapAtRef.current < 450) return;
           if (!isDeleted && !editMode) handleReact("❤️");
         }}
       >
-        {/* Swipe-to-Reply indicator revealed behind bubble */}
-        {swipeOffset > 6 && (
+        {/* Left Swipe Indicator -> Reply */}
+        <motion.div
+          style={{
+            position: "absolute",
+            left: 4,
+            scale: replyIconScale,
+            opacity: replyIconOpacity,
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        >
           <Box
             sx={{
-              position: "absolute",
-              left: -34,
-              width: 28,
-              height: 28,
+              width: 32,
+              height: 32,
               borderRadius: "50%",
-              bgcolor: swipeOffset >= 48 ? "#236B4A" : "action.selected",
-              color: swipeOffset >= 48 ? "#FFFFFF" : "text.secondary",
+              bgcolor: "#236B4A",
+              color: "#FFFFFF",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              opacity: Math.min(1, swipeOffset / 48),
-              transform: `scale(${swipeOffset >= 48 ? 1.1 : 0.9})`,
-              transition: "background-color 0.15s ease, transform 0.15s ease",
-              pointerEvents: "none",
+              boxShadow: 2,
             }}
           >
-            <ReplyIcon sx={{ fontSize: 16 }} />
+            <ReplyIcon sx={{ fontSize: 18 }} />
           </Box>
-        )}
+        </motion.div>
+
+        {/* Right Swipe Indicator -> Quick Heart React */}
+        <motion.div
+          style={{
+            position: "absolute",
+            right: 4,
+            scale: heartIconScale,
+            opacity: heartIconOpacity,
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        >
+          <Box
+            sx={{
+              width: 32,
+              height: 32,
+              borderRadius: "50%",
+              bgcolor: "#E11D48",
+              color: "#FFFFFF",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: 2,
+            }}
+          >
+            <HeartIcon sx={{ fontSize: 17 }} />
+          </Box>
+        </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 6 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.16 }}
           style={{
             position: "relative",
             width: "100%",
-            transform: `translateX(${swipeOffset}px)`,
-            transition: swipeOffset === 0 ? "transform 0.22s cubic-bezier(0.22, 1, 0.36, 1)" : "none",
+            x: dragX,
+            scale: bubbleScale,
+            zIndex: 1,
+            willChange: "transform",
           }}
         >
-          {/* Animated Emoji Particle Burst */}
-          <EmojiBurst bursts={bursts} align={sameSender ? "right" : "left"} />
-
-          {/* Floating Hold / Hover Reaction & Action Tray */}
+          {/* Desktop Mouse Hover Bar (never gets stuck on touch) */}
           <AnimatePresence>
-            {showQuickBar &&
-              (holdTrayOpen ? (
-                <ClickAwayListener
-                  onClickAway={() => {
-                    if (Date.now() - holdOpenedAtRef.current < 350) return;
-                    setHoldTrayOpen(false);
-                  }}
-                >
-                  {quickBarContent}
-                </ClickAwayListener>
-              ) : (
-                quickBarContent
-              ))}
+            {isDesktopHover && !isDeleted && !editMode && !holdSpotlightOpen && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.88, y: 4 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.88, y: 4 }}
+                transition={{ duration: 0.12 }}
+                style={{
+                  position: "absolute",
+                  top: -42,
+                  ...(sameSender ? { right: 0 } : { left: 0 }),
+                  zIndex: 30,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "2px",
+                  padding: "3px 6px",
+                  borderRadius: "999px",
+                  backgroundColor: isDark ? "#262D28" : "#FFFFFF",
+                  border: `1px solid ${isDark ? "#3A443D" : "#DCE3DD"}`,
+                  boxShadow: "0 6px 18px rgba(0,0,0,0.14)",
+                }}
+              >
+                {COMMON_REACTIONS.slice(0, 6).map((emoji) => (
+                  <IconButton key={emoji} size="small" onClick={() => handleReact(emoji)} sx={{ p: "3px" }}>
+                    <span style={{ fontSize: "0.98rem" }}>{emoji}</span>
+                  </IconButton>
+                ))}
+                <Tooltip title="Reply">
+                  <IconButton size="small" onClick={handleReplyClick} sx={{ p: "4px", color: "primary.main" }}>
+                    <ReplyIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+                <Tooltip title="Actions">
+                  <IconButton size="small" onClick={() => setHoldSpotlightOpen(true)} sx={{ p: "4px", color: "text.secondary" }}>
+                    <MoreIcon fontSize="small" />
+                  </IconButton>
+                </Tooltip>
+              </motion.div>
+            )}
           </AnimatePresence>
 
           <Box
             sx={{
               backgroundColor: sameSender ? (isDark ? "#24382D" : "#E8F3ED") : isDark ? "#202522" : "#FFFFFF",
               color: isDark ? "#F1F3F0" : "#202421",
-              borderRadius: sameSender ? "16px 16px 4px 16px" : "16px 16px 16px 4px",
+              borderRadius: sameSender ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
               border: sameSender
                 ? `1px solid ${isDark ? "#324D3E" : "#D0E4D8"}`
                 : `1px solid ${isDark ? "#343B36" : "#E3E6E1"}`,
               px: 1.5,
               py: 1,
               position: "relative",
-              boxShadow: holdTrayOpen
-                ? "0 0 0 2px #236B4A"
-                : isDark
-                ? "none"
-                : "0 1px 3px rgba(32, 36, 33, 0.05)",
-              transition: "box-shadow 0.15s ease",
+              boxShadow: isDark ? "none" : "0 1px 3px rgba(32, 36, 33, 0.05)",
             }}
           >
-            {/* Sender name for group chats */}
             {!sameSender && sender?.name && (
               <Typography
                 sx={{ color: isDark ? "#4B9B70" : "#236B4A" }}
@@ -469,7 +682,6 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
               </Typography>
             )}
 
-            {/* Tombstone */}
             {isDeleted ? (
               <Typography variant="body2" sx={{ fontStyle: "italic", color: isDark ? "#A6AEA8" : "#737A75" }}>
                 🚫 This message was deleted
@@ -572,7 +784,6 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
               </>
             )}
 
-            {/* Timestamp + edited tag + read receipts */}
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.3, justifyContent: "flex-end" }}>
               {isEdited && !isDeleted && (
                 <Typography variant="caption" sx={{ color: isDark ? "#A6AEA8" : "#737A75", fontSize: "0.62rem" }}>
@@ -593,7 +804,6 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
               )}
             </Box>
 
-            {/* Render grouped reactions below message */}
             {Object.keys(reactionCounts).length > 0 && (
               <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.5, mt: 0.5 }}>
                 {Object.entries(reactionCounts).map(([emoji, count]) => {
@@ -648,7 +858,6 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
         </motion.div>
       </Box>
 
-      {/* Right-click / More context menu */}
       <Menu
         open={contextMenu !== null}
         onClose={handleCloseMenu}
@@ -656,61 +865,9 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
         anchorPosition={contextMenu ? { top: contextMenu.mouseY, left: contextMenu.mouseX } : undefined}
       >
         <MenuItem onClick={handleReplyClick} dense>
-          <ListItemIcon>
-            <ReplyIcon fontSize="small" />
-          </ListItemIcon>
+          <ListItemIcon><ReplyIcon fontSize="small" /></ListItemIcon>
           <ListItemText>Reply</ListItemText>
         </MenuItem>
-
-        {content && (
-          <MenuItem onClick={handleCopy} dense>
-            <ListItemIcon>
-              <CopyIcon fontSize="small" />
-            </ListItemIcon>
-            <ListItemText>Copy Text</ListItemText>
-          </MenuItem>
-        )}
-
-        <MenuItem onClick={handleStar} dense>
-          <ListItemIcon>
-            <StarIcon fontSize="small" sx={{ color: "#f59e0b" }} />
-          </ListItemIcon>
-          <ListItemText>Star Message</ListItemText>
-        </MenuItem>
-
-        <MenuItem onClick={handleForwardClick} dense>
-          <ListItemIcon>
-            <ForwardIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText>Forward</ListItemText>
-        </MenuItem>
-
-        {isGroupAdmin && chatId && (
-          <MenuItem onClick={handlePin} dense>
-            <ListItemIcon>
-              <PinIcon fontSize="small" color="primary" />
-            </ListItemIcon>
-            <ListItemText>Pin Message</ListItemText>
-          </MenuItem>
-        )}
-
-        {sameSender && content && !attachments.length && (
-          <MenuItem onClick={handleEditStart} dense>
-            <ListItemIcon>
-              <EditIcon fontSize="small" />
-            </ListItemIcon>
-            <ListItemText>Edit</ListItemText>
-          </MenuItem>
-        )}
-
-        {(sameSender || isGroupAdmin) && (
-          <MenuItem onClick={handleDelete} dense disabled={isDeleting}>
-            <ListItemIcon>
-              <DeleteIcon fontSize="small" color="error" />
-            </ListItemIcon>
-            <ListItemText sx={{ color: "error.main" }}>Delete</ListItemText>
-          </MenuItem>
-        )}
       </Menu>
 
       {showForwardDialog && (
