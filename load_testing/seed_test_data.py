@@ -26,18 +26,11 @@ DEFAULT_PASSWORD_PLAIN = "LoadTestPass2026!"
 
 
 def _make_fast_password_hash(password: str, rounds: int = 10) -> str:
-    """Computes Django-compatible bcrypt_sha256 hash matching FastBCryptSHA256PasswordHasher."""
-    try:
-        import bcrypt
-
-        digest_hex = hashlib.sha256(password.encode("utf-8")).hexdigest().encode("ascii")
-        hashed = bcrypt.hashpw(digest_hex, bcrypt.gensalt(rounds=rounds)).decode("ascii")
-        return f"bcrypt_sha256${hashed}"
-    except ImportError:
-        salt = secrets.token_hex(12)
-        dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 870000)
-        b64_hash = base64.b64encode(dk).decode("ascii").strip()
-        return f"pbkdf2_sha256$870000${salt}${b64_hash}"
+    """Computes salted PBKDF2-SHA256 hash compatible with Django PBKDF2PasswordHasher."""
+    salt = secrets.token_hex(12)
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 260000)
+    b64_hash = base64.b64encode(dk).decode("ascii").strip()
+    return f"pbkdf2_sha256$260000${salt}${b64_hash}"
 
 
 def _make_jwt_pair(secret_key: str, user_uuid: str, refresh_jti: str | None = None) -> tuple[str, str, str]:

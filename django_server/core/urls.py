@@ -51,8 +51,8 @@ def ready_check(request):
             cursor.execute("SELECT 1")
             row = cursor.fetchone()
             checks["database"] = "connected" if row and row[0] == 1 else "unexpected_result"
-    except Exception as e:
-        checks["database"] = f"error: {str(e)}"
+    except Exception:
+        checks["database"] = "unavailable"
 
     # Check Redis
     r = get_redis_client()
@@ -60,8 +60,8 @@ def ready_check(request):
         try:
             r.ping()
             checks["redis"] = "connected"
-        except Exception as e:
-            checks["redis"] = f"error: {str(e)}"
+        except Exception:
+            checks["redis"] = "unavailable"
     else:
         checks["redis"] = "not_available"
 

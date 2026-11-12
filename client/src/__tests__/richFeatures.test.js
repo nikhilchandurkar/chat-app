@@ -8,6 +8,7 @@ import {
   isE2eePayload,
 } from "../utils/e2ee";
 import { hashPin } from "../utils/appLock";
+import { transformImage } from "../lib/feature";
 
 describe("rich composer & security utilities", () => {
   it("encodes RGBA frames into a valid looping GIF89a blob", async () => {
@@ -66,6 +67,15 @@ describe("rich composer & security utilities", () => {
     expect(h1).toBe(h2);
     expect(h1).not.toBe(h3);
     expect(h1.length).toBeGreaterThan(8);
+  });
+
+  it("rewrites only genuine cloudinary host URLs and never arbitrary query substrings", () => {
+    expect(transformImage("https://res.cloudinary.com/demo/image/upload/sample.jpg", 300)).toContain(
+      "/upload/dpr_auto,w_300/"
+    );
+    expect(transformImage("https://evil.example.com/upload/?ref=cloudinary.com", 300)).toBe(
+      "https://evil.example.com/upload/?ref=cloudinary.com"
+    );
   });
 });
 

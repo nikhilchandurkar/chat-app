@@ -526,8 +526,8 @@ class GoogleAuthView(APIView):
                 profile = OAuthService.verify_google_token(id_token)
             else:
                 return Response({"success": False, "message": "Either id_token or code is required."}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response({"success": False, "message": f"Google verification failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({"success": False, "message": "Google verification failed. Please try again."}, status=status.HTTP_400_BAD_REQUEST)
 
         current_user = request.user if request.user.is_authenticated else None
         success, message, data = OAuthService.authenticate_or_link_social(
@@ -571,8 +571,8 @@ class GitHubAuthView(APIView):
 
         try:
             profile = OAuthService.exchange_github_code(code, redirect_uri)
-        except Exception as e:
-            return Response({"success": False, "message": f"GitHub verification failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({"success": False, "message": "GitHub verification failed. Please try again."}, status=status.HTTP_400_BAD_REQUEST)
 
         current_user = request.user if request.user.is_authenticated else None
         success, message, data = OAuthService.authenticate_or_link_social(
@@ -615,8 +615,8 @@ class FacebookAuthView(APIView):
 
         try:
             profile = OAuthService.verify_facebook_token(access_token)
-        except Exception as e:
-            return Response({"success": False, "message": f"Facebook verification failed: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception:
+            return Response({"success": False, "message": "Facebook verification failed. Please try again."}, status=status.HTTP_400_BAD_REQUEST)
 
         current_user = request.user if request.user.is_authenticated else None
         success, message, data = OAuthService.authenticate_or_link_social(

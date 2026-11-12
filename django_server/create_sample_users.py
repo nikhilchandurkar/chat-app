@@ -91,7 +91,7 @@ def run():
         profile.save()
 
         created_users.append(user)
-        print(f"✓ User ready: username='{user.username}', email='{user.email}', name='{user.name}', password='{COMMON_PASSWORD}'")
+        print(f"✓ User ready: username='{user.username}', email='{user.email}', name='{user.name}'")
 
     # Connect with existing user if available
     existing_user = User.objects.filter(username="nikhilchandurkar24").first() or User.objects.exclude(username__in=[u.username for u in created_users]).first()

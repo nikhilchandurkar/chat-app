@@ -202,18 +202,19 @@ class StreamDownloadView(APIView):
             if att and att.message.expires_at and timezone.now() > att.message.expires_at:
                 raise Http404("File has expired per disappearing message policy.")
 
-        # Path traversal prevention: verify final_path is inside STORAGE_ROOT
+        # Path traversal prevention: verify target path is strictly inside STORAGE_ROOT
         from django.conf import settings
         storage_root = Path(settings.STORAGE_ROOT).resolve()
-        target_path = Path(session.final_path).resolve()
-        if not str(target_path).startswith(str(storage_root)):
+        # Only use basename inside the authenticated user's attachments dir or validated storage path
+        candidate_path = Path(session.final_path).resolve()
+        if not candidate_path.is_relative_to(storage_root):
             return Response({"success": False, "message": "Invalid storage path detected."}, status=status.HTTP_403_FORBIDDEN)
 
-        file_path = str(target_path)
-        if not os.path.exists(file_path):
+        if not candidate_path.is_file():
             raise Http404("File missing on disk")
 
-        file_size = os.path.getsize(file_path)
+        file_path = str(candidate_path)
+        file_size = candidate_path.stat().st_size
         content_type = session.mime_type or "application/octet-stream"
 
         range_header = request.META.get("HTTP_RANGE", "").strip()
@@ -256,21 +257,22 @@ class StreamThumbnailView(APIView):
         if not session or not session.final_path:
             raise Http404("Thumbnail not found")
 
-        # Locate thumbnail in thumbnails directory
-        from pathlib import Path
+        # Locate thumbnail strictly inside thumbnails root
         from django.conf import settings
-        storage_root = Path(settings.STORAGE_ROOT)
-        thumb_dir = storage_root / "thumbnails" / str(session.user_id)
-        base_name = os.path.basename(session.final_path)
-        thumb_name = f"thumb_{os.path.splitext(base_name)[0]}.jpg"
-        thumb_path = thumb_dir / thumb_name
+        storage_root = Path(settings.STORAGE_ROOT).resolve()
+        thumbs_root = (storage_root / "thumbnails").resolve()
+        thumb_dir = (thumbs_root / str(session.user_id)).resolve()
+        base_stem = Path(sanitize_filename(os.path.basename(session.final_path))).stem
+        thumb_path = (thumb_dir / f"thumb_{base_stem}.jpg").resolve()
 
-        if not thumb_path.exists():
+        if not thumb_path.is_relative_to(thumbs_root):
+            return Response({"success": False, "message": "Invalid thumbnail path."}, status=status.HTTP_403_FORBIDDEN)
+
+        if not thumb_path.is_file():
             # If thumbnail not present, serve full image
             return StreamDownloadView.as_view()(request._request, session_id=session_id)
 
-        with open(thumb_path, "rb") as f:
-            data = f.read()
+        data = thumb_path.read_bytes()
 
         resp = HttpResponse(data, content_type="image/jpeg")
         resp["Cache-Control"] = "public, max-age=86400"

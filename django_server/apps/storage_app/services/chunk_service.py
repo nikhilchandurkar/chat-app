@@ -64,8 +64,18 @@ class ChunkUploadService:
         if timezone.now() > session.expires_at:
             return False, "Upload session expired."
 
-        temp_dir = Path(session.temp_dir)
-        chunk_path = temp_dir / f"chunk_{chunk_index}.part"
+        storage_root = Path(settings.STORAGE_ROOT).resolve()
+        temp_root = (storage_root / "temporary").resolve()
+        temp_dir = (temp_root / str(session.id)).resolve()
+        if not temp_dir.is_relative_to(temp_root):
+            return False, "Invalid temporary directory."
+
+        safe_idx = int(chunk_index)
+        if safe_idx < 0 or safe_idx >= max(1, session.total_chunks):
+            return False, "Invalid chunk index."
+        chunk_path = (temp_dir / f"chunk_{safe_idx}.part").resolve()
+        if not chunk_path.is_relative_to(temp_dir):
+            return False, "Invalid chunk path."
 
         # If chunk 0, validate magic header
         chunk_bytes = chunk_file.read()
@@ -99,22 +109,28 @@ class ChunkUploadService:
         if uploaded_chunks_count < session.total_chunks:
             return False, f"Missing chunks: {uploaded_chunks_count}/{session.total_chunks} received.", {}
 
-        storage_root = Path(settings.STORAGE_ROOT)
-        attachments_dir = storage_root / "attachments" / str(user.id)
+        storage_root = Path(settings.STORAGE_ROOT).resolve()
+        attachments_root = (storage_root / "attachments").resolve()
+        attachments_dir = (attachments_root / str(user.id)).resolve()
         attachments_dir.mkdir(parents=True, exist_ok=True)
 
-        ext = os.path.splitext(session.file_name)[1]
+        ext = os.path.splitext(sanitize_filename(session.file_name))[1]
         unique_file_name = f"{session.id}_{uuid.uuid4().hex[:8]}{ext}"
-        final_file_path = attachments_dir / unique_file_name
+        final_file_path = (attachments_dir / unique_file_name).resolve()
+        if not final_file_path.is_relative_to(attachments_dir):
+            return False, "Invalid attachment destination path.", {}
 
         hasher = hashlib.sha256()
-        temp_dir = Path(session.temp_dir)
+        temp_root = (storage_root / "temporary").resolve()
+        temp_dir = (temp_root / str(session.id)).resolve()
+        if not temp_dir.is_relative_to(temp_root):
+            return False, "Invalid temporary chunk directory.", {}
 
         # Stream chunks sequentially to destination file
         with open(final_file_path, "wb") as outfile:
             for i in range(session.total_chunks):
-                chunk_file = temp_dir / f"chunk_{i}.part"
-                if not chunk_file.exists():
+                chunk_file = (temp_dir / f"chunk_{i}.part").resolve()
+                if not chunk_file.is_relative_to(temp_dir) or not chunk_file.exists():
                     return False, f"Missing chunk file {i}", {}
                 with open(chunk_file, "rb") as infile:
                     while True:
@@ -130,7 +146,7 @@ class ChunkUploadService:
             return False, "Checksum verification failed. File corrupted during transit.", {}
 
         # Generate thumbnail for images
-        thumbnail_dir = storage_root / "thumbnails" / str(user.id)
+        thumbnail_dir = (storage_root / "thumbnails" / str(user.id)).resolve()
         thumb_path = ""
         if ext.lower() in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
             thumb_full = generate_image_thumbnail(str(final_file_path), thumbnail_dir)
@@ -138,7 +154,7 @@ class ChunkUploadService:
                 thumb_path = thumb_full
 
         # Update user storage usage
-        actual_size = os.path.getsize(final_file_path)
+        actual_size = final_file_path.stat().st_size
         usage, _ = UserStorageUsage.objects.get_or_create(user=user)
         usage.bytes_used += actual_size
         usage.save(update_fields=["bytes_used"])

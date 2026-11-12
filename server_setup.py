@@ -42,7 +42,9 @@ NGINX_ENABLED      = "/etc/nginx/sites-enabled/chatapp"
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def run(cmd, check=True, capture=False):
-    print(f"  $ {cmd}")
+    import re
+    redacted = re.sub(r"(--password|PASSWORD=|MYSQL_PWD=)[^\s'\"]+", r"\1***", str(cmd))
+    print(f"  $ {redacted}")
     result = subprocess.run(
         cmd, shell=True,
         stdout=subprocess.PIPE if capture else None,

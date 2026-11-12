@@ -44,7 +44,6 @@ import { Browser } from "@capacitor/browser";
 import { server } from "../constants/config.js";
 import { userExists } from "../redux/reducers/auth.js";
 import { getDeviceMetadata, isCapacitorNative } from "../utils/device.js";
-import { isAndroidOAuthState } from "../utils/oauthDeepLink.js";
 
 const GoogleIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24">
@@ -147,17 +146,11 @@ const Login = () => {
       return;
     }
 
-    // Never exchange Android-initiated OAuth codes inside Chrome / external browser
-    if (!isCapacitorNative() && isAndroidOAuthState(state)) {
-      return;
-    }
-
     if (code) {
       if (handledOAuthCodeRef.current === code) return;
       handledOAuthCodeRef.current = code;
-      // Determine if Google or GitHub
-      const isGitHub = state.includes("github") || location.search.includes("github");
-      const provider = isGitHub ? "github" : "google";
+      // Determine provider explicitly via exact state allowlist instead of substring sniffing
+      const provider = state === "github" || state === "github_android" ? "github" : "google";
       handleOAuthCodeExchange(provider, code);
     }
   }, [location.search]);

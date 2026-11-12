@@ -42,9 +42,15 @@ const resolveMediaUrl = (url = "") => {
 const transformImage = (url = "", width = 200) => {
     const resolved = resolveMediaUrl(url);
     if (!resolved) return "";
-    // If Cloudinary URL, can inject width, otherwise return clean URL
-    if (resolved.includes("cloudinary.com")) {
-        return resolved.replace("/upload/", `/upload/dpr_auto,w_${width}/`);
+    // Safely verify hostname before rewriting Cloudinary delivery URL
+    try {
+        const parsed = new URL(resolved, typeof window !== "undefined" ? window.location.origin : "http://localhost");
+        const host = parsed.hostname.toLowerCase();
+        if (host === "res.cloudinary.com" || host === "cloudinary.com" || host.endsWith(".cloudinary.com")) {
+            return resolved.replace("/upload/", `/upload/dpr_auto,w_${width}/`);
+        }
+    } catch {
+        // Fallback to raw resolved URL if non-standard string
     }
     return resolved;
 };

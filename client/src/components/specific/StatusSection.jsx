@@ -104,9 +104,21 @@ const StatusSection = () => {
   const handleFilePick = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    const isVideo = f.type.startsWith("video/");
+    const isImage = f.type.startsWith("image/");
+    if (!isVideo && !isImage) {
+      toast.error("Please select an image, GIF, or video file.");
+      return;
+    }
     setMediaFile(f);
-    setStoryType(f.type.startsWith("video/") ? "video" : "image");
-    setMediaPreview(URL.createObjectURL(f));
+    setStoryType(isVideo ? "video" : "image");
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string" && /^data:(image|video)\//i.test(reader.result)) {
+        setMediaPreview(reader.result);
+      }
+    };
+    reader.readAsDataURL(f);
   };
 
   const handlePublish = async (e) => {
@@ -293,9 +305,9 @@ const StatusSection = () => {
             {mediaPreview ? (
               <Box sx={{ position: "relative", borderRadius: 2, overflow: "hidden", bgcolor: "#000", maxHeight: 220, textAlign: "center" }}>
                 {storyType === "video" ? (
-                  <video src={mediaPreview} controls style={{ maxHeight: 220, maxWidth: "100%" }} />
+                  <video src={/^data:video\//i.test(mediaPreview) ? mediaPreview : ""} controls style={{ maxHeight: 220, maxWidth: "100%" }} />
                 ) : (
-                  <img src={mediaPreview} alt="preview" style={{ maxHeight: 220, maxWidth: "100%", objectFit: "contain" }} />
+                  <img src={/^data:image\//i.test(mediaPreview) ? mediaPreview : ""} alt="preview" style={{ maxHeight: 220, maxWidth: "100%", objectFit: "contain" }} />
                 )}
                 <IconButton
                   size="small"

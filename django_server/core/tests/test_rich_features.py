@@ -100,3 +100,13 @@ class RichFeaturesTestCase(APITestCase):
         self.assertEqual(len(feed.data["feed"]), 1)
         self.assertEqual(feed.data["feed"][0]["statuses"][0]["content"], "Sunny day!")
 
+    def test_preview_link_blocks_private_ssrf_targets(self):
+        for bad_url in [
+            "http://127.0.0.1:8000/admin",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://localhost/health",
+            "file:///etc/passwd",
+        ]:
+            res = self.client.get("/api/v1/preview/", {"url": bad_url})
+            self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST, bad_url)
+

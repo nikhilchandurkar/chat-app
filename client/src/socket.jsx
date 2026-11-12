@@ -184,7 +184,8 @@ class NativeChatWebSocket {
         try {
           handler(data);
         } catch (e) {
-          console.error(`Error in WebSocket handler for ${event}:`, e);
+          const safeEvent = String(event || "").replace(/[\r\n]/g, "");
+          console.error("Error in WebSocket handler", safeEvent, e);
         }
       });
     }

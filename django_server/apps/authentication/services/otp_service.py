@@ -71,7 +71,8 @@ class OTPService:
             return False, "Failed to deliver verification email. Please check server mail configuration."
 
         if settings.DEBUG:
-            logger.info("[DEV] OTP generated for %s is %s", email, otp)
+            safe_email = str(email).replace("\r", "").replace("\n", "")
+            logger.info("[DEV] OTP dispatched to %s", safe_email)
 
         return True, "Verification code sent to your email."
 
