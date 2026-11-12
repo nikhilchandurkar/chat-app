@@ -286,6 +286,14 @@ const api = createApi({
       keepUnusedDataFor: 0,
     }),
 
+    globalSearchMessages: builder.query({
+      query: ({ q = "", page = 1, chatId = "", fuzzy = true }) => ({
+        url: `message/search-all?q=${encodeURIComponent(q)}&page=${page}&fuzzy=${fuzzy}${chatId ? `&chatId=${encodeURIComponent(chatId)}` : ""}`,
+        credentials: "include",
+      }),
+      keepUnusedDataFor: 0,
+    }),
+
     getChatMedia: builder.query({
       query: ({ chatId, page = 1 }) => ({
         url: `message/media/${chatId}?page=${page}`,
@@ -325,6 +333,37 @@ const api = createApi({
         method: "PUT",
         credentials: "include",
       }),
+    }),
+
+    updateGroupModeration: builder.mutation({
+      query: ({ chatId, slow_mode_seconds, require_join_approval }) => ({
+        url: `chat/${chatId}/moderation`,
+        method: "PUT",
+        credentials: "include",
+        body: {
+          ...(slow_mode_seconds !== undefined ? { slow_mode_seconds } : {}),
+          ...(require_join_approval !== undefined ? { require_join_approval } : {}),
+        },
+      }),
+      invalidatesTags: ["Chat"],
+    }),
+
+    getGroupJoinRequests: builder.query({
+      query: (chatId) => ({
+        url: `chat/${chatId}/join-requests`,
+        credentials: "include",
+      }),
+      keepUnusedDataFor: 0,
+    }),
+
+    reviewJoinRequest: builder.mutation({
+      query: ({ requestId, approve }) => ({
+        url: `chat/join-requests/${requestId}/review`,
+        method: "POST",
+        credentials: "include",
+        body: { approve },
+      }),
+      invalidatesTags: ["Chat"],
     }),
 
     addAdmin: builder.mutation({
@@ -652,6 +691,7 @@ export const {
   useReactMessageMutation,
   useForwardMessageMutation,
   useLazySearchMessagesQuery,
+  useLazyGlobalSearchMessagesQuery,
   useLazyGetChatMediaQuery,
   useGetLinkPreviewQuery,
   useChangePasswordMutation,
@@ -664,6 +704,9 @@ export const {
   usePinMessageMutation,
   useUnpinMessageMutation,
   useToggleRestrictMessagesMutation,
+  useUpdateGroupModerationMutation,
+  useGetGroupJoinRequestsQuery,
+  useReviewJoinRequestMutation,
   useAddAdminMutation,
   useRemoveAdminMutation,
   useGetUserProfileQuery,

@@ -1,7 +1,9 @@
 import { Divider, ListItemIcon, ListItemText, Menu, MenuItem, MenuList, Switch } from "@mui/material";
-import React, { useRef, useState } from "react";
+import React, { lazy, Suspense, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { setIsFileMenu, setUploadingLoader } from "../../redux/reducers/misc";
+
+const MediaEditorDialog = lazy(() => import("./MediaEditorDialog"));
 import {
   AudioFile as AudioFileIcon,
   Brush as BrushIcon,
@@ -40,6 +42,7 @@ const FileMenu = ({
 
   const dispatch = useDispatch();
   const [viewOnce, setViewOnce] = useState(false);
+  const [editorState, setEditorState] = useState(null);
 
   const imageRef = useRef(null);
   const audioRef = useRef(null);
@@ -60,8 +63,35 @@ const FileMenu = ({
     onStartVoiceNote?.();
   };
 
+  const uploadPreparedFiles = async (files, key, captionText = "", isViewOnce = viewOnce) => {
+    dispatch(setUploadingLoader(true));
+    const toastId = toast.loading(isViewOnce ? `Sending View-Once ${key}...` : `Sending ${key}...`);
+    try {
+      const myForm = new FormData();
+      myForm.append("chatId", chatId);
+      if (isViewOnce) myForm.append("view_once", "true");
+      if (captionText) myForm.append("message", captionText);
+      if (activeTopic && activeTopic !== "all") myForm.append("topic_name", activeTopic);
+      files.forEach((file) => myForm.append("files", file));
+
+      const res = await sendAttachments(myForm);
+
+      if (res.data?.success) {
+        toast.success(`${isViewOnce ? "View-Once " : ""}${key} sent!`, { id: toastId });
+        setViewOnce(false);
+      } else {
+        toast.error(res.error?.data?.message || `Failed to send ${key}`, { id: toastId });
+      }
+    } catch {
+      toast.error("Failed to upload attachments", { id: toastId });
+    } finally {
+      dispatch(setUploadingLoader(false));
+    }
+  };
+
   const fileChangeHandler = async (e, key) => {
     const files = Array.from(e.target.files || []);
+    if (e.target) e.target.value = "";
 
     if (files.length <= 0) return;
 
@@ -74,36 +104,24 @@ const FileMenu = ({
       return toast.error("Files must be smaller than 25MB");
     }
 
-    dispatch(setUploadingLoader(true));
-
-    const toastId = toast.loading(viewOnce ? `Sending View-Once ${key}...` : `Sending ${key}...`);
     closeFileMenu();
 
-    try {
-      const myForm = new FormData();
-      myForm.append("chatId", chatId);
-      if (viewOnce) myForm.append("view_once", "true");
-      if (activeTopic && activeTopic !== "all") myForm.append("topic_name", activeTopic);
-      files.forEach((file) => myForm.append("files", file));
-
-      const res = await sendAttachments(myForm);
-
-      if (res.data?.success) {
-        toast.success(`${viewOnce ? "View-Once " : ""}${key} sent!`, { id: toastId });
-        setViewOnce(false);
-      } else {
-        toast.error(res.error?.data?.message || `Failed to send ${key}`, { id: toastId });
-      }
-    } catch {
-      toast.error("Failed to upload attachments", { id: toastId });
-    } finally {
-      if (e.target) e.target.value = "";
-      dispatch(setUploadingLoader(false));
+    if (key === "Images" || key === "Videos") {
+      setEditorState({
+        files,
+        key,
+        mediaKind: key === "Videos" ? "video" : "image",
+        viewOnce,
+      });
+      return;
     }
+
+    await uploadPreparedFiles(files, key, "", viewOnce);
   };
 
   return (
-    <Menu anchorEl={anchorEl} open={isFileMenu} onClose={closeFileMenu}>
+    <>
+      <Menu anchorEl={anchorEl} open={isFileMenu} onClose={closeFileMenu}>
       <div style={{ minWidth: "15rem", maxHeight: "75vh", overflowY: "auto" }}>
         <MenuList dense>
           <MenuItem onClick={() => setViewOnce((v) => !v)}>
@@ -252,6 +270,22 @@ const FileMenu = ({
         </MenuList>
       </div>
     </Menu>
+
+    {editorState && (
+      <Suspense fallback={null}>
+        <MediaEditorDialog
+          open={Boolean(editorState)}
+          files={editorState.files}
+          mediaKind={editorState.mediaKind}
+          initialViewOnce={editorState.viewOnce}
+          onClose={() => setEditorState(null)}
+          onConfirmSend={(editedFiles, captionText, isViewOnce) =>
+            uploadPreparedFiles(editedFiles, editorState.key, captionText, isViewOnce)
+          }
+        />
+      </Suspense>
+    )}
+    </>
   );
 };
 

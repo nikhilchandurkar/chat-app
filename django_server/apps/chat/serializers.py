@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from apps.authentication.serializers import UserSerializer
-from .models import Chat
+from .models import Chat, GroupJoinRequest
 
 
 class MemberSimpleSerializer(serializers.Serializer):
@@ -19,6 +19,9 @@ class ChatDetailsSerializer(serializers.ModelSerializer):
     _id = serializers.CharField(source="id", read_only=True)
     groupChat = serializers.BooleanField(source="group_chat", read_only=True)
     restrictedMessages = serializers.BooleanField(source="restricted_messages", read_only=True)
+    slowModeSeconds = serializers.IntegerField(source="slow_mode_seconds", read_only=True)
+    requireJoinApproval = serializers.BooleanField(source="require_join_approval", read_only=True)
+    pendingJoinCount = serializers.SerializerMethodField()
     pinnedMessages = serializers.ListField(source="pinned_messages", read_only=True)
     creator = serializers.CharField(source="creator_id", read_only=True, default=None)
     members = MemberSimpleSerializer(many=True, read_only=True)
@@ -35,6 +38,9 @@ class ChatDetailsSerializer(serializers.ModelSerializer):
             "members",
             "admins",
             "restrictedMessages",
+            "slowModeSeconds",
+            "requireJoinApproval",
+            "pendingJoinCount",
             "pinnedMessages",
             "topics",
             "ephemeral_ttl",
@@ -44,4 +50,9 @@ class ChatDetailsSerializer(serializers.ModelSerializer):
 
     def get_admins(self, obj):
         return [str(admin.id) for admin in obj.admins.all()]
+
+    def get_pendingJoinCount(self, obj):
+        if not obj.group_chat:
+            return 0
+        return GroupJoinRequest.objects.filter(conversation=obj, status="pending").count()
 

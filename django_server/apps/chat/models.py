@@ -32,6 +32,8 @@ class Conversation(models.Model):
     )
     avatar = models.JSONField(default=dict, blank=True)
     restricted_messages = models.BooleanField(default=False)
+    slow_mode_seconds = models.IntegerField(default=0, help_text="Cooldown seconds per message for non-admins. 0 = off.")
+    require_join_approval = models.BooleanField(default=False, help_text="Require admin approval when joining via invite link.")
     pinned_messages = models.JSONField(default=list, blank=True)
     topics = models.JSONField(default=list, blank=True)
     ephemeral_ttl = models.IntegerField(default=0, help_text="Duration in seconds. 0 = disabled.")
@@ -200,3 +202,49 @@ class InvitationLink(models.Model):
         if self.max_uses > 0 and self.uses_count >= self.max_uses:
             return False
         return True
+
+
+class GroupJoinRequest(models.Model):
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("approved", "Approved"),
+        ("rejected", "Rejected"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        Conversation,
+        on_delete=models.CASCADE,
+        related_name="join_requests",
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="group_join_requests",
+    )
+    invitation_link = models.ForeignKey(
+        InvitationLink,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending", db_index=True)
+    reviewed_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="reviewed_join_requests",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "group_join_requests"
+        unique_together = ("conversation", "user")
+        indexes = [
+            models.Index(fields=["conversation", "status"]),
+        ]
+
+    def __str__(self):
+        return f"JoinRequest({self.user_id} -> {self.conversation_id}, {self.status})"

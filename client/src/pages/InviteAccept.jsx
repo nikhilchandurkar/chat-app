@@ -1,6 +1,6 @@
-import React from "react";
-import { Box, Button, CircularProgress, Paper, Stack, Typography } from "@mui/material";
-import { Groups as GroupIcon } from "@mui/icons-material";
+import React, { useState } from "react";
+import { Box, Button, Chip, CircularProgress, Paper, Stack, Typography } from "@mui/material";
+import { Groups as GroupIcon, HourglassTop as PendingIcon } from "@mui/icons-material";
 import moment from "moment";
 import toast from "react-hot-toast";
 import { useDispatch } from "react-redux";
@@ -15,12 +15,18 @@ const InviteAccept = () => {
 
   const { data, isLoading, isError, error } = useInspectInviteLinkQuery(token, { skip: !token });
   const [acceptInvite, { isLoading: isJoining }] = useAcceptInviteLinkMutation();
+  const [pendingSent, setPendingSent] = useState(false);
 
   const invite = data?.invitation;
 
   const handleJoin = async () => {
     try {
       const res = await acceptInvite(token).unwrap();
+      if (res?.pendingApproval) {
+        setPendingSent(true);
+        toast.success(res?.message || "Join request submitted for admin approval");
+        return;
+      }
       toast.success(res?.message || "Joined conversation!");
       if (res?.chatId) {
         dispatch(setActiveChatId(res.chatId));
@@ -72,12 +78,32 @@ const InviteAccept = () => {
               Go Home
             </Button>
           </Stack>
+        ) : pendingSent ? (
+          <Stack spacing={1.75} alignItems="center">
+            <PendingIcon color="warning" sx={{ fontSize: 40 }} />
+            <Typography variant="h6" fontWeight={700}>Approval Pending</Typography>
+            <Typography variant="body2" color="text.secondary">
+              Your request to join <strong>{invite.name}</strong> has been sent to the group admins. You will see the group automatically once approved.
+            </Typography>
+            <Button fullWidth variant="contained" onClick={() => navigate("/")} sx={{ borderRadius: 2 }}>
+              Go Home
+            </Button>
+          </Stack>
         ) : (
           <Stack spacing={1.5}>
             <Typography variant="h5" fontWeight={700}>{invite.name}</Typography>
             <Typography variant="body2" color="text.secondary">
               Invited by <strong>{invite.inviter}</strong> · {invite.memberCount} members
             </Typography>
+            {invite.requireJoinApproval && (
+              <Chip
+                size="small"
+                color="warning"
+                variant="outlined"
+                label="Requires admin approval"
+                sx={{ alignSelf: "center" }}
+              />
+            )}
             <Typography variant="caption" color="text.secondary">
               Expires {moment(invite.expiresAt).fromNow()}
             </Typography>
@@ -86,7 +112,7 @@ const InviteAccept = () => {
                 Cancel
               </Button>
               <Button fullWidth variant="contained" onClick={handleJoin} disabled={isJoining} sx={{ borderRadius: 2 }}>
-                {isJoining ? "Joining..." : "Join Group"}
+                {isJoining ? "Sending..." : invite.requireJoinApproval ? "Request to Join" : "Join Group"}
               </Button>
             </Stack>
           </Stack>

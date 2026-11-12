@@ -39,14 +39,15 @@ function renderInlineTokens(text, { isDark, onMentionClick, keyPrefix }) {
     }
     if (part.startsWith("@") && part.length > 2) {
       const uname = part.slice(1);
+      const isAllMention = uname.toLowerCase() === "all" || uname.toLowerCase() === "everyone";
       return (
         <Chip
           key={key}
           label={part}
           size="small"
-          clickable={Boolean(onMentionClick)}
+          clickable={Boolean(onMentionClick) && !isAllMention}
           onClick={(e) => {
-            if (onMentionClick) {
+            if (onMentionClick && !isAllMention) {
               e.stopPropagation();
               onMentionClick(uname);
             }
@@ -55,8 +56,14 @@ function renderInlineTokens(text, { isDark, onMentionClick, keyPrefix }) {
             height: 20,
             fontSize: "0.82em",
             fontWeight: 700,
-            color: isDark ? "#86EFAC" : "#166534",
-            bgcolor: isDark ? "rgba(75,155,112,0.22)" : "rgba(35,107,74,0.12)",
+            color: isAllMention ? (isDark ? "#FDE68A" : "#92400E") : isDark ? "#86EFAC" : "#166534",
+            bgcolor: isAllMention
+              ? isDark
+                ? "rgba(245,158,11,0.24)"
+                : "rgba(245,158,11,0.16)"
+              : isDark
+              ? "rgba(75,155,112,0.22)"
+              : "rgba(35,107,74,0.12)",
             "& .MuiChip-label": { px: 0.75 },
             verticalAlign: "baseline",
           }}

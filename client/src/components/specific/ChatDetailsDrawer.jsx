@@ -24,6 +24,8 @@ import {
   Close as CloseIcon, 
   ContentCopy as CopyIcon,
   Description as DocIcon, 
+  Download as DownloadIcon,
+  HowToReg as ApproveIcon,
   Link as LinkIcon,
   MoreVert as MoreVertIcon, 
   Edit as EditIcon, 
@@ -31,12 +33,15 @@ import {
   PersonAdd as PersonAddIcon,
   ExitToApp as ExitToAppIcon,
   Delete as DeleteIcon,
+  QrCode2 as QrIcon,
   Security as SecurityIcon,
   Share as ShareIcon,
+  Speed as SlowModeIcon,
   Timer as TimerIcon,
   CleaningServices as ClearIcon,
   Wallpaper as WallpaperIcon,
 } from "@mui/icons-material";
+import QRCode from "qrcode";
 import { 
   useLazyGetChatMediaQuery, 
   useChatDetailsQuery,
@@ -45,6 +50,9 @@ import {
   useAddAdminMutation,
   useRemoveAdminMutation,
   useToggleRestrictMessagesMutation,
+  useUpdateGroupModerationMutation,
+  useGetGroupJoinRequestsQuery,
+  useReviewJoinRequestMutation,
   useDeleteChatMutation,
   useClearChatMutation,
   useUpdateEphemeralTtlMutation,
@@ -136,16 +144,37 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
   const [generateInviteLink, { isLoading: isGeneratingInvite }] = useGenerateInviteLinkMutation();
   const [revokeInviteLink] = useRevokeInviteLinkMutation();
   const [generatedInvite, setGeneratedInvite] = useState(null);
+  const [inviteQrUrl, setInviteQrUrl] = useState("");
+  const [updateModeration, { isLoading: isUpdatingModeration }] = useUpdateGroupModerationMutation();
+  const [reviewJoinRequest, { isLoading: isReviewingJoin }] = useReviewJoinRequestMutation();
   
   const [fetchMedia, { isLoading: isMediaLoading, data: mediaData }] = useLazyGetChatMediaQuery();
 
-  const { data: chatData, isLoading: isChatLoading } = useChatDetailsQuery(
+  const { data: chatData, isLoading: isChatLoading, refetch: refetchChatDetails } = useChatDetailsQuery(
     { chatId, populate: true },
     { skip: !chatId || !open }
   );
 
   const groupDetails = chatData?.chat;
   const myIdStr = String(user?._id || user?.id || "");
+  const isCreator = groupDetails?.creator === user?._id;
+  const isAdmin = isCreator || groupDetails?.admins?.includes(user?._id);
+
+  const { data: joinRequestsData, refetch: refetchJoinRequests } = useGetGroupJoinRequestsQuery(chatId, {
+    skip: !open || !chatId || !isGroupChat || !isAdmin,
+  });
+  const pendingJoinRequests = joinRequestsData?.requests || [];
+
+  useEffect(() => {
+    if (!generatedInvite?.inviteUrl) {
+      setInviteQrUrl("");
+      return;
+    }
+    const fullUrl = `${window.location.origin}${generatedInvite.inviteUrl}`;
+    QRCode.toDataURL(fullUrl, { width: 220, margin: 2 })
+      .then((url) => setInviteQrUrl(url))
+      .catch(() => setInviteQrUrl(""));
+  }, [generatedInvite]);
   const dmPartner =
     !isGroupChat && Array.isArray(groupDetails?.members)
       ? groupDetails.members.find((m) => String(m?._id || m?.id || m) !== myIdStr)
@@ -156,9 +185,6 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
   const profileAvatar = isGroupChat
     ? avatarPreview || groupDetails?.avatar?.[0]
     : dmPartner?.avatar?.url || dmPartner?.avatar || groupDetails?.avatar?.[0];
-
-  const isCreator = groupDetails?.creator === user?._id;
-  const isAdmin = isCreator || groupDetails?.admins?.includes(user?._id);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -430,11 +456,141 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
               {isAdmin && (
                 <>
                   <Divider sx={{ my: 2 }} />
-                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>Group Settings</Typography>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>Group Moderation</Typography>
                   <FormControlLabel
                     control={<Switch checked={groupDetails?.restrictedMessages || false} onChange={handleToggleRestrict} disabled={isLoadingRestrict} />}
                     label="Only Admins can send messages"
                   />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={groupDetails?.requireJoinApproval || false}
+                        disabled={isUpdatingModeration}
+                        onChange={async (e) => {
+                          try {
+                            await updateModeration({
+                              chatId,
+                              require_join_approval: e.target.checked,
+                            }).unwrap();
+                            refetchChatDetails();
+                            toast.success(
+                              e.target.checked
+                                ? "Invite-link joins now require admin approval"
+                                : "Anyone with an invite link can join directly"
+                            );
+                          } catch {
+                            toast.error("Failed to update join approval setting");
+                          }
+                        }}
+                      />
+                    }
+                    label="Require Admin approval for invite links"
+                  />
+
+                  <Stack direction="row" alignItems="center" spacing={0.75} mt={1} mb={0.5}>
+                    <SlowModeIcon fontSize="small" color="primary" />
+                    <Typography variant="subtitle2" fontWeight={600}>Slow Mode Cooldown</Typography>
+                  </Stack>
+                  <TextField
+                    select
+                    size="small"
+                    SelectProps={{ native: true }}
+                    value={groupDetails?.slowModeSeconds || 0}
+                    disabled={isUpdatingModeration}
+                    onChange={async (e) => {
+                      const sec = Number(e.target.value);
+                      try {
+                        await updateModeration({ chatId, slow_mode_seconds: sec }).unwrap();
+                        refetchChatDetails();
+                        toast.success(sec ? `Slow mode set to ${sec}s` : "Slow mode turned off");
+                      } catch {
+                        toast.error("Failed to update slow mode");
+                      }
+                    }}
+                  >
+                    <option value={0}>Off (No cooldown)</option>
+                    <option value={5}>5 seconds</option>
+                    <option value={10}>10 seconds</option>
+                    <option value={15}>15 seconds</option>
+                    <option value={30}>30 seconds</option>
+                    <option value={60}>1 minute</option>
+                    <option value={300}>5 minutes</option>
+                  </TextField>
+
+                  {pendingJoinRequests.length > 0 && (
+                    <Box mt={1.5} p={1.25} borderRadius={2} bgcolor="action.hover">
+                      <Stack direction="row" alignItems="center" spacing={0.75} mb={0.75}>
+                        <ApproveIcon fontSize="small" color="warning" />
+                        <Typography variant="subtitle2" fontWeight={700}>
+                          Pending Join Requests ({pendingJoinRequests.length})
+                        </Typography>
+                      </Stack>
+                      <Stack spacing={0.75}>
+                        {pendingJoinRequests.map((jr) => (
+                          <Stack
+                            key={jr._id}
+                            direction="row"
+                            alignItems="center"
+                            justifyContent="space-between"
+                            spacing={1}
+                          >
+                            <Stack direction="row" spacing={1} alignItems="center" minWidth={0}>
+                              <Avatar src={jr.user?.avatar} sx={{ width: 28, height: 28, fontSize: "0.78rem" }}>
+                                {(jr.user?.name || jr.user?.username || "U")[0].toUpperCase()}
+                              </Avatar>
+                              <Box minWidth={0}>
+                                <Typography variant="body2" fontWeight={600} noWrap>
+                                  {jr.user?.name || jr.user?.username}
+                                </Typography>
+                                {jr.user?.username && (
+                                  <Typography variant="caption" color="text.secondary" noWrap display="block">
+                                    @{jr.user.username}
+                                  </Typography>
+                                )}
+                              </Box>
+                            </Stack>
+                            <Stack direction="row" spacing={0.5} flexShrink={0}>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                disabled={isReviewingJoin}
+                                onClick={async () => {
+                                  try {
+                                    const r = await reviewJoinRequest({ requestId: jr._id, approve: true }).unwrap();
+                                    toast.success(r?.message || "Approved");
+                                    refetchJoinRequests();
+                                    refetchChatDetails();
+                                  } catch {
+                                    toast.error("Failed to approve request");
+                                  }
+                                }}
+                              >
+                                Approve
+                              </Button>
+                              <Button
+                                size="small"
+                                color="error"
+                                variant="outlined"
+                                disabled={isReviewingJoin}
+                                onClick={async () => {
+                                  try {
+                                    const r = await reviewJoinRequest({ requestId: jr._id, approve: false }).unwrap();
+                                    toast.success(r?.message || "Rejected");
+                                    refetchJoinRequests();
+                                    refetchChatDetails();
+                                  } catch {
+                                    toast.error("Failed to reject request");
+                                  }
+                                }}
+                              >
+                                Reject
+                              </Button>
+                            </Stack>
+                          </Stack>
+                        ))}
+                      </Stack>
+                    </Box>
+                  )}
 
                   <Divider sx={{ my: 1.5 }} />
                   <Stack spacing={1.25}>
@@ -479,18 +635,26 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
                     </TextField>
 
                     <Stack direction="row" alignItems="center" spacing={0.75} pt={0.5}>
-                      <LinkIcon fontSize="small" color="primary" />
-                      <Typography variant="subtitle2" fontWeight={600}>Group Invite Link</Typography>
+                      <QrIcon fontSize="small" color="primary" />
+                      <Typography variant="subtitle2" fontWeight={600}>Group Invite Link &amp; QR Code</Typography>
                     </Stack>
                     {generatedInvite ? (
-                      <Stack spacing={0.75}>
+                      <Stack spacing={0.9}>
                         <TextField
                           size="small"
                           fullWidth
                           InputProps={{ readOnly: true }}
                           value={`${window.location.origin}${generatedInvite.inviteUrl}`}
                         />
-                        <Stack direction="row" spacing={1}>
+                        {inviteQrUrl && (
+                          <Stack alignItems="center" p={1.25} bgcolor="#FFFFFF" borderRadius={2} border="1px solid #E2E8F0">
+                            <img src={inviteQrUrl} alt="Group Invite QR Code" style={{ width: 156, height: 156 }} />
+                            <Typography variant="caption" color="#475569">
+                              Scan to join {groupDetails?.name || "Group"}
+                            </Typography>
+                          </Stack>
+                        )}
+                        <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
                           <Button
                             size="small"
                             variant="outlined"
@@ -502,6 +666,21 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
                           >
                             Copy
                           </Button>
+                          {inviteQrUrl && (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              startIcon={<DownloadIcon />}
+                              onClick={() => {
+                                const a = document.createElement("a");
+                                a.href = inviteQrUrl;
+                                a.download = `${(groupDetails?.name || "group").replace(/\s+/g, "_")}_invite_qr.png`;
+                                a.click();
+                              }}
+                            >
+                              Save QR
+                            </Button>
+                          )}
                           {navigator.share && (
                             <Button
                               size="small"
@@ -524,6 +703,7 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
                               try {
                                 await revokeInviteLink(generatedInvite.inviteId).unwrap();
                                 setGeneratedInvite(null);
+                                setInviteQrUrl("");
                                 toast.success("Invite link revoked");
                               } catch {
                                 toast.error("Failed to revoke link");
@@ -549,7 +729,7 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
                           }
                         }}
                       >
-                        {isGeneratingInvite ? "Creating..." : "Create Shareable Invite Link"}
+                        {isGeneratingInvite ? "Creating..." : "Create Shareable Link & QR"}
                       </Button>
                     )}
                   </Stack>

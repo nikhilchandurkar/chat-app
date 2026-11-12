@@ -14,7 +14,7 @@ from rest_framework.permissions import IsAuthenticated
 from apps.authentication.models import User, BlockedUser, Contact
 from apps.messages_app.models import Message
 from apps.outbox.services.outbox_service import OutboxService
-from .models import Conversation, ConversationMember, Group, PinnedMessage, InvitationLink
+from .models import Conversation, ConversationMember, Group, GroupJoinRequest, PinnedMessage, InvitationLink
 from .serializers import ChatDetailsSerializer
 
 
@@ -607,12 +607,13 @@ class InspectInvitationLinkView(APIView):
                 "memberCount": chat.member_records.count() if chat else 2,
                 "inviter": invite.created_by.name or invite.created_by.username,
                 "expiresAt": invite.expires_at.isoformat(),
+                "requireJoinApproval": bool(chat and chat.group_chat and chat.require_join_approval),
             }
         })
 
 
 class AcceptInvitationLinkView(APIView):
-    """Authenticated user accepts invitation to join conversation."""
+    """Authenticated user accepts invitation to join conversation (or queues for admin approval)."""
     permission_classes = [IsAuthenticated]
 
     def post(self, request, token):
@@ -630,7 +631,49 @@ class AcceptInvitationLinkView(APIView):
             if BlockedUser.objects.filter(user=invite.created_by, blocked_user=request.user).exists() or BlockedUser.objects.filter(user=request.user, blocked_user=invite.created_by).exists():
                 return Response({"success": False, "message": "Unable to accept invitation due to user block status."}, status=status.HTTP_403_FORBIDDEN)
 
-            mem, created = ConversationMember.objects.get_or_create(
+            existing_member = ConversationMember.objects.filter(conversation=chat, user=request.user).first()
+            if existing_member:
+                if existing_member.is_deleted_for_user:
+                    existing_member.is_deleted_for_user = False
+                    existing_member.save(update_fields=["is_deleted_for_user"])
+                return Response({
+                    "success": True,
+                    "message": f"You are already a member of {chat.name}.",
+                    "chatId": str(chat.id),
+                    "chat": ChatDetailsSerializer(chat).data,
+                })
+
+            if chat.group_chat and chat.require_join_approval:
+                join_req, _created = GroupJoinRequest.objects.update_or_create(
+                    conversation=chat,
+                    user=request.user,
+                    defaults={"invitation_link": invite, "status": "pending", "reviewed_by": None},
+                )
+                admin_ids = list(
+                    {str(uid) for uid in ([chat.creator_id] if chat.creator_id else []) + list(chat.admins.values_list("id", flat=True))}
+                )
+                OutboxService.create_outbox_event(
+                    event_type="group.join_requested",
+                    conversation_id=str(chat.id),
+                    payload={
+                        "event": "group.join_requested",
+                        "legacy_event": "REFETCH_CHATS",
+                        "chatId": str(chat.id),
+                        "requestId": str(join_req.id),
+                        "requesterId": str(request.user.id),
+                        "requesterName": request.user.name or request.user.username,
+                        "recipient_ids": admin_ids,
+                    },
+                )
+                transaction.on_commit(OutboxService.publish_pending)
+                return Response({
+                    "success": True,
+                    "pendingApproval": True,
+                    "message": f"Join request sent to {chat.name} admins for approval.",
+                    "requestId": str(join_req.id),
+                }, status=status.HTTP_202_ACCEPTED)
+
+            ConversationMember.objects.get_or_create(
                 conversation=chat,
                 user=request.user,
                 defaults={"role": "member"}
@@ -647,7 +690,9 @@ class AcceptInvitationLinkView(APIView):
                 conversation_id=str(chat.id),
                 payload={
                     "event": "group.member_added",
+                    "legacy_event": "REFETCH_CHATS",
                     "conversation_id": str(chat.id),
+                    "chatId": str(chat.id),
                     "new_member_id": str(request.user.id),
                     "new_member_name": request.user.name or request.user.username,
                     "recipient_ids": recipient_ids,
@@ -811,4 +856,138 @@ class ManageTopicView(APIView):
             )
         )
         return Response({"success": True, "topics": topics})
+
+
+class UpdateGroupModerationView(APIView):
+    """Updates group moderation controls: slow_mode_seconds & require_join_approval."""
+    permission_classes = [IsAuthenticated]
+
+    def put(self, request, id):
+        chat, err = _get_admin_chat_or_error(request.user, id)
+        if err:
+            return err
+        if not chat.group_chat:
+            return Response({"success": False, "message": "Only available for group chats."}, status=status.HTTP_400_BAD_REQUEST)
+
+        updated_fields = []
+        if "slow_mode_seconds" in request.data or "slowModeSeconds" in request.data:
+            raw_slow = request.data.get("slow_mode_seconds", request.data.get("slowModeSeconds", 0))
+            try:
+                slow_sec = int(raw_slow)
+            except (TypeError, ValueError):
+                return Response({"success": False, "message": "Invalid slowModeSeconds."}, status=status.HTTP_400_BAD_REQUEST)
+            valid_slow = [0, 5, 10, 15, 30, 60, 300]
+            if slow_sec not in valid_slow:
+                return Response({"success": False, "message": f"Supported slow mode durations: {valid_slow}"}, status=status.HTTP_400_BAD_REQUEST)
+            chat.slow_mode_seconds = slow_sec
+            updated_fields.append("slow_mode_seconds")
+
+        if "require_join_approval" in request.data or "requireJoinApproval" in request.data:
+            raw_req = request.data.get("require_join_approval", request.data.get("requireJoinApproval"))
+            chat.require_join_approval = str(raw_req).lower() in ("1", "true", "yes") if isinstance(raw_req, str) else bool(raw_req)
+            updated_fields.append("require_join_approval")
+
+        if updated_fields:
+            chat.save(update_fields=updated_fields)
+            OutboxService.publish_item(
+                OutboxService.create_outbox_event(
+                    event_type="chat.moderation_updated",
+                    conversation_id=str(chat.id),
+                    payload={
+                        "event": "chat.moderation_updated",
+                        "legacy_event": "REFETCH_CHATS",
+                        "chatId": str(chat.id),
+                        "slowModeSeconds": chat.slow_mode_seconds,
+                        "requireJoinApproval": chat.require_join_approval,
+                        "recipient_ids": [str(m.user_id) for m in chat.member_records.all()],
+                    },
+                )
+            )
+
+        return Response({
+            "success": True,
+            "slowModeSeconds": chat.slow_mode_seconds,
+            "requireJoinApproval": chat.require_join_approval,
+        })
+
+
+class GroupJoinRequestsView(APIView):
+    """Lists pending invite-link join requests for a group admin/creator."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, id):
+        chat, err = _get_admin_chat_or_error(request.user, id)
+        if err:
+            return err
+
+        pending = GroupJoinRequest.objects.filter(conversation=chat, status="pending").select_related("user").order_by("created_at")
+        items = [
+            {
+                "_id": str(jr.id),
+                "user": {
+                    "_id": str(jr.user.id),
+                    "name": jr.user.name,
+                    "username": jr.user.username,
+                    "avatar": jr.user.avatar.get("url") if isinstance(jr.user.avatar, dict) else None,
+                },
+                "createdAt": jr.created_at.isoformat(),
+            }
+            for jr in pending
+        ]
+        return Response({"success": True, "requests": items})
+
+
+class ReviewJoinRequestView(APIView):
+    """Approves or rejects a pending group join request."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, request_id):
+        jr = get_object_or_404(GroupJoinRequest.objects.select_related("conversation", "user", "invitation_link"), id=request_id)
+        chat, err = _get_admin_chat_or_error(request.user, jr.conversation_id)
+        if err:
+            return err
+
+        approve = bool(request.data.get("approve", True))
+        if jr.status != "pending":
+            return Response({"success": False, "message": f"Request already {jr.status}."}, status=status.HTTP_400_BAD_REQUEST)
+
+        with transaction.atomic():
+            jr.status = "approved" if approve else "rejected"
+            jr.reviewed_by = request.user
+            jr.save(update_fields=["status", "reviewed_by", "updated_at"])
+
+            if approve:
+                ConversationMember.objects.get_or_create(
+                    conversation=chat,
+                    user=jr.user,
+                    defaults={"role": "member"},
+                )
+                invite = jr.invitation_link
+                if invite and invite.is_valid():
+                    invite.uses_count += 1
+                    if invite.max_uses > 0 and invite.uses_count >= invite.max_uses:
+                        invite.is_revoked = True
+                    invite.save(update_fields=["uses_count", "is_revoked"])
+
+                recipient_ids = [str(m.user_id) for m in chat.member_records.all()]
+                OutboxService.create_outbox_event(
+                    event_type="group.member_added",
+                    conversation_id=str(chat.id),
+                    payload={
+                        "event": "group.member_added",
+                        "legacy_event": "REFETCH_CHATS",
+                        "conversation_id": str(chat.id),
+                        "chatId": str(chat.id),
+                        "new_member_id": str(jr.user.id),
+                        "new_member_name": jr.user.name or jr.user.username,
+                        "recipient_ids": recipient_ids,
+                    },
+                )
+                transaction.on_commit(OutboxService.publish_pending)
+
+        return Response({
+            "success": True,
+            "status": jr.status,
+            "message": f"{'Approved' if approve else 'Rejected'} {jr.user.name or jr.user.username}.",
+        })
 

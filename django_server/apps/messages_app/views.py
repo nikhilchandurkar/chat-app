@@ -90,9 +90,22 @@ class SendMessageView(APIView):
             if not msg_type or msg_type == "text":
                 msg_type = attachments[0]["type"] if attachments else "text"
 
-        # Check restricted messages setting in groups
+        # Check restricted messages & slow mode in groups
         if conversation.restricted_messages and not (conversation.admins.filter(id=request.user.id).exists() or conversation.creator == request.user):
             return Response({"success": False, "message": "Only admins may post messages in this restricted group."}, status=status.HTTP_403_FORBIDDEN)
+
+        from .interactive import check_slow_mode, has_mention_all
+        slow_ok, retry_after = check_slow_mode(conversation, request.user)
+        if not slow_ok:
+            return Response(
+                {
+                    "success": False,
+                    "code": "slow_mode",
+                    "retryAfter": retry_after,
+                    "message": f"Slow mode is active. Wait {retry_after}s before sending another message.",
+                },
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
 
         # Check user blocking in direct chats
         if not conversation.group_chat:
@@ -192,6 +205,7 @@ class SendMessageView(APIView):
                     "reply_to": reply_to,
                     "timestamp": message.created_at.isoformat(),
                     "expires_at": expires_at.isoformat() if expires_at else None,
+                    "mentionAll": has_mention_all(content),
                     "recipient_ids": recipient_ids,
                     "message": serialized_msg,
                 }
@@ -515,13 +529,66 @@ class ForwardMessageView(APIView):
         return Response({"success": True, "forwardedCount": len(forwarded_messages)})
 
 
+def _score_and_rank_messages(
+    messages_iter,
+    query,
+    request,
+    *,
+    sender_id_filter="",
+    use_fuzzy=True,
+    cleared_at_map=None,
+    chat_meta_map=None,
+):
+    """Scores candidate messages using fuzzy similarity & filters per-user cleared history."""
+    from .interactive import fuzzy_match_score
+
+    threshold = 0.56 if use_fuzzy else 0.9
+    scored = []
+    for m in messages_iter:
+        if sender_id_filter and str(m.sender_id) != sender_id_filter:
+            continue
+        cid = str(m.conversation_id)
+        if cleared_at_map:
+            cleared_at = cleared_at_map.get(cid)
+            if cleared_at and m.created_at <= cleared_at:
+                continue
+
+        decrypted = m.decrypted_content or ""
+        att_text = " ".join(
+            str(a.get("name") or a.get("question") or "")
+            for a in (m.attachments or [])
+            if isinstance(a, dict)
+        )
+        sender_text = f"{m.sender.name or ''} {m.sender.username or ''}".strip()
+        searchable = f"{decrypted} {att_text}".strip()
+        chat_title = (chat_meta_map.get(cid, {}).get("name") or "") if chat_meta_map else ""
+
+        if not query:
+            score = 1.0
+        else:
+            text_score = fuzzy_match_score(query, searchable)
+            sender_score = fuzzy_match_score(query, sender_text) * 0.85
+            chat_score = fuzzy_match_score(query, chat_title) * 0.55 if chat_title else 0.0
+            score = max(text_score, sender_score, chat_score)
+
+        if score >= threshold:
+            item = MessageSerializer(m, context={"request": request}).data
+            item["matchScore"] = int(round(score * 100))
+            if chat_meta_map and cid in chat_meta_map:
+                item["chatId"] = cid
+                item["chatName"] = chat_meta_map[cid]["name"]
+                item["groupChat"] = chat_meta_map[cid]["groupChat"]
+            scored.append((score, m.created_at, item))
+
+    scored.sort(key=lambda tup: (tup[0], tup[1]), reverse=True)
+    return scored
+
+
 class SearchMessagesView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [SearchThrottle]
 
     def get(self, request, chat_id):
-        from .interactive import fuzzy_match_score
-
         conversation = get_object_or_404(Conversation, id=chat_id)
         member_rec = conversation.member_records.filter(user=request.user).first()
         if not member_rec:
@@ -544,37 +611,15 @@ class SearchMessagesView(APIView):
             .select_related("sender")
             .order_by("-created_at")[:600]
         )
-        if member_rec.cleared_at:
-            all_messages = [m for m in all_messages if m.created_at > member_rec.cleared_at]
-
-        scored = []
-        threshold = 0.56 if use_fuzzy else 0.9
-        for m in all_messages:
-            if sender_id_filter and str(m.sender_id) != sender_id_filter:
-                continue
-
-            decrypted = m.decrypted_content or ""
-            att_text = " ".join(
-                str(a.get("name") or a.get("question") or "")
-                for a in (m.attachments or [])
-                if isinstance(a, dict)
-            )
-            sender_text = f"{m.sender.name or ''} {m.sender.username or ''}".strip()
-            searchable = f"{decrypted} {att_text}".strip()
-
-            if not query:
-                score = 1.0
-            else:
-                text_score = fuzzy_match_score(query, searchable)
-                sender_score = fuzzy_match_score(query, sender_text) * 0.85
-                score = max(text_score, sender_score)
-
-            if score >= threshold:
-                item = MessageSerializer(m, context={"request": request}).data
-                item["matchScore"] = int(round(score * 100))
-                scored.append((score, m.created_at, item))
-
-        scored.sort(key=lambda tup: (tup[0], tup[1]), reverse=True)
+        cleared_map = {str(conversation.id): member_rec.cleared_at} if member_rec.cleared_at else {}
+        scored = _score_and_rank_messages(
+            all_messages,
+            query,
+            request,
+            sender_id_filter=sender_id_filter,
+            use_fuzzy=use_fuzzy,
+            cleared_at_map=cleared_map,
+        )
         total = len(scored)
         total_pages = max(1, (total + limit - 1) // limit) if total else 0
         start = (page - 1) * limit
@@ -585,6 +630,97 @@ class SearchMessagesView(APIView):
             "messages": page_items,
             "totalPages": total_pages,
             "totalMatches": total,
+        })
+
+
+class GlobalSearchMessagesView(APIView):
+    """Searches messages across all non-deleted conversations for the current user."""
+    permission_classes = [IsAuthenticated]
+    throttle_classes = [SearchThrottle]
+
+    def get(self, request):
+        query = request.query_params.get("q", "").strip()
+        chat_filter = request.query_params.get("chatId", "").strip()
+        use_fuzzy = str(request.query_params.get("fuzzy", "true")).lower() != "false"
+        page = max(1, int(request.query_params.get("page", 1)))
+        limit = 25
+        now = timezone.now()
+
+        if len(query) < 2:
+            return Response({"success": True, "messages": [], "totalPages": 0, "totalMatches": 0, "chats": []})
+
+        memberships = list(
+            ConversationMember.objects.filter(user=request.user, is_deleted_for_user=False)
+            .select_related("conversation")
+        )
+        if not memberships:
+            return Response({"success": True, "messages": [], "totalPages": 0, "totalMatches": 0, "chats": []})
+
+        conv_ids = []
+        cleared_map = {}
+        chat_meta_map = {}
+        direct_conv_ids = [m.conversation_id for m in memberships if not m.conversation.group_chat]
+        partner_names = {}
+        if direct_conv_ids:
+            for pm in (
+                ConversationMember.objects.filter(conversation_id__in=direct_conv_ids)
+                .exclude(user=request.user)
+                .select_related("user")
+            ):
+                partner_names[str(pm.conversation_id)] = pm.user.name or pm.user.username or "Direct Chat"
+
+        for mem in memberships:
+            cid = str(mem.conversation_id)
+            if chat_filter and cid != chat_filter:
+                continue
+            conv_ids.append(mem.conversation_id)
+            if mem.cleared_at:
+                cleared_map[cid] = mem.cleared_at
+            conv = mem.conversation
+            chat_meta_map[cid] = {
+                "name": conv.name if conv.group_chat else partner_names.get(cid, "Direct Chat"),
+                "groupChat": bool(conv.group_chat),
+            }
+
+        if not conv_ids:
+            return Response({"success": True, "messages": [], "totalPages": 0, "totalMatches": 0, "chats": []})
+
+        candidates = (
+            Message.objects.filter(conversation_id__in=conv_ids, is_deleted=False, delivery_pending=False)
+            .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+            .filter(~Exists(DeletedMessageForUser.objects.filter(message_id=OuterRef("pk"), user=request.user)))
+            .select_related("sender", "conversation")
+            .order_by("-created_at")[:900]
+        )
+
+        scored = _score_and_rank_messages(
+            candidates,
+            query,
+            request,
+            use_fuzzy=use_fuzzy,
+            cleared_at_map=cleared_map,
+            chat_meta_map=chat_meta_map,
+        )
+
+        # Build per-chat match summary for quick filtering
+        chat_counts = {}
+        for _, _, item in scored:
+            cid = item["chatId"]
+            if cid not in chat_counts:
+                chat_counts[cid] = {"_id": cid, "name": item["chatName"], "groupChat": item["groupChat"], "count": 0}
+            chat_counts[cid]["count"] += 1
+
+        total = len(scored)
+        total_pages = max(1, (total + limit - 1) // limit) if total else 0
+        start = (page - 1) * limit
+        page_items = [tup[2] for tup in scored[start : start + limit]]
+
+        return Response({
+            "success": True,
+            "messages": page_items,
+            "totalPages": total_pages,
+            "totalMatches": total,
+            "chats": sorted(chat_counts.values(), key=lambda c: c["count"], reverse=True),
         })
 
 

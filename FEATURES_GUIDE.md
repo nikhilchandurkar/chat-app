@@ -81,7 +81,12 @@ Type any of these inside any DM or Group message box to trigger full-screen Fram
 
 - **Per-User Clear Chat (`⋮ -> Clear Chat (For Me)` or `Chat Header -> Settings`):** Clears your message history locally & on your synced devices without affecting the other user, while still letting future messages arrive normally.
 - **Per-User DM Delete (`⋮ -> Delete Chat (For Me)`):** Removes and clears a DM only from your chat list (both creator & recipient can use it independently; reopens automatically if they message you again).
-- **Fuzzy Similarity Search (`Search icon` inside any chat + User Search):** Tolerates typos and partial words (`"meetng tomorw"` matches `"meeting tomorrow"` with a similarity `%` score), plus lets you filter by **sender chip** in 2–3+ member groups.
+- **Global & In-Chat Fuzzy Search:** Tap **Search messages across all chats...** in the sidebar to fuzzy-search every DM & group (with per-chat filter chips and jump-to-message), or tap the **Search** icon inside a chat to filter by member & similarity `%`.
+- **Group Moderation Upgrades (`Chat Header -> Details -> Group Moderation`):**
+  - **Slow Mode:** Admins set per-member message cooldown (`5s`–`5m`; admins exempt).
+  - **Invite Link Join Approval & Group QR Code:** Toggle **Require Admin approval** so invitees wait in a pending **Approve / Reject** queue, plus share/download a scannable **Group Invite QR Code**.
+  - **`@all` / `@everyone` Mentions:** Type `@` in groups to ping everyone with an amber mention badge.
+- **Pre-Send Media Editor (`📎 Attach -> Photo / Video`):** Rotate, crop (`Free`, `1:1`, `4:3`, `16:9`), freehand draw, stamp text overlays, or trim/mute/rotate videos and add a caption before sending.
 - **Chat List Filters, Saved Drafts & Wallpapers:** Filter chats with **All | Unread | Groups | Archived** chips; unfinished messages auto-save per chat (`📝 Draft: ...`); customize chat backgrounds under **Chat Header -> Settings -> Chat Wallpaper**.
 
 ---

@@ -1,10 +1,12 @@
 import { Box, Button, Chip, Stack, Typography } from "@mui/material";
-import { Archive as ArchiveIcon } from "@mui/icons-material";
-import React, { useEffect, useMemo, useState } from "react";
+import { Archive as ArchiveIcon, Search as SearchIcon } from "@mui/icons-material";
+import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useDispatch } from "react-redux";
 import { setIsNewGroup, setIsSearch } from "../../redux/reducers/misc";
 import ChatItem from "../shared/ChatItem";
 import StatusSection from "./StatusSection";
+
+const GlobalMessageSearchDialog = lazy(() => import("../dialogs/GlobalMessageSearchDialog"));
 
 const checkIsOnline = (members, onlineUsers) => {
   if (!members || !onlineUsers) return false;
@@ -49,6 +51,7 @@ const ChatList = ({
   const dispatch = useDispatch();
   const [filterMode, setFilterMode] = useState("all");
   const [draftTick, setDraftTick] = useState(0);
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
 
   useEffect(() => {
     const bump = () => setDraftTick((t) => t + 1);
@@ -91,6 +94,29 @@ const ChatList = ({
   return (
     <Stack width={w} direction="column" overflow="auto" height="100%">
       <StatusSection />
+
+      {chats.length > 0 && (
+        <Box sx={{ px: 1.5, pt: 0.75, pb: 0.25, flexShrink: 0 }}>
+          <Button
+            fullWidth
+            size="small"
+            variant="outlined"
+            startIcon={<SearchIcon fontSize="small" />}
+            onClick={() => setGlobalSearchOpen(true)}
+            sx={{
+              justifyContent: "flex-start",
+              borderRadius: 2,
+              textTransform: "none",
+              color: "text.secondary",
+              borderColor: "divider",
+              bgcolor: "action.hover",
+              py: 0.55,
+            }}
+          >
+            Search messages across all chats...
+          </Button>
+        </Box>
+      )}
 
       {chats.length > 0 && (
         <Stack
@@ -198,6 +224,12 @@ const ChatList = ({
             </>
           )}
         </Stack>
+      )}
+
+      {globalSearchOpen && (
+        <Suspense fallback={null}>
+          <GlobalMessageSearchDialog open={globalSearchOpen} onClose={() => setGlobalSearchOpen(false)} />
+        </Suspense>
       )}
     </Stack>
   );

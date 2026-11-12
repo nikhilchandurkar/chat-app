@@ -1,5 +1,6 @@
 import html
 import random
+import re
 from datetime import timedelta
 from difflib import SequenceMatcher
 import requests
@@ -845,3 +846,35 @@ def flush_due_scheduled_messages(conversation_id=None) -> int:
         OutboxService.publish_item(entry)
         delivered += 1
     return delivered
+
+
+def has_mention_all(content: str) -> bool:
+    """Returns True when message content explicitly mentions @all or @everyone."""
+    if not content:
+        return False
+    return bool(re.search(r"(?:^|\s)@(?:all|everyone)\b", str(content), re.IGNORECASE))
+
+
+def check_slow_mode(conversation, user) -> tuple[bool, int]:
+    """Enforces per-group slow mode cooldown for non-admin members; returns (allowed, retry_after_sec)."""
+    import math
+
+    if not conversation.group_chat or not getattr(conversation, "slow_mode_seconds", 0):
+        return True, 0
+    if conversation.creator_id == user.id or conversation.admins.filter(id=user.id).exists():
+        return True, 0
+
+    last_msg = (
+        Message.objects.filter(conversation=conversation, sender=user, delivery_pending=False)
+        .order_by("-created_at")
+        .only("created_at")
+        .first()
+    )
+    if not last_msg:
+        return True, 0
+
+    elapsed = (timezone.now() - last_msg.created_at).total_seconds()
+    cooldown = int(conversation.slow_mode_seconds or 0)
+    if elapsed < cooldown:
+        return False, max(1, math.ceil(cooldown - elapsed))
+    return True, 0

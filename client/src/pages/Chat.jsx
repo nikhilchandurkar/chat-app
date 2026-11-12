@@ -141,13 +141,17 @@ const ChatComposer = React.memo(
     activeTopic = "all",
     e2eeEnabled,
     peerPublicKey,
+    slowModeSeconds = 0,
+    slowCooldownLeft = 0,
+    onStartSlowCooldown,
+    isAdmin = false,
     onWalkieStart,
     onWalkieStop,
     walkieRecording = false,
   }) => {
     const [message, setMessage] = useState("");
     const [showEmoji, setShowEmoji] = useState(false);
-    const [mentionQuery, setMentionQuery] = useState("");
+    const [mentionQuery, setMentionQuery] = useState(null);
     const typingTimeout = useRef(null);
     const lastTypingEmit = useRef(0);
     const inputRef = useRef(null);
@@ -198,6 +202,10 @@ const ChatComposer = React.memo(
 
     const doSend = useCallback(async () => {
       if (!message.trim()) return;
+      if (slowCooldownLeft > 0 && !isAdmin) {
+        toast.error(`Slow mode active — wait ${slowCooldownLeft}s`);
+        return;
+      }
       const clean = message.trim();
 
       const remindCmd = parseRemindCommand(clean);
@@ -249,14 +257,17 @@ const ChatComposer = React.memo(
         replyTo: replyingTo,
         topicName: activeTopic && activeTopic !== "all" ? activeTopic : "",
       });
+      if (slowModeSeconds > 0 && !isAdmin) {
+        onStartSlowCooldown?.(slowModeSeconds);
+      }
       setMessage("");
       setShowEmoji(false);
-      setMentionQuery("");
+      setMentionQuery(null);
       onClearReply();
       lastTypingEmit.current = 0;
       if (typingTimeout.current) clearTimeout(typingTimeout.current);
       socket.emit(STOP_TYPING, { members, chatId });
-    }, [activeTopic, chatId, e2eeEnabled, members, message, onCelebrateSend, onClearReply, peerPublicKey, replyingTo, socket]);
+    }, [activeTopic, chatId, e2eeEnabled, isAdmin, members, message, onCelebrateSend, onClearReply, onStartSlowCooldown, peerPublicKey, replyingTo, slowCooldownLeft, slowModeSeconds, socket]);
 
     const submitHandler = (e) => {
       e.preventDefault();
@@ -281,9 +292,9 @@ const ChatComposer = React.memo(
       setMessage(val);
       if (isGroupChat) {
         const match = /(?:^|\s)@([a-zA-Z0-9_.-]{0,24})$/.exec(val);
-        setMentionQuery(match ? match[1] : "");
+        setMentionQuery(match ? match[1] : null);
       } else {
-        setMentionQuery("");
+        setMentionQuery(null);
       }
       const now = Date.now();
       if (now - lastTypingEmit.current > 2000) {
@@ -298,22 +309,30 @@ const ChatComposer = React.memo(
     };
 
     const mentionSuggestions = useMemo(() => {
-      if (!isGroupChat || !mentionQuery) return [];
+      if (!isGroupChat || mentionQuery === null) return [];
       const q = mentionQuery.toLowerCase();
-      return (members || [])
+      const hits = (members || [])
         .filter((m) => m && typeof m === "object")
         .filter(
           (m) =>
+            !q ||
             String(m.username || "").toLowerCase().includes(q) ||
             String(m.name || "").toLowerCase().includes(q)
         )
         .slice(0, 5);
+      if (!q || "all".startsWith(q) || "everyone".startsWith(q)) {
+        return [
+          { _id: "__all__", name: "Everyone in group", username: "all", isAll: true },
+          ...hits,
+        ];
+      }
+      return hits;
     }, [isGroupChat, members, mentionQuery]);
 
     const handlePickMention = (member) => {
-      const handle = member.username || member.name?.replace(/\s+/g, "_") || "user";
+      const handle = member.isAll ? "all" : member.username || member.name?.replace(/\s+/g, "_") || "user";
       setMessage((prev) => prev.replace(/@([a-zA-Z0-9_.-]{0,24})$/, `@${handle} `));
-      setMentionQuery("");
+      setMentionQuery(null);
       inputRef.current?.focus();
     };
 
@@ -433,16 +452,47 @@ const ChatComposer = React.memo(
                     "&:hover": { bgcolor: "action.hover" },
                   }}
                 >
-                  <Avatar src={transformImage(m.avatar)} sx={{ width: 24, height: 24, fontSize: "0.75rem" }}>
-                    {(m.name || m.username || "U")[0]}
+                  <Avatar
+                    src={m.isAll ? undefined : transformImage(m.avatar)}
+                    sx={{
+                      width: 24,
+                      height: 24,
+                      fontSize: "0.75rem",
+                      bgcolor: m.isAll ? "warning.main" : undefined,
+                    }}
+                  >
+                    {m.isAll ? "@" : (m.name || m.username || "U")[0]}
                   </Avatar>
                   <Typography variant="body2" fontWeight={600}>{m.name || m.username}</Typography>
                   {m.username && (
-                    <Typography variant="caption" color="text.secondary">@{m.username}</Typography>
+                    <Typography variant="caption" color={m.isAll ? "warning.main" : "text.secondary"}>
+                      @{m.username}
+                    </Typography>
                   )}
                 </Box>
               ))}
             </Paper>
+          )}
+
+          {slowModeSeconds > 0 && !isAdmin && (
+            <Box
+              sx={{
+                px: 1.5,
+                py: 0.35,
+                bgcolor: slowCooldownLeft > 0 ? "rgba(245, 158, 11, 0.14)" : "action.hover",
+                borderBottom: "1px solid",
+                borderColor: "divider",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <Typography variant="caption" color={slowCooldownLeft > 0 ? "warning.main" : "text.secondary"} fontWeight={600}>
+                {slowCooldownLeft > 0
+                  ? `⏱ Slow mode: wait ${slowCooldownLeft}s before next message`
+                  : `⏱ Slow mode active (${slowModeSeconds}s cooldown between messages)`}
+              </Typography>
+            </Box>
           )}
 
           {replyingTo && (
@@ -615,14 +665,22 @@ const ChatComposer = React.memo(
                     </IconButton>
                   </Tooltip>
                 ) : (
-                  <Tooltip title={enterToSend ? "Send message (Enter)" : "Tap to send message"}>
+                  <Tooltip
+                    title={
+                      slowCooldownLeft > 0 && !isAdmin
+                        ? `Wait ${slowCooldownLeft}s (slow mode)`
+                        : enterToSend
+                        ? "Send message (Enter)"
+                        : "Tap to send message"
+                    }
+                  >
                     <IconButton
                       type="submit"
-                      disabled={!hasText}
+                      disabled={!hasText || (slowCooldownLeft > 0 && !isAdmin)}
                       aria-label="Send message"
                       sx={{
-                        bgcolor: hasText ? "#236B4A" : isDark ? "#2C332E" : "#E5EAE6",
-                        color: hasText ? "#FFFFFF" : "text.disabled",
+                        bgcolor: hasText && !(slowCooldownLeft > 0 && !isAdmin) ? "#236B4A" : isDark ? "#2C332E" : "#E5EAE6",
+                        color: hasText && !(slowCooldownLeft > 0 && !isAdmin) ? "#FFFFFF" : "text.disabled",
                         borderRadius: "50%",
                         width: "40px",
                         height: "40px",
@@ -631,7 +689,11 @@ const ChatComposer = React.memo(
                         "&:hover": { bgcolor: hasText ? "#1B573C" : undefined, transform: hasText ? "scale(1.04)" : "none" },
                       }}
                     >
-                      <SendIcon sx={{ fontSize: "1.15rem", ml: "2px" }} />
+                      {slowCooldownLeft > 0 && !isAdmin ? (
+                        <Typography variant="caption" fontWeight={700}>{slowCooldownLeft}</Typography>
+                      ) : (
+                        <SendIcon sx={{ fontSize: "1.15rem", ml: "2px" }} />
+                      )}
                     </IconButton>
                   </Tooltip>
                 )}
@@ -673,6 +735,19 @@ const Chat = ({ chatId, user }) => {
   const [viewingUser, setViewingUser] = useState(null);
   const [showGifStudio, setShowGifStudio] = useState(false);
   const [showPollDialog, setShowPollDialog] = useState(false);
+  const [slowCooldownLeft, setSlowCooldownLeft] = useState(0);
+
+  useEffect(() => {
+    setSlowCooldownLeft(0);
+  }, [chatId]);
+
+  useEffect(() => {
+    if (slowCooldownLeft <= 0) return undefined;
+    const t = setInterval(() => {
+      setSlowCooldownLeft((prev) => (prev > 1 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [slowCooldownLeft]);
   const [showGameDialog, setShowGameDialog] = useState(false);
   const [showWatchParty, setShowWatchParty] = useState(false);
   const [showWhiteboard, setShowWhiteboard] = useState(false);
@@ -1229,6 +1304,49 @@ const Chat = ({ chatId, user }) => {
     [chatId, chatDetails]
   );
 
+  const socketErrorHandler = useCallback(
+    (data) => {
+      if (!data) return;
+      if (data.code === "slow_mode" && (!data.chatId || String(data.chatId) === String(chatId))) {
+        setSlowCooldownLeft(Math.max(1, Number(data.retryAfter || 1)));
+      }
+      if (data.message) {
+        toast.error(data.message);
+      }
+    },
+    [chatId]
+  );
+
+  useEffect(() => {
+    const checkPendingJump = () => {
+      try {
+        const raw = sessionStorage.getItem("chitchat_jump_msg");
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed && String(parsed.chatId) === String(chatId) && parsed.message?._id) {
+          sessionStorage.removeItem("chitchat_jump_msg");
+          handleScrollToMessage(parsed.message._id, parsed.message);
+        }
+      } catch {
+        // ignore storage errors
+      }
+    };
+    checkPendingJump();
+    const onJump = (ev) => {
+      const d = ev?.detail;
+      if (d && String(d.chatId) === String(chatId) && d.message?._id) {
+        try {
+          sessionStorage.removeItem("chitchat_jump_msg");
+        } catch {
+          // ignore
+        }
+        handleScrollToMessage(d.message._id, d.message);
+      }
+    };
+    window.addEventListener("chitchat:jump-to-message", onJump);
+    return () => window.removeEventListener("chitchat:jump-to-message", onJump);
+  }, [chatId, handleScrollToMessage]);
+
   useSocketEvents(socket, {
     [NEW_MESSAGE]: newMessagesHandler,
     "message.created": newMessagesHandler,
@@ -1246,11 +1364,15 @@ const Chat = ({ chatId, user }) => {
     MESSAGE_INTERACTIVE_UPDATED: pollUpdatedHandler,
     "message.interactive_updated": pollUpdatedHandler,
     "chat.topics_updated": topicsUpdatedHandler,
+    "chat.moderation_updated": topicsUpdatedHandler,
+    "group.member_added": topicsUpdatedHandler,
+    "group.join_requested": topicsUpdatedHandler,
     "chat.cleared": chatClearedSocketHandler,
     "watch.sync": watchSyncOpenHandler,
     "walkie.signal": walkieSignalHandler,
     [MESSAGE_READ_UPDATE]: messageReadUpdateHandler,
     "message.read": messageReadUpdateHandler,
+    "error": socketErrorHandler,
     "connect": syncActiveConversation,
   });
 
@@ -1829,6 +1951,10 @@ const Chat = ({ chatId, user }) => {
           activeTopic={activeTopic}
           e2eeEnabled={e2eeEnabled}
           peerPublicKey={peerPublicKey}
+          slowModeSeconds={isGroupChat ? Number(chat?.slowModeSeconds || 0) : 0}
+          slowCooldownLeft={slowCooldownLeft}
+          onStartSlowCooldown={(sec) => setSlowCooldownLeft(sec)}
+          isAdmin={isAdmin}
           onWalkieStart={handleWalkieStart}
           onWalkieStop={handleWalkieStop}
           walkieRecording={walkieRecording}

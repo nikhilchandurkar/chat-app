@@ -22,6 +22,9 @@ from .views import (
     GetPinnedMessagesView,
     PinMessageActionView,
     ManageTopicView,
+    UpdateGroupModerationView,
+    GroupJoinRequestsView,
+    ReviewJoinRequestView,
     ClearChatView,
 )
 
@@ -62,6 +65,12 @@ urlpatterns = [
     path("<str:id>/pin/<str:message_id>/", PinMessageActionView.as_view(), name="chat-pin-message-slash"),
     path("<str:id>/topics", ManageTopicView.as_view(), name="chat-topics"),
     path("<str:id>/topics/", ManageTopicView.as_view(), name="chat-topics-slash"),
+    path("<str:id>/moderation", UpdateGroupModerationView.as_view(), name="chat-moderation"),
+    path("<str:id>/moderation/", UpdateGroupModerationView.as_view(), name="chat-moderation-slash"),
+    path("<str:id>/join-requests", GroupJoinRequestsView.as_view(), name="chat-join-requests"),
+    path("<str:id>/join-requests/", GroupJoinRequestsView.as_view(), name="chat-join-requests-slash"),
+    path("join-requests/<str:request_id>/review", ReviewJoinRequestView.as_view(), name="chat-join-request-review"),
+    path("join-requests/<str:request_id>/review/", ReviewJoinRequestView.as_view(), name="chat-join-request-review-slash"),
 
     # Ephemeral / Disappearing Messages
     path("<str:id>/ephemeral", UpdateEphemeralTTLView.as_view(), name="chat-ephemeral"),

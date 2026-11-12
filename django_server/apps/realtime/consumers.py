@@ -141,6 +141,15 @@ def save_incoming_message(
         if conv.restricted_messages and not (conv.admins.filter(id=sender.id).exists() or conv.creator_id == sender.id):
             return None, "Only admins may post messages in this restricted group.", None
 
+        from apps.messages_app.interactive import check_slow_mode, has_mention_all
+        slow_ok, retry_after = check_slow_mode(conv, sender)
+        if not slow_ok:
+            return (
+                None,
+                f"Slow mode active. Wait {retry_after}s before sending.",
+                {"code": "slow_mode", "retryAfter": retry_after, "chatId": str(conv.id)},
+            )
+
         # User blocking check
         if not conv.group_chat:
             other_id = conv.member_records.exclude(user=sender).values_list("user_id", flat=True).first()
@@ -266,6 +275,7 @@ def save_incoming_message(
                 "reply_to": reply_to,
                 "timestamp": msg.created_at.isoformat(),
                 "expires_at": expires_at.isoformat() if expires_at else None,
+                "mentionAll": has_mention_all(content),
                 "recipient_ids": recipient_ids,
                 "message": serialized_msg,
             }
@@ -439,10 +449,12 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 if outbox_entry:
                     await OutboxService.publish_item_async(outbox_entry)
             else:
+                err_meta = outbox_entry if isinstance(outbox_entry, dict) else {}
                 await self.send_json({
                     "event": "error",
                     "client_message_id": client_msg_id,
                     "message": err or "Failed to send message.",
+                    **err_meta,
                 })
 
         # 4. Typing Indicators (zero DB hits via membership cache)

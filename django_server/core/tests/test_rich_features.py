@@ -401,6 +401,83 @@ class RichFeaturesTestCase(APITestCase):
         s5 = self.client.get("/api/v1/user/search?name=bob_rich")
         self.assertEqual(s5.data["users"][0]["relationship"], "friends")
 
+    def test_global_search_slow_mode_join_approval_and_mention_all(self):
+        from apps.messages_app.interactive import has_mention_all
+
+        self.assertTrue(has_mention_all("Hey @all check this out"))
+        self.assertTrue(has_mention_all("@everyone meeting at 5"))
+        self.assertFalse(has_mention_all("email me at foo@all.com"))
+
+        # 1. Global search across both Group and DM (with typos)
+        dm = Conversation.objects.create(type="direct", creator=self.alice)
+        ConversationMember.objects.create(conversation=dm, user=self.alice, role="member")
+        ConversationMember.objects.create(conversation=dm, user=self.bob, role="member")
+        Message.objects.create(conversation=self.conv, sender=self.alice, content="Quarterly budget spreadsheet uploaded")
+        Message.objects.create(conversation=dm, sender=self.bob, content="Updated budget deck ready")
+
+        gs = self.client.get("/api/v1/message/search-all?q=budgt%20spredsheet")
+        self.assertEqual(gs.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(gs.data["totalMatches"], 1)
+        chat_ids = {m["chatId"] for m in gs.data["messages"]}
+        self.assertIn(str(self.conv.id), chat_ids)
+
+        # 2. Group moderation: slow mode (30s) + require_join_approval
+        mod_res = self.client.put(
+            f"/api/v1/chat/{self.conv.id}/moderation",
+            {"slow_mode_seconds": 30, "require_join_approval": True},
+            format="json",
+        )
+        self.assertEqual(mod_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(mod_res.data["slowModeSeconds"], 30)
+        self.assertTrue(mod_res.data["requireJoinApproval"])
+
+        # Admin Alice bypasses slow mode
+        a1 = self.client.post("/api/v1/message/send", {"chatId": str(self.conv.id), "message": "Admin 1"}, format="json")
+        a2 = self.client.post("/api/v1/message/send", {"chatId": str(self.conv.id), "message": "Admin 2"}, format="json")
+        self.assertEqual(a1.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(a2.status_code, status.HTTP_201_CREATED)
+
+        # Non-admin Bob hits 429 on rapid second message
+        self.client.force_authenticate(user=self.bob)
+        b1 = self.client.post("/api/v1/message/send", {"chatId": str(self.conv.id), "message": "Bob 1"}, format="json")
+        b2 = self.client.post("/api/v1/message/send", {"chatId": str(self.conv.id), "message": "Bob 2"}, format="json")
+        self.assertEqual(b1.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(b2.status_code, status.HTTP_429_TOO_MANY_REQUESTS)
+        self.assertEqual(b2.data["code"], "slow_mode")
+
+        # 3. Invite link join approval queue
+        self.client.force_authenticate(user=self.alice)
+        inv = self.client.post(f"/api/v1/chat/{self.conv.id}/invite", {"max_uses": 5}, format="json")
+        self.assertEqual(inv.status_code, status.HTTP_201_CREATED)
+        tok = inv.data["token"]
+
+        carol = User.objects.create_user(
+            email="carol_mod@example.com",
+            username="carol_mod",
+            password="StrongPassword123!",
+            name="Carol Mod",
+        )
+        self.client.force_authenticate(user=carol)
+        inspect_res = self.client.get(f"/api/v1/chat/invite/{tok}")
+        self.assertEqual(inspect_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(inspect_res.data["invitation"]["requireJoinApproval"])
+
+        join_res = self.client.post(f"/api/v1/chat/invite/{tok}/accept")
+        self.assertEqual(join_res.status_code, status.HTTP_202_ACCEPTED)
+        self.assertTrue(join_res.data["pendingApproval"])
+        self.assertFalse(ConversationMember.objects.filter(conversation=self.conv, user=carol).exists())
+
+        # Admin lists and approves Carol
+        self.client.force_authenticate(user=self.alice)
+        jr_list = self.client.get(f"/api/v1/chat/{self.conv.id}/join-requests")
+        self.assertEqual(jr_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(jr_list.data["requests"]), 1)
+        req_id = jr_list.data["requests"][0]["_id"]
+
+        app_res = self.client.post(f"/api/v1/chat/join-requests/{req_id}/review", {"approve": True}, format="json")
+        self.assertEqual(app_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(ConversationMember.objects.filter(conversation=self.conv, user=carol).exists())
+
 
 
 
