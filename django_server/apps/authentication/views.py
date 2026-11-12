@@ -1377,7 +1377,7 @@ class SearchUserView(APIView):
         use_redis = str(getattr(settings, "CACHES", {}).get("default", {}).get("BACKEND", "")).endswith("RedisCache")
         search_cache_key = None
         if use_redis:
-            q_hash = hashlib.md5(query.lower().encode("utf-8")).hexdigest()[:16]
+            q_hash = hashlib.blake2b(query.lower().encode("utf-8"), digest_size=8).hexdigest()
             search_cache_key = f"usr_search_v1:{request.user.id}:{q_hash}"
             try:
                 cached = cache.get(search_cache_key)
