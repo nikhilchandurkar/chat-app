@@ -65,7 +65,7 @@ def decrypt_message(text: str) -> str:
 
 
 _CRYPTO_WORKERS = int(
-    os.environ.get("CRYPTO_THREADPOOL_WORKERS", str(min(64, max(16, (os.cpu_count() or 2) * 8))))
+    os.environ.get("CRYPTO_THREADPOOL_WORKERS", str(min(32, max(8, (os.cpu_count() or 2) * 4))))
 )
 CRYPTO_EXECUTOR = ThreadPoolExecutor(
     max_workers=_CRYPTO_WORKERS,

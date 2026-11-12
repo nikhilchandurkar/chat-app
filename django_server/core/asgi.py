@@ -36,7 +36,7 @@ class NativeAwareAllowedHostsOriginValidator(OriginValidator):
 
 _CPU_COUNT = os.cpu_count() or 2
 _ASGI_POOL_WORKERS = int(
-    os.environ.get("ASGI_THREADPOOL_WORKERS", str(min(128, max(32, _CPU_COUNT * 16))))
+    os.environ.get("ASGI_THREADPOOL_WORKERS", str(min(64, max(16, _CPU_COUNT * 8))))
 )
 _ASGI_IO_EXECUTOR = ThreadPoolExecutor(
     max_workers=_ASGI_POOL_WORKERS,
