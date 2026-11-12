@@ -1,16 +1,22 @@
 import { Divider, ListItemIcon, ListItemText, Menu, MenuItem, MenuList, Switch } from "@mui/material";
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { setIsFileMenu, setUploadingLoader } from "../../redux/reducers/misc";
 import {
   AudioFile as AudioFileIcon,
+  Brush as BrushIcon,
   GifBox as GifIcon,
+  Headphones as HeadphonesIcon,
   Image as ImageIcon,
   KeyboardReturn as EnterKeyIcon,
+  LocationOn as LocationIcon,
   Mic as MicIcon,
   Poll as PollIcon,
+  ScheduleSend as ScheduleIcon,
+  SportsEsports as GameIcon,
   UploadFile as UploadFileIcon,
   VideoFile as VideoFileIcon,
+  Whatshot as FlameIcon,
 } from "@mui/icons-material";
 import toast from "react-hot-toast";
 import { useSendAttachmentsMutation } from "../../redux/api/api";
@@ -18,15 +24,22 @@ import { useSendAttachmentsMutation } from "../../redux/api/api";
 const FileMenu = ({
   anchorEl,
   chatId,
+  activeTopic = "",
   onStartVoiceNote,
   onOpenGifStudio,
   onOpenCreatePoll,
+  onOpenMiniGame,
+  onOpenWatchParty,
+  onOpenWhiteboard,
+  onShareLiveLocation,
+  onOpenSchedule,
   enterToSend = true,
   onToggleEnterToSend,
 }) => {
   const { isFileMenu } = useSelector((state) => state.misc);
 
   const dispatch = useDispatch();
+  const [viewOnce, setViewOnce] = useState(false);
 
   const imageRef = useRef(null);
   const audioRef = useRef(null);
@@ -63,18 +76,21 @@ const FileMenu = ({
 
     dispatch(setUploadingLoader(true));
 
-    const toastId = toast.loading(`Sending ${key}...`);
+    const toastId = toast.loading(viewOnce ? `Sending View-Once ${key}...` : `Sending ${key}...`);
     closeFileMenu();
 
     try {
       const myForm = new FormData();
       myForm.append("chatId", chatId);
+      if (viewOnce) myForm.append("view_once", "true");
+      if (activeTopic && activeTopic !== "all") myForm.append("topic_name", activeTopic);
       files.forEach((file) => myForm.append("files", file));
 
       const res = await sendAttachments(myForm);
 
       if (res.data?.success) {
-        toast.success(`${key} sent successfully`, { id: toastId });
+        toast.success(`${viewOnce ? "View-Once " : ""}${key} sent!`, { id: toastId });
+        setViewOnce(false);
       } else {
         toast.error(res.error?.data?.message || `Failed to send ${key}`, { id: toastId });
       }
@@ -88,11 +104,21 @@ const FileMenu = ({
 
   return (
     <Menu anchorEl={anchorEl} open={isFileMenu} onClose={closeFileMenu}>
-      <div style={{ minWidth: "13rem" }}>
+      <div style={{ minWidth: "15rem", maxHeight: "75vh", overflowY: "auto" }}>
         <MenuList dense>
+          <MenuItem onClick={() => setViewOnce((v) => !v)}>
+            <ListItemIcon><FlameIcon fontSize="small" color={viewOnce ? "error" : "action"} /></ListItemIcon>
+            <ListItemText
+              primary="Send as View-Once"
+              secondary={viewOnce ? "Next photo/video expires after open" : "Tap to lock next media upload"}
+            />
+            <Switch size="small" color="error" checked={viewOnce} />
+          </MenuItem>
+          <Divider sx={{ my: 0.5 }} />
+
           <MenuItem onClick={selectImage}>
             <ListItemIcon><ImageIcon fontSize="small" color="primary" /></ListItemIcon>
-            <ListItemText>Photo / Image</ListItemText>
+            <ListItemText>{viewOnce ? "🔥 View-Once Photo" : "Photo / Image"}</ListItemText>
             <input
               type="file"
               multiple
@@ -105,7 +131,7 @@ const FileMenu = ({
 
           <MenuItem onClick={selectVideo}>
             <ListItemIcon><VideoFileIcon fontSize="small" color="primary" /></ListItemIcon>
-            <ListItemText>Video</ListItemText>
+            <ListItemText>{viewOnce ? "🔥 View-Once Video" : "Video"}</ListItemText>
             <input
               type="file"
               multiple
@@ -146,6 +172,43 @@ const FileMenu = ({
             <MenuItem onClick={handleVoicePick}>
               <ListItemIcon><MicIcon fontSize="small" color="error" /></ListItemIcon>
               <ListItemText>Record Voice Note</ListItemText>
+            </MenuItem>
+          )}
+
+          <Divider sx={{ my: 0.5 }} />
+
+          {onOpenMiniGame && (
+            <MenuItem onClick={() => { closeFileMenu(); onOpenMiniGame(); }}>
+              <ListItemIcon><GameIcon fontSize="small" color="primary" /></ListItemIcon>
+              <ListItemText>Play Mini-Game</ListItemText>
+            </MenuItem>
+          )}
+
+          {onOpenWatchParty && (
+            <MenuItem onClick={() => { closeFileMenu(); onOpenWatchParty(); }}>
+              <ListItemIcon><HeadphonesIcon fontSize="small" color="secondary" /></ListItemIcon>
+              <ListItemText>Listen / Watch Together</ListItemText>
+            </MenuItem>
+          )}
+
+          {onOpenWhiteboard && (
+            <MenuItem onClick={() => { closeFileMenu(); onOpenWhiteboard(); }}>
+              <ListItemIcon><BrushIcon fontSize="small" color="primary" /></ListItemIcon>
+              <ListItemText>Live Whiteboard Doodle</ListItemText>
+            </MenuItem>
+          )}
+
+          {onShareLiveLocation && (
+            <MenuItem onClick={() => { closeFileMenu(); onShareLiveLocation(); }}>
+              <ListItemIcon><LocationIcon fontSize="small" color="error" /></ListItemIcon>
+              <ListItemText>Share Live Location</ListItemText>
+            </MenuItem>
+          )}
+
+          {onOpenSchedule && (
+            <MenuItem onClick={() => { closeFileMenu(); onOpenSchedule(); }}>
+              <ListItemIcon><ScheduleIcon fontSize="small" color="primary" /></ListItemIcon>
+              <ListItemText>Schedule / Reminder</ListItemText>
             </MenuItem>
           )}
 

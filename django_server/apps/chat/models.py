@@ -33,6 +33,7 @@ class Conversation(models.Model):
     avatar = models.JSONField(default=dict, blank=True)
     restricted_messages = models.BooleanField(default=False)
     pinned_messages = models.JSONField(default=list, blank=True)
+    topics = models.JSONField(default=list, blank=True)
     ephemeral_ttl = models.IntegerField(default=0, help_text="Duration in seconds. 0 = disabled.")
     is_archived = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)

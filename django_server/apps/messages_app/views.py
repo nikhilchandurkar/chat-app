@@ -114,6 +114,16 @@ class SendMessageView(APIView):
         if conversation.ephemeral_ttl and conversation.ephemeral_ttl > 0:
             expires_at = timezone.now() + timedelta(seconds=conversation.ephemeral_ttl)
 
+        topic_name = str(request.data.get("topic_name") or request.data.get("topicName") or "").strip().lstrip("#")[:64]
+        raw_thread_root = request.data.get("thread_root_id") or request.data.get("threadRootId") or None
+        thread_root_uuid = None
+        if raw_thread_root:
+            try:
+                thread_root_uuid = uuid.UUID(str(raw_thread_root))
+            except ValueError:
+                thread_root_uuid = None
+        view_once = str(request.data.get("view_once", "")).lower() in ("1", "true", "yes")
+
         with transaction.atomic():
             message = Message.objects.create(
                 conversation=conversation,
@@ -123,6 +133,9 @@ class SendMessageView(APIView):
                 content=content,
                 attachments=attachments,
                 reply_to=reply_to,
+                topic_name=topic_name,
+                thread_root_id=thread_root_uuid,
+                view_once=view_once,
                 status="sent",
                 expires_at=expires_at,
             )
@@ -194,27 +207,45 @@ class GetMessagesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, id):
+        from django.db.models import Count
+        from .interactive import flush_due_scheduled_messages
+
         conversation = get_object_or_404(Conversation, id=id)
         if not conversation.member_records.filter(user=request.user).exists():
             return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
+        flush_due_scheduled_messages(conversation_id=conversation.id)
+
         page = max(1, int(request.query_params.get("page", 1)))
         limit = max(1, min(int(request.query_params.get("limit", 25)), 100))
+        topic = (request.query_params.get("topic") or "").strip().lstrip("#")
         now = timezone.now()
 
-        # Exclude messages deleted for this user and expired disappearing messages
+        # Exclude messages deleted for this user, expired messages, future scheduled, and thread replies
         messages_qs = (
-            Message.objects.filter(conversation=conversation)
+            Message.objects.filter(conversation=conversation, delivery_pending=False, thread_root_id__isnull=True)
             .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
             .filter(~Exists(DeletedMessageForUser.objects.filter(message_id=OuterRef("pk"), user=request.user)))
             .select_related("sender")
             .order_by("-created_at")
         )
+        if topic and topic.lower() != "all":
+            messages_qs = messages_qs.filter(topic_name=topic)
 
         offset = (page - 1) * limit
         rows = list(messages_qs[offset : offset + limit + 1])
         has_next = len(rows) > limit
         page_items = rows[:limit]
+
+        page_ids = [m.id for m in page_items]
+        reply_counts = {}
+        if page_ids:
+            rc_rows = (
+                Message.objects.filter(conversation=conversation, thread_root_id__in=page_ids, delivery_pending=False)
+                .values("thread_root_id")
+                .annotate(cnt=Count("id"))
+            )
+            reply_counts = {str(r["thread_root_id"]): r["cnt"] for r in rc_rows}
 
         if page == 1 and not has_next:
             total_count = len(page_items)
@@ -245,11 +276,14 @@ class GetMessagesView(APIView):
 
         return Response({
             "success": True,
-            "messages": MessageSerializer(page_items, many=True).data,
+            "messages": MessageSerializer(
+                page_items, many=True, context={"request": request, "reply_counts": reply_counts}
+            ).data,
             "totalPages": total_pages,
             "currentPage": page,
             "totalMessages": total_count,
             "ephemeral_ttl": conversation.ephemeral_ttl,
+            "topics": conversation.topics or [],
         })
 
 
@@ -700,3 +734,332 @@ class MessageReceiptsView(APIView):
 
         receipts_by_uid.pop(str(msg.sender_id), None)
         return Response({"success": True, "receipts": list(receipts_by_uid.values())})
+
+
+def _publish_interactive_message(conversation, sender, msg_type: str, content: str, attachment: dict, topic_name: str = ""):
+    expires_at = timezone.now() + timedelta(seconds=conversation.ephemeral_ttl) if conversation.ephemeral_ttl else None
+    with transaction.atomic():
+        msg = Message.objects.create(
+            conversation=conversation,
+            sender=sender,
+            message_type=msg_type,
+            content=content,
+            attachments=[attachment],
+            topic_name=topic_name,
+            status="sent",
+            expires_at=expires_at,
+        )
+        conversation.updated_at = timezone.now()
+        conversation.save(update_fields=["updated_at"])
+        ConversationMember.objects.filter(conversation=conversation).exclude(user=sender).update(
+            unread_count=models.F("unread_count") + 1
+        )
+        serialized_msg = MessageSerializer(msg).data
+        recipient_ids = get_conversation_recipient_ids(conversation, sender.id)
+        outbox_entry = OutboxService.create_outbox_event(
+            event_type="message.created",
+            conversation_id=str(conversation.id),
+            payload={
+                "event": "message.created",
+                "legacy_event": "NEW_MESSAGE",
+                "chatId": str(conversation.id),
+                "conversation_id": str(conversation.id),
+                "message_id": str(msg.id),
+                "sender_id": str(sender.id),
+                "sender_name": sender.name or sender.username,
+                "content": content,
+                "attachments": [attachment],
+                "recipient_ids": recipient_ids,
+                "message": serialized_msg,
+            },
+        )
+    OutboxService.publish_item(outbox_entry)
+    return serialized_msg
+
+
+def _broadcast_interactive_update(msg, recipient_ids):
+    outbox_entry = OutboxService.create_outbox_event(
+        event_type="message.interactive_updated",
+        conversation_id=str(msg.conversation_id),
+        payload={
+            "event": "message.interactive_updated",
+            "legacy_event": "MESSAGE_INTERACTIVE_UPDATED",
+            "chatId": str(msg.conversation_id),
+            "conversation_id": str(msg.conversation_id),
+            "message_id": str(msg.id),
+            "messageId": str(msg.id),
+            "attachments": msg.attachments or [],
+            "viewedBy": msg.viewed_by or [],
+            "recipient_ids": recipient_ids,
+        },
+    )
+    OutboxService.publish_item(outbox_entry)
+
+
+class MessageThreadView(APIView):
+    """Returns a parent message and all Slack-style side thread replies."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, root_id):
+        root = get_object_or_404(Message.objects.select_related("conversation", "sender"), id=root_id)
+        if not root.conversation.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        replies = (
+            Message.objects.filter(conversation=root.conversation, thread_root_id=root.id, delivery_pending=False)
+            .filter(~Exists(DeletedMessageForUser.objects.filter(message_id=OuterRef("pk"), user=request.user)))
+            .select_related("sender")
+            .order_by("created_at")
+        )
+        return Response({
+            "success": True,
+            "root": MessageSerializer(root, context={"request": request}).data,
+            "replies": MessageSerializer(replies, many=True, context={"request": request}).data,
+        })
+
+
+class ConsumeViewOnceView(APIView):
+    """Unlocks a view-once photo/video/voice note exactly once per recipient."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        uid = str(request.user.id)
+        with transaction.atomic():
+            msg = get_object_or_404(Message.objects.select_for_update().select_related("conversation"), id=id)
+            if not msg.conversation.member_records.filter(user=request.user).exists():
+                return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+            if not msg.view_once:
+                return Response({"success": True, "attachments": msg.attachments or []})
+
+            if uid == str(msg.sender_id):
+                return Response({"success": True, "attachments": msg.attachments or [], "isSender": True})
+
+            viewed = [str(v) for v in (msg.viewed_by or [])]
+            if uid in viewed:
+                return Response({"success": False, "message": "This view-once media has already been opened."}, status=status.HTTP_410_GONE)
+
+            attachments_payload = list(msg.attachments or [])
+            viewed.append(uid)
+            msg.viewed_by = viewed
+            msg.save(update_fields=["viewed_by"])
+            recipient_ids = get_conversation_recipient_ids(msg.conversation, request.user.id)
+
+        _broadcast_interactive_update(msg, recipient_ids)
+        return Response({"success": True, "attachments": attachments_payload, "viewedBy": viewed})
+
+
+class ScheduleMessageView(APIView):
+    """Schedules a future message or reminder (/remind) for a conversation."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from datetime import datetime as dt_cls
+
+        chat_id = request.data.get("chatId") or request.data.get("conversation_id")
+        content = (request.data.get("content") or "").strip()
+        scheduled_raw = (request.data.get("scheduledFor") or request.data.get("scheduled_for") or "").strip()
+        topic_name = str(request.data.get("topicName") or "").strip().lstrip("#")[:64]
+
+        if not chat_id or not content or not scheduled_raw:
+            return Response({"success": False, "message": "chatId, content, and scheduledFor are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        conversation = get_object_or_404(Conversation, id=chat_id)
+        if not conversation.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            sched_dt = dt_cls.fromisoformat(scheduled_raw.replace("Z", "+00:00"))
+            if timezone.is_naive(sched_dt):
+                sched_dt = timezone.make_aware(sched_dt)
+        except ValueError:
+            return Response({"success": False, "message": "Invalid ISO timestamp for scheduledFor."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if sched_dt <= timezone.now() + timedelta(seconds=5):
+            sched_dt = timezone.now() + timedelta(seconds=5)
+
+        msg = Message.objects.create(
+            conversation=conversation,
+            sender=request.user,
+            message_type="text",
+            content=content,
+            topic_name=topic_name,
+            scheduled_for=sched_dt,
+            delivery_pending=True,
+            status="pending",
+        )
+        return Response({
+            "success": True,
+            "scheduled": MessageSerializer(msg, context={"request": request}).data,
+        }, status=status.HTTP_201_CREATED)
+
+
+class ListScheduledMessagesView(APIView):
+    """Lists pending scheduled messages/reminders for the current user in a chat and flushes due ones."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, chat_id):
+        from .interactive import flush_due_scheduled_messages
+
+        conversation = get_object_or_404(Conversation, id=chat_id)
+        if not conversation.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        delivered_count = flush_due_scheduled_messages(conversation_id=conversation.id)
+        pending = (
+            Message.objects.filter(conversation=conversation, sender=request.user, delivery_pending=True)
+            .select_related("sender")
+            .order_by("scheduled_for")
+        )
+        return Response({
+            "success": True,
+            "deliveredCount": delivered_count,
+            "scheduled": MessageSerializer(pending, many=True, context={"request": request}).data,
+        })
+
+    def delete(self, request, chat_id):
+        msg = get_object_or_404(Message, id=chat_id, sender=request.user, delivery_pending=True)
+        msg.delete()
+        return Response({"success": True, "message": "Scheduled message cancelled."})
+
+
+class CreateGameView(APIView):
+    """Starts an interactive multiplayer mini-game inside a conversation."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .interactive import create_initial_game_state
+
+        chat_id = request.data.get("chatId") or request.data.get("conversation_id")
+        game_type = (request.data.get("gameType") or "tictactoe").strip().lower()
+        custom_word = (request.data.get("customWord") or "").strip()
+        topic_name = str(request.data.get("topicName") or "").strip().lstrip("#")[:64]
+
+        conversation = get_object_or_404(Conversation, id=chat_id)
+        if not conversation.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            game_state = create_initial_game_state(game_type, request.user, custom_word=custom_word)
+        except ValueError as err:
+            return Response({"success": False, "message": str(err)}, status=status.HTTP_400_BAD_REQUEST)
+
+        labels = {
+            "tictactoe": "Tic-Tac-Toe",
+            "rps": "Rock Paper Scissors",
+            "connect4": "Connect 4",
+            "trivia": "Trivia Battle",
+            "wordguess": "Word Guess",
+        }
+        serialized = _publish_interactive_message(
+            conversation,
+            request.user,
+            "game",
+            f"🎮 {request.user.name or request.user.username} started {labels.get(game_type, 'Mini-Game')}!",
+            game_state,
+            topic_name=topic_name,
+        )
+        return Response({"success": True, "message": serialized}, status=status.HTTP_201_CREATED)
+
+
+class MoveGameView(APIView):
+    """Applies a player move in an in-chat mini-game and broadcasts updated board to all members."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        from .interactive import apply_game_move
+
+        with transaction.atomic():
+            msg = get_object_or_404(Message.objects.select_for_update().select_related("conversation"), id=id)
+            if not msg.conversation.member_records.filter(user=request.user).exists():
+                return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+            attachments = list(msg.attachments or [])
+            idx = next((i for i, a in enumerate(attachments) if isinstance(a, dict) and a.get("type") == "game"), -1)
+            if idx < 0:
+                return Response({"success": False, "message": "Game not found on message."}, status=status.HTTP_400_BAD_REQUEST)
+
+            next_game, err = apply_game_move(attachments[idx], request.user, request.data)
+            if err:
+                return Response({"success": False, "message": err}, status=status.HTTP_400_BAD_REQUEST)
+
+            attachments[idx] = next_game
+            msg.attachments = attachments
+            msg.save(update_fields=["attachments"])
+            recipient_ids = get_conversation_recipient_ids(msg.conversation, request.user.id)
+
+        _broadcast_interactive_update(msg, recipient_ids)
+        return Response({"success": True, "attachments": attachments})
+
+
+class LiveLocationShareView(APIView):
+    """Creates a live location sharing card inside a chat (15m / 60m ETA)."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        chat_id = request.data.get("chatId") or request.data.get("conversation_id")
+        lat = request.data.get("lat")
+        lng = request.data.get("lng")
+        duration_minutes = max(5, min(int(request.data.get("durationMinutes", 15)), 180))
+        label = (request.data.get("label") or "").strip()[:100]
+        topic_name = str(request.data.get("topicName") or "").strip().lstrip("#")[:64]
+
+        if not chat_id or lat is None or lng is None:
+            return Response({"success": False, "message": "chatId, lat, and lng are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        conversation = get_object_or_404(Conversation, id=chat_id)
+        if not conversation.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        expires_at = (timezone.now() + timedelta(minutes=duration_minutes)).isoformat()
+        loc_att = {
+            "type": "location",
+            "lat": float(lat),
+            "lng": float(lng),
+            "label": label or "Live Location",
+            "durationMinutes": duration_minutes,
+            "expiresAt": expires_at,
+            "active": True,
+            "senderName": request.user.name or request.user.username,
+            "updatedAt": timezone.now().isoformat(),
+        }
+        serialized = _publish_interactive_message(
+            conversation,
+            request.user,
+            "location",
+            f"📍 Sharing live location ({duration_minutes} min)",
+            loc_att,
+            topic_name=topic_name,
+        )
+        return Response({"success": True, "message": serialized}, status=status.HTTP_201_CREATED)
+
+
+class LiveLocationUpdateView(APIView):
+    """Updates or stops an active shared live location card."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        with transaction.atomic():
+            msg = get_object_or_404(Message.objects.select_for_update().select_related("conversation"), id=id)
+            if msg.sender_id != request.user.id:
+                return Response({"success": False, "message": "Only sender can update live location."}, status=status.HTTP_403_FORBIDDEN)
+
+            attachments = list(msg.attachments or [])
+            idx = next((i for i, a in enumerate(attachments) if isinstance(a, dict) and a.get("type") == "location"), -1)
+            if idx < 0:
+                return Response({"success": False, "message": "Location attachment not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+            loc = dict(attachments[idx])
+            if request.data.get("stop") is True or request.data.get("active") is False:
+                loc["active"] = False
+            if request.data.get("lat") is not None and request.data.get("lng") is not None:
+                loc["lat"] = float(request.data["lat"])
+                loc["lng"] = float(request.data["lng"])
+            loc["updatedAt"] = timezone.now().isoformat()
+            attachments[idx] = loc
+            msg.attachments = attachments
+            msg.save(update_fields=["attachments"])
+            recipient_ids = get_conversation_recipient_ids(msg.conversation, request.user.id)
+
+        _broadcast_interactive_update(msg, recipient_ids)
+        return Response({"success": True, "attachments": attachments})
+

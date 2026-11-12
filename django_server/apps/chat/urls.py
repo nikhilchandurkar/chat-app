@@ -21,6 +21,7 @@ from .views import (
     ManageAdminView,
     GetPinnedMessagesView,
     PinMessageActionView,
+    ManageTopicView,
 )
 
 urlpatterns = [
@@ -56,6 +57,8 @@ urlpatterns = [
     path("<str:id>/pins/", GetPinnedMessagesView.as_view(), name="chat-pins-slash"),
     path("<str:id>/pin/<str:message_id>", PinMessageActionView.as_view(), name="chat-pin-message"),
     path("<str:id>/pin/<str:message_id>/", PinMessageActionView.as_view(), name="chat-pin-message-slash"),
+    path("<str:id>/topics", ManageTopicView.as_view(), name="chat-topics"),
+    path("<str:id>/topics/", ManageTopicView.as_view(), name="chat-topics-slash"),
 
     # Ephemeral / Disappearing Messages
     path("<str:id>/ephemeral", UpdateEphemeralTTLView.as_view(), name="chat-ephemeral"),

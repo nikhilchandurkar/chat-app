@@ -147,4 +147,102 @@ class RichFeaturesTestCase(APITestCase):
         pin_evt = MessageOutbox.objects.filter(event_type="chat.member_updated").latest("created_at")
         self.assertEqual(pin_evt.payload.get("legacy_event"), "REFETCH_CHATS")
 
+    def test_minigame_create_and_moves_flow(self):
+        create_res = self.client.post(
+            "/api/v1/message/interactive/game/create",
+            {"chatId": str(self.conv.id), "gameType": "rps"},
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED)
+        msg_id = create_res.data["message"]["_id"]
+
+        r1 = self.client.post(f"/api/v1/message/interactive/game/{msg_id}/move", {"choice": "rock"}, format="json")
+        self.assertEqual(r1.status_code, status.HTTP_200_OK)
+        self.assertEqual(r1.data["attachments"][0]["status"], "active")
+
+        self.client.force_authenticate(user=self.bob)
+        r2 = self.client.post(f"/api/v1/message/interactive/game/{msg_id}/move", {"choice": "scissors"}, format="json")
+        self.assertEqual(r2.status_code, status.HTTP_200_OK)
+        self.assertEqual(r2.data["attachments"][0]["status"], "finished")
+        self.assertEqual(r2.data["attachments"][0]["winnerId"], str(self.alice.id))
+
+    def test_view_once_media_consumes_and_redacts(self):
+        msg = Message.objects.create(
+            conversation=self.conv,
+            sender=self.alice,
+            message_type="image",
+            view_once=True,
+            attachments=[{"type": "image", "url": "/api/v1/media/secret.png", "name": "secret.png"}],
+        )
+        self.client.force_authenticate(user=self.bob)
+        open_res = self.client.post(f"/api/v1/message/{msg.id}/view-once")
+        self.assertEqual(open_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(open_res.data["attachments"][0]["url"], "/api/v1/media/secret.png")
+
+        second_res = self.client.post(f"/api/v1/message/{msg.id}/view-once")
+        self.assertEqual(second_res.status_code, status.HTTP_410_GONE)
+
+        feed_res = self.client.get(f"/api/v1/message/chat/{self.conv.id}")
+        self.assertEqual(feed_res.status_code, status.HTTP_200_OK)
+        found = next(m for m in feed_res.data["messages"] if m["_id"] == str(msg.id))
+        self.assertTrue(found["attachments"][0].get("expiredForViewer"))
+        self.assertEqual(found["attachments"][0].get("url"), "")
+
+    def test_topics_threads_schedule_and_live_location(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        topic_res = self.client.post(
+            f"/api/v1/chat/{self.conv.id}/topics",
+            {"topic": "#announcements", "action": "add"},
+            format="json",
+        )
+        self.assertEqual(topic_res.status_code, status.HTTP_200_OK)
+        self.assertIn("announcements", topic_res.data["topics"])
+
+        root = Message.objects.create(
+            conversation=self.conv,
+            sender=self.alice,
+            content="Main topic post",
+            topic_name="announcements",
+        )
+        Message.objects.create(
+            conversation=self.conv,
+            sender=self.bob,
+            content="Thread reply",
+            thread_root_id=root.id,
+        )
+        feed = self.client.get(f"/api/v1/message/chat/{self.conv.id}?topic=announcements")
+        self.assertEqual(feed.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(feed.data["messages"]), 1)
+        self.assertEqual(feed.data["messages"][0]["replyCount"], 1)
+
+        thread_res = self.client.get(f"/api/v1/message/thread/{root.id}")
+        self.assertEqual(thread_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(thread_res.data["replies"]), 1)
+
+        due_time = (timezone.now() - timedelta(minutes=1)).isoformat()
+        sched_res = self.client.post(
+            "/api/v1/message/schedule",
+            {"chatId": str(self.conv.id), "content": "Reminder ping", "scheduledFor": due_time},
+            format="json",
+        )
+        self.assertEqual(sched_res.status_code, status.HTTP_201_CREATED)
+
+        loc_res = self.client.post(
+            "/api/v1/message/interactive/location/share",
+            {"chatId": str(self.conv.id), "lat": 19.076, "lng": 72.8777, "durationMinutes": 15},
+            format="json",
+        )
+        self.assertEqual(loc_res.status_code, status.HTTP_201_CREATED)
+        loc_id = loc_res.data["message"]["_id"]
+        upd = self.client.post(
+            f"/api/v1/message/interactive/location/{loc_id}/update",
+            {"stop": True},
+            format="json",
+        )
+        self.assertEqual(upd.status_code, status.HTTP_200_OK)
+        self.assertFalse(upd.data["attachments"][0]["active"])
+
+
 

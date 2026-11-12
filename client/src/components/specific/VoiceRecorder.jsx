@@ -1,18 +1,19 @@
 import React, { useState, useRef, useCallback, useEffect } from "react";
-import { IconButton, Box, Typography, Tooltip, Stack } from "@mui/material";
-import { Close as CloseIcon, Mic as MicIcon, Send as SendIcon, Stop as StopIcon } from "@mui/icons-material";
+import { IconButton, Box, Typography, Tooltip, Stack, Chip } from "@mui/material";
+import { Close as CloseIcon, Mic as MicIcon, Send as SendIcon, Stop as StopIcon, Whatshot as FlameIcon } from "@mui/icons-material";
 import toast from "react-hot-toast";
 import { useDispatch } from "react-redux";
 import { setUploadingLoader } from "../../redux/reducers/misc";
 import { useSendAttachmentsMutation } from "../../redux/api/api";
 import { triggerHaptic } from "../../utils/feedback";
 
-const VoiceRecorder = ({ chatId, autoStart = false, onCancel }) => {
+const VoiceRecorder = ({ chatId, topicName = "", autoStart = false, onCancel }) => {
   const dispatch = useDispatch();
   const [sendAttachments] = useSendAttachmentsMutation();
 
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
+  const [viewOnce, setViewOnce] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -116,6 +117,8 @@ const VoiceRecorder = ({ chatId, autoStart = false, onCancel }) => {
         const formData = new FormData();
         formData.append("chatId", chatId);
         formData.append("files", audioBlob, `voice-note-${Date.now()}.${ext}`);
+        if (viewOnce) formData.append("view_once", "true");
+        if (topicName && topicName !== "all") formData.append("topic_name", topicName);
 
         dispatch(setUploadingLoader(true));
         const toastId = toast.loading("Sending voice note...");
@@ -134,7 +137,7 @@ const VoiceRecorder = ({ chatId, autoStart = false, onCancel }) => {
       };
       mediaRecorderRef.current.stop();
     });
-  }, [chatId, cleanupTracks, dispatch, onCancel, sendAttachments]);
+  }, [chatId, cleanupTracks, dispatch, onCancel, sendAttachments, topicName, viewOnce]);
 
   const formatDuration = (s) => `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
 
@@ -174,6 +177,18 @@ const VoiceRecorder = ({ chatId, autoStart = false, onCancel }) => {
       </Stack>
 
       <Stack direction="row" alignItems="center" spacing={0.5}>
+        <Tooltip title="Disappearing View-Once Voice Note">
+          <Chip
+            size="small"
+            clickable
+            icon={<FlameIcon sx={{ fontSize: 14 }} />}
+            label="View Once"
+            color={viewOnce ? "error" : "default"}
+            variant={viewOnce ? "filled" : "outlined"}
+            onClick={() => setViewOnce((v) => !v)}
+            sx={{ height: 24, fontSize: "0.7rem" }}
+          />
+        </Tooltip>
         <Tooltip title="Discard recording">
           <IconButton size="small" onClick={cancelRecording} color="inherit" aria-label="Cancel voice recording">
             <CloseIcon fontSize="small" />

@@ -9,6 +9,8 @@ import {
 } from "../utils/e2ee";
 import { hashPin } from "../utils/appLock";
 import { transformImage } from "../lib/feature";
+import { extractCelebrationTrigger } from "../utils/feedback";
+import { extractYouTubeId, parseRemindCommand } from "../utils/interactive";
 
 describe("rich composer & security utilities", () => {
   it("encodes RGBA frames into a valid looping GIF89a blob", async () => {
@@ -76,6 +78,19 @@ describe("rich composer & security utilities", () => {
     expect(transformImage("https://evil.example.com/upload/?ref=cloudinary.com", 300)).toBe(
       "https://evil.example.com/upload/?ref=cloudinary.com"
     );
+  });
+
+  it("extracts celebration triggers, YouTube IDs, and /remind commands cleanly", () => {
+    expect(extractCelebrationTrigger("/confetti Happy Birthday!")?.mode).toBe("confetti");
+    expect(extractCelebrationTrigger("/fireworks")?.mode).toBe("fireworks");
+    expect(extractCelebrationTrigger("/hearts")?.mode).toBe("hearts");
+
+    expect(extractYouTubeId("https://youtu.be/jfKfPfyJRdk")).toBe("jfKfPfyJRdk");
+    expect(extractYouTubeId("https://www.youtube.com/watch?v=4xDzrJKXOOY&t=12")).toBe("4xDzrJKXOOY");
+
+    const rem = parseRemindCommand("/remind me in 15m check builds");
+    expect(rem?.content).toBe("⏰ Reminder: check builds");
+    expect(rem?.scheduledFor instanceof Date).toBe(true);
   });
 });
 

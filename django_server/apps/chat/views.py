@@ -711,3 +711,45 @@ class PinMessageActionView(APIView):
             return err
         PinnedMessage.objects.filter(conversation=chat, message_id=message_id).delete()
         return Response({"success": True, "message": "Message unpinned."})
+
+
+class ManageTopicView(APIView):
+    """Creates or deletes a topic channel tag (#general, #gaming, etc.) in a group chat."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        chat = get_object_or_404(Conversation, id=id)
+        if not chat.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+        if chat.type != "group":
+            return Response({"success": False, "message": "Topics are supported in group chats."}, status=status.HTTP_400_BAD_REQUEST)
+
+        topic = (request.data.get("topic") or "").strip().lstrip("#")[:32]
+        action = request.data.get("action", "add")
+        if not topic:
+            return Response({"success": False, "message": "Topic name is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        topics = list(chat.topics or [])
+        if action == "remove":
+            topics = [t for t in topics if t.lower() != topic.lower()]
+        elif not any(t.lower() == topic.lower() for t in topics):
+            topics.append(topic)
+
+        chat.topics = topics
+        chat.save(update_fields=["topics"])
+
+        OutboxService.publish_item(
+            OutboxService.create_outbox_event(
+                event_type="chat.topics_updated",
+                conversation_id=str(chat.id),
+                payload={
+                    "event": "chat.topics_updated",
+                    "legacy_event": "REFETCH_CHATS",
+                    "chatId": str(chat.id),
+                    "topics": topics,
+                    "recipient_ids": [str(m.user_id) for m in chat.member_records.all()],
+                },
+            )
+        )
+        return Response({"success": True, "topics": topics})
+

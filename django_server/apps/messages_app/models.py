@@ -76,6 +76,9 @@ class Message(models.Model):
         ("audio", "Audio"),
         ("voice", "Voice Message"),
         ("document", "Document"),
+        ("game", "Mini Game"),
+        ("location", "Live Location"),
+        ("walkie", "Walkie Talkie"),
         ("system", "System"),
     ]
 
@@ -107,6 +110,11 @@ class Message(models.Model):
     is_deleted = models.BooleanField(default=False)
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="sent")
     read_by = models.JSONField(default=list, blank=True)
+    topic_name = models.CharField(max_length=64, blank=True, default="", db_index=True)
+    thread_root_id = models.UUIDField(null=True, blank=True, db_index=True)
+    view_once = models.BooleanField(default=False)
+    viewed_by = models.JSONField(default=list, blank=True)
+    delivery_pending = models.BooleanField(default=False, db_index=True)
     scheduled_for = models.DateTimeField(null=True, blank=True)
     expires_at = models.DateTimeField(null=True, blank=True, db_index=True)
     created_at = models.DateTimeField(auto_now_add=True, db_index=True)

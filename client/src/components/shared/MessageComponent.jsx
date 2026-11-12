@@ -36,6 +36,7 @@ import {
   MoreHoriz as MoreIcon,
   Person as PersonIcon,
   Poll as PollIcon,
+  Forum as ThreadIcon,
 } from "@mui/icons-material";
 import React, { memo, useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
@@ -43,6 +44,9 @@ import { fileFormat, formatTimeAgo, transformImage } from "../../lib/feature";
 import RenderAttachment from "./RenderAttachment";
 import LinkPreview from "./LinkPreview";
 import EmojiBurst from "./EmojiBurst";
+import MiniGameBubble from "./MiniGameBubble";
+import LiveLocationBubble from "./LiveLocationBubble";
+import ViewOnceBubble from "./ViewOnceBubble";
 import { AnimatePresence, animate, motion, useMotionValue, useTransform } from "framer-motion";
 import { useSelector } from "react-redux";
 import {
@@ -74,6 +78,9 @@ const MessageComponent = ({
   onReply,
   onReact,
   onPollUpdate,
+  onInteractiveUpdate,
+  onViewOnceConsumed,
+  onOpenThread,
   onViewProfile,
   chatMembers = [],
   chatId,
@@ -575,6 +582,18 @@ const MessageComponent = ({
                 <ListItemIcon><ReplyIcon fontSize="small" color="primary" /></ListItemIcon>
                 <ListItemText>Reply</ListItemText>
               </MenuItem>
+              {onOpenThread && (
+                <MenuItem
+                  onClick={() => {
+                    setHoldSpotlightOpen(false);
+                    onOpenThread(message);
+                  }}
+                  sx={{ py: 1.25 }}
+                >
+                  <ListItemIcon><ThreadIcon fontSize="small" color="primary" /></ListItemIcon>
+                  <ListItemText>Reply in Thread</ListItemText>
+                </MenuItem>
+              )}
               {content && (
                 <MenuItem onClick={handleCopy} sx={{ py: 1.25 }}>
                   <ListItemIcon><CopyIcon fontSize="small" /></ListItemIcon>
@@ -585,10 +604,12 @@ const MessageComponent = ({
                 <ListItemIcon><StarIcon fontSize="small" sx={{ color: "#f59e0b" }} /></ListItemIcon>
                 <ListItemText>Star Message</ListItemText>
               </MenuItem>
-              <MenuItem onClick={handleForwardClick} sx={{ py: 1.25 }}>
-                <ListItemIcon><ForwardIcon fontSize="small" /></ListItemIcon>
-                <ListItemText>Forward</ListItemText>
-              </MenuItem>
+              {!message.viewOnce && (
+                <MenuItem onClick={handleForwardClick} sx={{ py: 1.25 }}>
+                  <ListItemIcon><ForwardIcon fontSize="small" /></ListItemIcon>
+                  <ListItemText>Forward</ListItemText>
+                </MenuItem>
+              )}
               {!sameSender && senderId && onViewProfile && (
                 <MenuItem
                   onClick={() => {
@@ -915,6 +936,16 @@ const MessageComponent = ({
                   </Box>
                 )}
 
+                {message.topicName && (
+                  <Chip
+                    size="small"
+                    label={`#${message.topicName}`}
+                    variant="outlined"
+                    color="primary"
+                    sx={{ height: 18, fontSize: "0.64rem", mb: 0.4, mr: 0.5, "& .MuiChip-label": { px: 0.6 } }}
+                  />
+                )}
+
                 {isE2eeMsg && (
                   <Chip
                     size="small"
@@ -926,7 +957,30 @@ const MessageComponent = ({
                   />
                 )}
 
-                {attachments?.find((a) => a && typeof a === "object" && a.type === "poll") ? (
+                {message.viewOnce ? (
+                  <ViewOnceBubble
+                    messageId={_id}
+                    attachments={attachments}
+                    viewedBy={message.viewedBy || []}
+                    currentUserId={currentUserId}
+                    sameSender={sameSender}
+                    onConsumed={onViewOnceConsumed}
+                  />
+                ) : attachments?.find((a) => a && typeof a === "object" && a.type === "game") ? (
+                  <MiniGameBubble
+                    messageId={_id}
+                    game={attachments.find((a) => a && typeof a === "object" && a.type === "game")}
+                    currentUserId={currentUserId}
+                    onUpdated={onInteractiveUpdate || onPollUpdate}
+                  />
+                ) : attachments?.find((a) => a && typeof a === "object" && a.type === "location") ? (
+                  <LiveLocationBubble
+                    messageId={_id}
+                    location={attachments.find((a) => a && typeof a === "object" && a.type === "location")}
+                    sameSender={sameSender}
+                    onUpdated={onInteractiveUpdate || onPollUpdate}
+                  />
+                ) : attachments?.find((a) => a && typeof a === "object" && a.type === "poll") ? (
                   (() => {
                     const poll = attachments.find((a) => a && typeof a === "object" && a.type === "poll");
                     const totalVotes = (poll.options || []).reduce((acc, o) => acc + (o.votes?.length || 0), 0);
@@ -1001,9 +1055,15 @@ const MessageComponent = ({
                   </>
                 )}
 
-                {attachments?.length > 0 &&
+                {!message.viewOnce && attachments?.length > 0 &&
                   attachments.map((attachment, idx) => {
-                    if (attachment && typeof attachment === "object" && attachment.type === "poll") return null;
+                    if (
+                      attachment &&
+                      typeof attachment === "object" &&
+                      ["poll", "game", "location"].includes(attachment.type)
+                    ) {
+                      return null;
+                    }
                     const url = typeof attachment === "string" ? attachment : attachment.url || attachment.path || "";
                     if (!url) return null;
                     const file = fileFormat(url);
@@ -1014,6 +1074,24 @@ const MessageComponent = ({
                       </Box>
                     );
                   })}
+
+                {Number(message.replyCount || 0) > 0 && onOpenThread && (
+                  <Box mt={0.5}>
+                    <Chip
+                      size="small"
+                      clickable
+                      icon={<ThreadIcon sx={{ fontSize: 13 }} />}
+                      label={`${message.replyCount} ${message.replyCount === 1 ? "reply" : "replies"} · View thread`}
+                      color="primary"
+                      variant="outlined"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenThread(message);
+                      }}
+                      sx={{ height: 22, fontSize: "0.7rem", fontWeight: 600 }}
+                    />
+                  </Box>
+                )}
               </>
             )}
 
@@ -1105,6 +1183,18 @@ const MessageComponent = ({
           <ListItemIcon><ReplyIcon fontSize="small" /></ListItemIcon>
           <ListItemText>Reply</ListItemText>
         </MenuItem>
+        {onOpenThread && (
+          <MenuItem
+            dense
+            onClick={() => {
+              handleCloseMenu();
+              onOpenThread(message);
+            }}
+          >
+            <ListItemIcon><ThreadIcon fontSize="small" color="primary" /></ListItemIcon>
+            <ListItemText>Reply in Thread</ListItemText>
+          </MenuItem>
+        )}
         {sameSender && (
           <MenuItem onClick={handleOpenReceipts} dense>
             <ListItemIcon><DoneAllIcon fontSize="small" color="primary" /></ListItemIcon>

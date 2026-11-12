@@ -5,22 +5,31 @@ import {
   Close as CloseIcon,
   EmojiEmotions as EmojiIcon,
   GifBox as GifIcon,
+  Headphones as HeadphonesIcon,
   Info as InfoIcon,
   KeyboardArrowDown as ScrollDownIcon,
   Lock as LockIcon,
   LockOpen as LockOpenIcon,
+  RadioButtonChecked as WalkieIcon,
   Search as SearchIcon,
   Send as SendIcon,
 } from "@mui/icons-material";
 import {
   Avatar,
   Box,
+  Button,
+  Chip,
   ClickAwayListener,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Fab,
   IconButton,
   Paper,
   Skeleton,
   Stack,
+  TextField,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -33,10 +42,13 @@ import TypingIndicator from "../components/specific/TypingIndicator";
 import VoiceRecorder from "../components/specific/VoiceRecorder";
 import ChatSearch from "../components/specific/ChatSearch";
 import PinnedMessages from "../components/specific/PinnedMessages";
+import WatchPartyBar from "../components/specific/WatchPartyBar";
+import ThreadDrawer from "../components/specific/ThreadDrawer";
 import MessageComponent from "../components/shared/MessageComponent";
 import UnreadDivider from "../components/shared/UnreadDivider";
 import { transformImage } from "../lib/feature";
 import EmojiBurst from "../components/shared/EmojiBurst";
+import { parseRemindCommand } from "../utils/interactive";
 
 import { useDispatch, useSelector } from "react-redux";
 import {
@@ -66,10 +78,12 @@ import {
   setChatE2eeEnabled,
 } from "../utils/e2ee";
 import {
-  extractBurstEmoji,
+  extractCelebrationTrigger,
   getShakeAction,
   isEnterToSendEnabled,
   isShakeEnabled,
+  playCelebrationSound,
+  playWalkieChirp,
   PREFS_EVENT,
   setEnterToSendPreference,
   triggerHaptic,
@@ -80,6 +94,9 @@ const EmojiPicker = lazy(() => import("emoji-picker-react"));
 const UserProfileDialog = lazy(() => import("../components/dialogs/UserProfileDialog"));
 const GifStudioDialog = lazy(() => import("../components/dialogs/GifStudioDialog"));
 const CreatePollDialog = lazy(() => import("../components/dialogs/CreatePollDialog"));
+const MiniGameDialog = lazy(() => import("../components/dialogs/MiniGameDialog"));
+const WhiteboardDialog = lazy(() => import("../components/dialogs/WhiteboardDialog"));
+const ScheduleMessageDialog = lazy(() => import("../components/dialogs/ScheduleMessageDialog"));
 
 const QUICK_EMOJIS = ["❤️", "🔥", "😂", "👍", "🙏", "🎉", "😍", "🥳", "🚀", "👏"];
 const LAST_SEEN_KEY = "chat_last_seen";
@@ -119,8 +136,12 @@ const ChatComposer = React.memo(
     onCelebrateSend,
     onOpenGifStudio,
     isGroupChat,
+    activeTopic = "all",
     e2eeEnabled,
     peerPublicKey,
+    onWalkieStart,
+    onWalkieStop,
+    walkieRecording = false,
   }) => {
     const [message, setMessage] = useState("");
     const [showEmoji, setShowEmoji] = useState(false);
@@ -158,9 +179,35 @@ const ChatComposer = React.memo(
     const doSend = useCallback(async () => {
       if (!message.trim()) return;
       const clean = message.trim();
-      const burstEm = extractBurstEmoji(clean);
-      if (burstEm) {
-        onCelebrateSend?.(burstEm);
+
+      const remindCmd = parseRemindCommand(clean);
+      if (remindCmd) {
+        try {
+          const base = server || (typeof window !== "undefined" ? window.location.origin : "");
+          await axios.post(
+            `${base}/api/v1/message/schedule`,
+            {
+              chatId,
+              content: remindCmd.content,
+              scheduledFor: remindCmd.scheduledFor.toISOString(),
+              topicName: activeTopic && activeTopic !== "all" ? activeTopic : "",
+            },
+            { withCredentials: true }
+          );
+          toast.success(`⏰ Reminder set for ${remindCmd.scheduledFor.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
+          setMessage("");
+          setShowEmoji(false);
+          onClearReply();
+          return;
+        } catch {
+          toast.error("Failed to schedule reminder");
+          return;
+        }
+      }
+
+      const celeb = extractCelebrationTrigger(clean);
+      if (celeb) {
+        onCelebrateSend?.(celeb.emoji, celeb.mode);
       }
       triggerHaptic(10);
 
@@ -175,7 +222,13 @@ const ChatComposer = React.memo(
         }
       }
 
-      socket.emit(NEW_MESSAGE, { chatId, members, message: payloadText, replyTo: replyingTo });
+      socket.emit(NEW_MESSAGE, {
+        chatId,
+        members,
+        message: payloadText,
+        replyTo: replyingTo,
+        topicName: activeTopic && activeTopic !== "all" ? activeTopic : "",
+      });
       setMessage("");
       setShowEmoji(false);
       setMentionQuery("");
@@ -183,7 +236,7 @@ const ChatComposer = React.memo(
       lastTypingEmit.current = 0;
       if (typingTimeout.current) clearTimeout(typingTimeout.current);
       socket.emit(STOP_TYPING, { members, chatId });
-    }, [chatId, e2eeEnabled, members, message, onCelebrateSend, onClearReply, peerPublicKey, replyingTo, socket]);
+    }, [activeTopic, chatId, e2eeEnabled, members, message, onCelebrateSend, onClearReply, peerPublicKey, replyingTo, socket]);
 
     const submitHandler = (e) => {
       e.preventDefault();
@@ -402,7 +455,12 @@ const ChatComposer = React.memo(
 
           {voiceActive ? (
             <Box sx={{ px: { xs: 1, sm: 2 }, py: 1 }}>
-              <VoiceRecorder chatId={chatId} autoStart onCancel={onCancelVoice} />
+              <VoiceRecorder
+                chatId={chatId}
+                topicName={activeTopic && activeTopic !== "all" ? activeTopic : ""}
+                autoStart
+                onCancel={onCancelVoice}
+              />
             </Box>
           ) : (
             <form onSubmit={submitHandler} style={{ display: "flex", alignItems: "flex-end", width: "100%" }}>
@@ -511,25 +569,51 @@ const ChatComposer = React.memo(
                   />
                 </Box>
 
-                <Tooltip title={enterToSend ? "Send message (Enter)" : "Tap to send message"}>
-                  <IconButton
-                    type="submit"
-                    disabled={!hasText}
-                    aria-label="Send message"
-                    sx={{
-                      bgcolor: hasText ? "#236B4A" : isDark ? "#2C332E" : "#E5EAE6",
-                      color: hasText ? "#FFFFFF" : "text.disabled",
-                      borderRadius: "50%",
-                      width: "40px",
-                      height: "40px",
-                      flexShrink: 0,
-                      transition: "all 0.16s ease",
-                      "&:hover": { bgcolor: hasText ? "#1B573C" : undefined, transform: hasText ? "scale(1.04)" : "none" },
-                    }}
-                  >
-                    <SendIcon sx={{ fontSize: "1.15rem", ml: "2px" }} />
-                  </IconButton>
-                </Tooltip>
+                {hasText ? (
+                  <Tooltip title={enterToSend ? "Send message (Enter)" : "Tap to send message"}>
+                    <IconButton
+                      type="submit"
+                      aria-label="Send message"
+                      sx={{
+                        bgcolor: "#236B4A",
+                        color: "#FFFFFF",
+                        borderRadius: "50%",
+                        width: "40px",
+                        height: "40px",
+                        flexShrink: 0,
+                        transition: "all 0.16s ease",
+                        "&:hover": { bgcolor: "#1B573C", transform: "scale(1.04)" },
+                      }}
+                    >
+                      <SendIcon sx={{ fontSize: "1.15rem", ml: "2px" }} />
+                    </IconButton>
+                  </Tooltip>
+                ) : (
+                  <Tooltip title="Hold for Walkie-Talkie Push-to-Talk">
+                    <IconButton
+                      type="button"
+                      aria-label="Walkie-Talkie Hold to Talk"
+                      onPointerDown={onWalkieStart}
+                      onPointerUp={onWalkieStop}
+                      onPointerLeave={walkieRecording ? onWalkieStop : undefined}
+                      onPointerCancel={onWalkieStop}
+                      sx={{
+                        bgcolor: walkieRecording ? "error.main" : isDark ? "#2C332E" : "#E5EAE6",
+                        color: walkieRecording ? "#FFFFFF" : "primary.main",
+                        borderRadius: "50%",
+                        width: "40px",
+                        height: "40px",
+                        flexShrink: 0,
+                        touchAction: "none",
+                        userSelect: "none",
+                        transition: "all 0.16s ease",
+                        transform: walkieRecording ? "scale(1.1)" : "none",
+                      }}
+                    >
+                      <WalkieIcon sx={{ fontSize: "1.2rem" }} />
+                    </IconButton>
+                  </Tooltip>
+                )}
               </Stack>
             </form>
           )}
@@ -568,6 +652,24 @@ const Chat = ({ chatId, user }) => {
   const [viewingUser, setViewingUser] = useState(null);
   const [showGifStudio, setShowGifStudio] = useState(false);
   const [showPollDialog, setShowPollDialog] = useState(false);
+  const [showGameDialog, setShowGameDialog] = useState(false);
+  const [showWatchParty, setShowWatchParty] = useState(false);
+  const [showWhiteboard, setShowWhiteboard] = useState(false);
+  const [whiteboardInviteName, setWhiteboardInviteName] = useState("");
+  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
+  const [showLocationDialog, setShowLocationDialog] = useState(false);
+  const [locationDuration, setLocationDuration] = useState(15);
+  const [sharingLocation, setSharingLocation] = useState(false);
+  const [activeTopic, setActiveTopic] = useState("all");
+  const [showTopicDialog, setShowTopicDialog] = useState(false);
+  const [newTopicText, setNewTopicText] = useState("");
+  const [activeThreadMsg, setActiveThreadMsg] = useState(null);
+  const [walkieRecording, setWalkieRecording] = useState(false);
+  const [walkiePeerName, setWalkiePeerName] = useState("");
+  const [incomingWalkieClip, setIncomingWalkieClip] = useState(null);
+  const walkieRecorderRef = useRef(null);
+  const walkieStreamRef = useRef(null);
+  const walkieChunksRef = useRef([]);
   const [e2eeEnabled, setE2eeEnabled] = useState(() => isChatE2eeEnabled(chatId));
 
   const chatDetails = useChatDetailsQuery({ chatId, populate: true }, { skip: !chatId });
@@ -618,30 +720,32 @@ const Chat = ({ chatId, user }) => {
   const handleSendGifFile = async (gifFile) => {
     if (!gifFile || !chatId) return;
     dispatch(setUploadingLoader(true));
-    const toastId = toast.loading("Sending GIF...");
+    const toastId = toast.loading("Sending media...");
     try {
       const fd = new FormData();
       fd.append("chatId", chatId);
+      if (activeTopic && activeTopic !== "all") fd.append("topic_name", activeTopic);
       fd.append("files", gifFile);
       const res = await sendAttachments(fd);
       if (res.data?.success) {
-        toast.success("GIF sent!", { id: toastId });
+        toast.success("Sent!", { id: toastId });
       } else {
-        toast.error(res.error?.data?.message || "Failed to send GIF", { id: toastId });
+        toast.error(res.error?.data?.message || "Failed to send media", { id: toastId });
       }
     } catch {
-      toast.error("Failed to send GIF", { id: toastId });
+      toast.error("Failed to send media", { id: toastId });
     } finally {
       dispatch(setUploadingLoader(false));
     }
   };
 
-  const spawnChatBurst = useCallback((emoji = "🎉") => {
+  const spawnChatBurst = useCallback((emoji = "🎉", mode = "burst") => {
     const id = ++burstCounterRef.current;
-    setChatBursts((prev) => [...prev.slice(-4), { id, emoji, x: "50%", y: "65%" }]);
+    playCelebrationSound(mode);
+    setChatBursts((prev) => [...prev.slice(-4), { id, emoji, mode, x: "50%", y: "65%" }]);
     setTimeout(() => {
       setChatBursts((prev) => prev.filter((b) => b.id !== id));
-    }, 950);
+    }, mode === "confetti" || mode === "hearts" ? 1850 : 1050);
   }, []);
 
   const triggerShakeAction = useCallback(() => {
@@ -653,9 +757,8 @@ const Chat = ({ chatId, user }) => {
     } else if (action === "theme") {
       dispatch(toggleTheme());
     } else {
-      spawnChatBurst("🎉");
-      spawnChatBurst("✨");
-      toast("Emoji Wave!", { icon: "✨" });
+      spawnChatBurst("🎉", "confetti");
+      toast("Party Wave!", { icon: "✨" });
     }
   }, [dispatch, spawnChatBurst]);
 
@@ -706,7 +809,27 @@ const Chat = ({ chatId, user }) => {
     setShowInfo(false);
     setShowSearch(false);
     setViewingUser(null);
+    setActiveTopic("all");
+    setActiveThreadMsg(null);
+    setWhiteboardInviteName("");
+    setShowWatchParty(false);
+    setIncomingWalkieClip(null);
+    setWalkiePeerName("");
     nearBottomRef.current = true;
+  }, [chatId]);
+
+  useEffect(() => {
+    if (!chatId) return undefined;
+    const flushScheduled = async () => {
+      try {
+        const base = server || (typeof window !== "undefined" ? window.location.origin : "");
+        await axios.get(`${base}/api/v1/message/scheduled/${chatId}`, { withCredentials: true });
+      } catch {
+        // ignore transient network failure
+      }
+    };
+    const timer = setInterval(flushScheduled, 20000);
+    return () => clearInterval(timer);
   }, [chatId]);
 
   useEffect(() => {
@@ -782,8 +905,15 @@ const Chat = ({ chatId, user }) => {
       if (targetChatId && String(targetChatId) !== String(chatId)) return;
       const msg = data.message || data;
       if (msg && msg._id) {
-        const burstEm = extractBurstEmoji(msg.content);
-        if (burstEm) spawnChatBurst(burstEm);
+        if (msg.threadRootId) {
+          const incReply = (m) =>
+            String(m._id) === String(msg.threadRootId) ? { ...m, replyCount: Number(m.replyCount || 0) + 1 } : m;
+          setMessages((prev) => prev.map(incReply));
+          setOldMessages((prev) => prev.map(incReply));
+          return;
+        }
+        const celeb = extractCelebrationTrigger(msg.content);
+        if (celeb) spawnChatBurst(celeb.emoji, celeb.mode);
         setMessages((prev) => {
           if (prev.some((m) => String(m._id) === String(msg._id))) return prev;
           return [...prev, msg];
@@ -956,10 +1086,66 @@ const Chat = ({ chatId, user }) => {
       const targetChatId = data.chatId || data.conversation_id;
       if (targetChatId && String(targetChatId) !== String(chatId)) return;
       const targetMsgId = data.messageId || data.message_id;
-      if (!targetMsgId || !data.attachments) return;
-      handleLocalPollUpdate(targetMsgId, data.attachments);
+      if (!targetMsgId) return;
+      const patch = (msg) => {
+        if (String(msg._id) !== String(targetMsgId)) return msg;
+        return {
+          ...msg,
+          ...(Array.isArray(data.attachments) ? { attachments: data.attachments } : {}),
+          ...(Array.isArray(data.viewedBy) ? { viewedBy: data.viewedBy } : {}),
+        };
+      };
+      setMessages((prev) => prev.map(patch));
+      setOldMessages((prev) => prev.map(patch));
     },
-    [chatId, handleLocalPollUpdate]
+    [chatId]
+  );
+
+  const handleViewOnceConsumed = useCallback((messageId, viewedBy) => {
+    const patch = (msg) => (String(msg._id) === String(messageId) ? { ...msg, viewedBy } : msg);
+    setMessages((prev) => prev.map(patch));
+    setOldMessages((prev) => prev.map(patch));
+  }, []);
+
+  const walkieSignalHandler = useCallback(
+    (data) => {
+      if (!data || String(data.chatId) !== String(chatId)) return;
+      if (String(data.senderId || "") === myIdStr) return;
+      if (data.state === "talking") {
+        setWalkiePeerName(data.senderName || "Friend");
+      } else if (data.state === "idle") {
+        setWalkiePeerName("");
+      } else if (data.state === "clip" && data.audioDataUrl) {
+        setWalkiePeerName("");
+        playWalkieChirp(true);
+        setIncomingWalkieClip({ senderName: data.senderName || "Friend", audioDataUrl: data.audioDataUrl });
+        try {
+          const audio = new Audio(data.audioDataUrl);
+          audio.play().catch(() => {});
+        } catch {
+          // fallback banner button lets user tap to play
+        }
+      }
+    },
+    [chatId, myIdStr]
+  );
+
+  const watchSyncOpenHandler = useCallback(
+    (data) => {
+      if (!data || String(data.chatId) !== String(chatId)) return;
+      if (data.action === "start" && String(data.senderId || "") !== myIdStr) {
+        setShowWatchParty(true);
+      }
+    },
+    [chatId, myIdStr]
+  );
+
+  const topicsUpdatedHandler = useCallback(
+    (data) => {
+      if (!data || String(data.chatId) !== String(chatId)) return;
+      chatDetails.refetch();
+    },
+    [chatId, chatDetails]
   );
 
   useSocketEvents(socket, {
@@ -976,16 +1162,141 @@ const Chat = ({ chatId, user }) => {
     "message.reaction": messageReactedHandler,
     MESSAGE_POLL_UPDATED: pollUpdatedHandler,
     "message.poll_updated": pollUpdatedHandler,
+    MESSAGE_INTERACTIVE_UPDATED: pollUpdatedHandler,
+    "message.interactive_updated": pollUpdatedHandler,
+    "chat.topics_updated": topicsUpdatedHandler,
+    "watch.sync": watchSyncOpenHandler,
+    "walkie.signal": walkieSignalHandler,
     [MESSAGE_READ_UPDATE]: messageReadUpdateHandler,
     "message.read": messageReadUpdateHandler,
     "connect": syncActiveConversation,
   });
 
+  const handleWalkieStart = useCallback(async () => {
+    if (walkieRecording || !chatId) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      walkieStreamRef.current = stream;
+      const mimeType =
+        typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported?.("audio/webm")
+          ? "audio/webm"
+          : undefined;
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 16000 })
+        : new MediaRecorder(stream);
+      walkieChunksRef.current = [];
+      recorder.ondataavailable = (ev) => {
+        if (ev.data.size > 0) walkieChunksRef.current.push(ev.data);
+      };
+      walkieRecorderRef.current = recorder;
+      recorder.start(100);
+      setWalkieRecording(true);
+      playWalkieChirp(true);
+      triggerHaptic(20);
+      socket.emit("walkie.signal", { chatId, state: "talking" });
+    } catch {
+      toast.error("Microphone permission required for Walkie-Talkie");
+    }
+  }, [chatId, socket, walkieRecording]);
+
+  const handleWalkieStop = useCallback(() => {
+    const recorder = walkieRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      setWalkieRecording(false);
+      return;
+    }
+    setWalkieRecording(false);
+    playWalkieChirp(false);
+    socket.emit("walkie.signal", { chatId, state: "idle" });
+
+    recorder.onstop = () => {
+      if (walkieStreamRef.current) {
+        walkieStreamRef.current.getTracks().forEach((t) => t.stop());
+        walkieStreamRef.current = null;
+      }
+      const blob = new Blob(walkieChunksRef.current, { type: recorder.mimeType || "audio/webm" });
+      if (blob.size < 600) return;
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (typeof reader.result === "string" && reader.result.length < 180000) {
+          socket.emit("walkie.signal", { chatId, state: "clip", audioDataUrl: reader.result });
+          toast("📻 Walkie clip sent!", { duration: 1500 });
+        } else {
+          toast.error("Keep walkie bursts short (under 5 seconds)");
+        }
+      };
+      reader.readAsDataURL(blob);
+    };
+    recorder.stop();
+  }, [chatId, socket]);
+
+  const handleAddTopicSubmit = async (e) => {
+    e.preventDefault();
+    const clean = newTopicText.trim().replace(/^#/, "");
+    if (!clean || !chatId) return;
+    try {
+      const base = server || (typeof window !== "undefined" ? window.location.origin : "");
+      const { data } = await axios.post(
+        `${base}/api/v1/chat/${chatId}/topics`,
+        { topic: clean, action: "add" },
+        { withCredentials: true }
+      );
+      if (data?.success) {
+        setNewTopicText("");
+        setShowTopicDialog(false);
+        setActiveTopic(clean);
+        chatDetails.refetch();
+        toast.success(`Topic #${clean} created!`);
+      }
+    } catch {
+      toast.error("Failed to add topic");
+    }
+  };
+
+  const handleShareLocationSubmit = () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      toast.error("Geolocation not supported on this device");
+      return;
+    }
+    setSharingLocation(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        try {
+          const base = server || (typeof window !== "undefined" ? window.location.origin : "");
+          await axios.post(
+            `${base}/api/v1/message/interactive/location/share`,
+            {
+              chatId,
+              lat: pos.coords.latitude,
+              lng: pos.coords.longitude,
+              durationMinutes: locationDuration,
+              topicName: activeTopic && activeTopic !== "all" ? activeTopic : "",
+            },
+            { withCredentials: true }
+          );
+          setShowLocationDialog(false);
+          toast.success(`Live location shared for ${locationDuration}m!`);
+        } catch {
+          toast.error("Failed to share live location");
+        } finally {
+          setSharingLocation(false);
+        }
+      },
+      () => {
+        setSharingLocation(false);
+        toast.error("Location permission denied");
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
   const allMessages = useMemo(() => {
     const oldIds = new Set(oldMessages.map((m) => String(m._id || m.id)));
     const uniqueRealtime = messages.filter((m) => !oldIds.has(String(m._id || m.id)));
-    return [...oldMessages, ...uniqueRealtime];
-  }, [oldMessages, messages]);
+    const combined = [...oldMessages, ...uniqueRealtime];
+    if (!activeTopic || activeTopic === "all") return combined;
+    return combined.filter((m) => String(m.topicName || "").toLowerCase() === activeTopic.toLowerCase());
+  }, [activeTopic, oldMessages, messages]);
 
   const handleSetReply = useCallback((msg) => setReplyingTo(msg), []);
   const handleClearReply = useCallback(() => setReplyingTo(null), []);
@@ -1134,7 +1445,16 @@ const Chat = ({ chatId, user }) => {
               </IconButton>
             </Tooltip>
           )}
-          <Tooltip title="Emoji Burst Wave">
+          <Tooltip title="Listen / Watch Together">
+            <IconButton
+              size="small"
+              onClick={() => setShowWatchParty((w) => !w)}
+              sx={{ color: showWatchParty ? "primary.main" : "text.secondary" }}
+            >
+              <HeadphonesIcon fontSize="small" />
+            </IconButton>
+          </Tooltip>
+          <Tooltip title="Party Burst Wave">
             <IconButton size="small" onClick={() => triggerShakeAction()} sx={{ color: "primary.main" }}>
               <SparkleIcon fontSize="small" />
             </IconButton>
@@ -1157,6 +1477,136 @@ const Chat = ({ chatId, user }) => {
       </Box>
 
       <PinnedMessages chatId={chatId} onScrollToMessage={handleScrollToMessage} />
+
+      {/* Group Topics / Channels Bar */}
+      {isGroupChat && (
+        <Stack
+          direction="row"
+          spacing={0.6}
+          alignItems="center"
+          sx={{
+            px: { xs: 1, sm: 2 },
+            py: 0.65,
+            overflowX: "auto",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            bgcolor: isDark ? "#1B201D" : "#F9FAF8",
+            flexShrink: 0,
+          }}
+        >
+          <Chip
+            size="small"
+            clickable
+            label="# All"
+            color={activeTopic === "all" ? "primary" : "default"}
+            variant={activeTopic === "all" ? "filled" : "outlined"}
+            onClick={() => setActiveTopic("all")}
+          />
+          {(chat?.topics || []).map((t) => (
+            <Chip
+              key={t}
+              size="small"
+              clickable
+              label={`#${t}`}
+              color={activeTopic === t ? "primary" : "default"}
+              variant={activeTopic === t ? "filled" : "outlined"}
+              onClick={() => setActiveTopic(t)}
+            />
+          ))}
+          <Chip
+            size="small"
+            clickable
+            variant="outlined"
+            label="+ Topic"
+            onClick={() => setShowTopicDialog(true)}
+          />
+        </Stack>
+      )}
+
+      {/* Synchronized Listen / Watch Together Bar */}
+      <WatchPartyBar
+        open={showWatchParty}
+        onClose={() => setShowWatchParty(false)}
+        chatId={chatId}
+        socket={socket}
+        currentUserId={myIdStr}
+        isDark={isDark}
+      />
+
+      {/* Live Whiteboard Invite Banner */}
+      {whiteboardInviteName && !showWhiteboard && (
+        <Paper
+          square
+          elevation={0}
+          sx={{
+            px: 2,
+            py: 0.75,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            bgcolor: isDark ? "#262135" : "#F3E8FF",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography variant="caption" fontWeight={700}>
+            🎨 {whiteboardInviteName} opened a Live Whiteboard
+          </Typography>
+          <Stack direction="row" spacing={0.5}>
+            <Button
+              size="small"
+              variant="contained"
+              onClick={() => {
+                setWhiteboardInviteName("");
+                setShowWhiteboard(true);
+              }}
+            >
+              Join Canvas
+            </Button>
+            <Button size="small" onClick={() => setWhiteboardInviteName("")}>
+              Dismiss
+            </Button>
+          </Stack>
+        </Paper>
+      )}
+
+      {/* Walkie-Talkie Live / Incoming Banner */}
+      {(walkiePeerName || incomingWalkieClip) && (
+        <Paper
+          square
+          elevation={0}
+          sx={{
+            px: 2,
+            py: 0.65,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            bgcolor: isDark ? "#232F28" : "#DCFCE7",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Typography variant="caption" fontWeight={700}>
+            {walkiePeerName
+              ? `📻 ${walkiePeerName} is talking (Walkie-Talkie)...`
+              : `📻 Walkie burst from ${incomingWalkieClip?.senderName}`}
+          </Typography>
+          <Stack direction="row" spacing={0.5}>
+            {incomingWalkieClip && (
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() => new Audio(incomingWalkieClip.audioDataUrl).play().catch(() => {})}
+              >
+                Replay
+              </Button>
+            )}
+            <Button size="small" onClick={() => { setWalkiePeerName(""); setIncomingWalkieClip(null); }}>
+              Hide
+            </Button>
+          </Stack>
+        </Paper>
+      )}
 
       <Box
         sx={{
@@ -1210,6 +1660,9 @@ const Chat = ({ chatId, user }) => {
                     onReply={handleSetReply}
                     onReact={handleLocalReact}
                     onPollUpdate={handleLocalPollUpdate}
+                    onInteractiveUpdate={handleLocalPollUpdate}
+                    onViewOnceConsumed={handleViewOnceConsumed}
+                    onOpenThread={(msg) => setActiveThreadMsg(msg)}
                     onViewProfile={setViewingUser}
                   />
                 </div>
@@ -1252,8 +1705,12 @@ const Chat = ({ chatId, user }) => {
           onCelebrateSend={spawnChatBurst}
           onOpenGifStudio={() => setShowGifStudio(true)}
           isGroupChat={isGroupChat}
+          activeTopic={activeTopic}
           e2eeEnabled={e2eeEnabled}
           peerPublicKey={peerPublicKey}
+          onWalkieStart={handleWalkieStart}
+          onWalkieStop={handleWalkieStop}
+          walkieRecording={walkieRecording}
         />
       ) : (
         <Box
@@ -1278,12 +1735,113 @@ const Chat = ({ chatId, user }) => {
       <FileMenu
         anchorEl={fileMenuAnchor}
         chatId={chatId}
+        activeTopic={activeTopic}
         onStartVoiceNote={() => setVoiceActive(true)}
         onOpenGifStudio={() => setShowGifStudio(true)}
         onOpenCreatePoll={() => setShowPollDialog(true)}
+        onOpenMiniGame={() => setShowGameDialog(true)}
+        onOpenWatchParty={() => setShowWatchParty(true)}
+        onOpenWhiteboard={() => setShowWhiteboard(true)}
+        onShareLiveLocation={() => setShowLocationDialog(true)}
+        onOpenSchedule={() => setShowScheduleDialog(true)}
         enterToSend={enterToSend}
         onToggleEnterToSend={() => setEnterToSendPreference(!enterToSend)}
       />
+
+      {showGameDialog && (
+        <Suspense fallback={null}>
+          <MiniGameDialog
+            open={showGameDialog}
+            onClose={() => setShowGameDialog(false)}
+            chatId={chatId}
+            activeTopic={activeTopic}
+          />
+        </Suspense>
+      )}
+
+      <Suspense fallback={null}>
+        <WhiteboardDialog
+          open={showWhiteboard}
+          onClose={() => setShowWhiteboard(false)}
+          chatId={chatId}
+          socket={socket}
+          currentUserId={myIdStr}
+          onSendImage={handleSendGifFile}
+          onRemoteInvite={(name) => setWhiteboardInviteName(name)}
+        />
+      </Suspense>
+
+      {showScheduleDialog && (
+        <Suspense fallback={null}>
+          <ScheduleMessageDialog
+            open={showScheduleDialog}
+            onClose={() => setShowScheduleDialog(false)}
+            chatId={chatId}
+            activeTopic={activeTopic}
+          />
+        </Suspense>
+      )}
+
+      <ThreadDrawer
+        open={Boolean(activeThreadMsg)}
+        rootMessage={activeThreadMsg}
+        chatId={chatId}
+        members={members}
+        socket={socket}
+        onClose={() => setActiveThreadMsg(null)}
+      />
+
+      {/* Share Live Location Dialog (15m / 1h) */}
+      <Dialog open={showLocationDialog} onClose={() => setShowLocationDialog(false)} fullWidth maxWidth="xs">
+        <DialogTitle fontWeight={700}>📍 Share Live Location</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" mb={1.5}>
+            Share a real-time updating location pin with ETA countdown.
+          </Typography>
+          <Stack direction="row" spacing={1}>
+            {[15, 60].map((mins) => (
+              <Chip
+                key={mins}
+                clickable
+                label={mins === 60 ? "1 Hour" : "15 Minutes"}
+                color={locationDuration === mins ? "primary" : "default"}
+                variant={locationDuration === mins ? "filled" : "outlined"}
+                onClick={() => setLocationDuration(mins)}
+              />
+            ))}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setShowLocationDialog(false)}>Cancel</Button>
+          <Button variant="contained" onClick={handleShareLocationSubmit} disabled={sharingLocation}>
+            {sharingLocation ? "Locating..." : "Share Pin"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Add Group Topic Dialog */}
+      <Dialog open={showTopicDialog} onClose={() => setShowTopicDialog(false)} fullWidth maxWidth="xs">
+        <DialogTitle fontWeight={700}>Create Group Topic</DialogTitle>
+        <form onSubmit={handleAddTopicSubmit}>
+          <DialogContent>
+            <TextField
+              autoFocus
+              fullWidth
+              size="small"
+              label="Topic name"
+              placeholder="e.g. announcements, gaming, homework"
+              value={newTopicText}
+              onChange={(e) => setNewTopicText(e.target.value)}
+            />
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setShowTopicDialog(false)}>Cancel</Button>
+            <Button type="submit" variant="contained" disabled={!newTopicText.trim()}>
+              Create
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
 
       {showGifStudio && (
         <Suspense fallback={null}>

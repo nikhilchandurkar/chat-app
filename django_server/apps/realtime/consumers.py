@@ -119,7 +119,18 @@ def check_user_blocked(user, conversation_id):
 
 
 @db_async
-def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=None, attachments=None, msg_type="text", membership_verified=False):
+def save_incoming_message(
+    sender,
+    chat_id,
+    content,
+    client_msg_id="",
+    reply_to=None,
+    attachments=None,
+    msg_type="text",
+    membership_verified=False,
+    topic_name="",
+    thread_root_id=None,
+):
     try:
         conv = Conversation.objects.filter(id=chat_id).first()
         if not conv:
@@ -171,6 +182,15 @@ def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=N
         if conv.ephemeral_ttl and conv.ephemeral_ttl > 0:
             expires_at = timezone.now() + timedelta(seconds=conv.ephemeral_ttl)
 
+        clean_topic = str(topic_name or "").strip().lstrip("#")[:64]
+        parsed_thread_root = None
+        if thread_root_id:
+            import uuid as _uuid
+            try:
+                parsed_thread_root = _uuid.UUID(str(thread_root_id))
+            except ValueError:
+                parsed_thread_root = None
+
         msg = Message.objects.create(
             conversation=conv,
             sender=sender,
@@ -179,6 +199,8 @@ def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=N
             content=content,
             attachments=attachments or [],
             reply_to=reply_to,
+            topic_name=clean_topic,
+            thread_root_id=parsed_thread_root,
             status="sent",
             expires_at=expires_at,
         )
@@ -213,6 +235,11 @@ def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=N
             "isDeleted": False,
             "reactions": [],
             "replyTo": reply_to,
+            "topicName": clean_topic,
+            "threadRootId": str(parsed_thread_root) if parsed_thread_root else None,
+            "replyCount": 0,
+            "viewOnce": False,
+            "viewedBy": [],
             "readBy": [str(sender.id)],
             "createdAt": msg.created_at.isoformat(),
             "expiresAt": expires_at.isoformat() if expires_at else None,
@@ -375,6 +402,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             reply_to = data.get("replyTo") or data.get("reply_to")
             attachments = data.get("attachments", [])
             msg_type = data.get("message_type", "text")
+            topic_name = data.get("topicName") or data.get("topic_name") or ""
+            thread_root_id = data.get("threadRootId") or data.get("thread_root_id") or None
 
             is_member = await self._is_member_cached(chat_id)
             if not is_member:
@@ -388,6 +417,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 attachments=attachments,
                 msg_type=msg_type,
                 membership_verified=True,
+                topic_name=topic_name,
+                thread_root_id=thread_root_id,
             )
 
             if saved_data:
@@ -476,6 +507,27 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                         }
                     }
                 )
+
+        # 6. Interactive Live Relays (Watch Party, Live Whiteboard, Live Location, Walkie-Talkie)
+        elif event in ("watch.sync", "whiteboard.sync", "location.live", "walkie.signal"):
+            chat_id = data.get("chatId") or data.get("conversation_id")
+            if not await self._is_member_cached(chat_id):
+                return
+            enriched = {
+                **(data if isinstance(data, dict) else {}),
+                "chatId": str(chat_id),
+                "senderId": str(self.user.id),
+                "senderName": self.user.name or self.user.username,
+            }
+            await self.channel_layer.group_send(
+                f"chat_{chat_id}",
+                {
+                    "type": "chat.event",
+                    "event": event,
+                    "event_legacy": None,
+                    "data": enriched,
+                },
+            )
 
     async def chat_event(self, event):
         """Handler for events dispatched to groups via channel_layer.group_send."""
