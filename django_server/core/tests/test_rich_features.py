@@ -110,3 +110,20 @@ class RichFeaturesTestCase(APITestCase):
             res = self.client.get("/api/v1/preview/", {"url": bad_url})
             self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST, bad_url)
 
+    def test_upload_image_story_returns_valid_media_url(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+
+        png_bytes = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+            b"\x08\x06\x00\x00\x00\x1f\x15c4\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00"
+            b"\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        upload = SimpleUploadedFile("story.png", png_bytes, content_type="image/png")
+        res = self.client.post(
+            "/api/v1/status/",
+            {"status_type": "image", "content": "My photo", "privacy": "everyone", "media": upload},
+            format="multipart",
+        )
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(res.data["status"]["media_url"].startswith("/api/v1/media/statuses/"))
+

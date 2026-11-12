@@ -10,7 +10,7 @@ DANGEROUS_EXTENSIONS = {
 
 ALLOWED_EXTENSIONS = {
     # Images
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
+    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg", ".heic", ".heif", ".avif",
     # Documents
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".rtf",
     # Audio

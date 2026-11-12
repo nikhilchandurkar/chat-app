@@ -18,6 +18,8 @@ const ChatItem = ({
   isPinned = false,
   isMuted = false,
   isArchived = false,
+  unreadCount = 0,
+  lastMessage = "",
   sameSender,
   isOnline,
   isTyping,
@@ -29,6 +31,8 @@ const ChatItem = ({
   const dispatch = useDispatch();
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
+  const badgeCount = sameSender ? 0 : Math.max(Number(unreadCount || 0), Number(newMessageAlert?.count || 0));
+  const previewText = newMessageAlert?.message?.content || lastMessage || "";
 
   const handleClick = () => {
     dispatch(setActiveChatId(_id));
@@ -85,7 +89,7 @@ const ChatItem = ({
 
         <Stack flex={1} minWidth={0}>
           <Stack direction="row" alignItems="center" spacing={0.5} minWidth={0}>
-            <Typography fontWeight={sameSender ? 600 : 500} noWrap sx={{ flex: 1 }}>
+            <Typography fontWeight={sameSender || badgeCount > 0 ? 700 : 500} noWrap sx={{ flex: 1 }}>
               {name}
             </Typography>
             {isPinned && <PinIcon sx={{ fontSize: 13, opacity: 0.8, flexShrink: 0 }} />}
@@ -96,13 +100,28 @@ const ChatItem = ({
               <Typography variant="caption" sx={{ color: sameSender ? "#d1fae5" : "#48bb78", fontStyle: "italic", fontWeight: 600 }}>
                 Typing...
               </Typography>
-            ) : newMessageAlert ? (
+            ) : previewText ? (
               <Typography
                 variant="caption"
                 noWrap
-                sx={{ color: sameSender ? "rgba(255,255,255,0.85)" : "text.secondary", fontStyle: "italic" }}
+                sx={{
+                  color: sameSender
+                    ? "rgba(255,255,255,0.88)"
+                    : badgeCount > 0
+                    ? "text.primary"
+                    : "text.secondary",
+                  fontWeight: badgeCount > 0 && !sameSender ? 600 : 400,
+                }}
               >
-                {newMessageAlert.message?.content || `${newMessageAlert.count} New Message`}
+                {previewText.startsWith("::e2ee:v1::") ? "🔒 Encrypted message" : previewText}
+              </Typography>
+            ) : badgeCount > 0 ? (
+              <Typography
+                variant="caption"
+                noWrap
+                sx={{ color: "primary.main", fontWeight: 600 }}
+              >
+                {badgeCount} unread message{badgeCount === 1 ? "" : "s"}
               </Typography>
             ) : (
               <>
@@ -130,7 +149,29 @@ const ChatItem = ({
           </Stack>
         </Stack>
 
-        {isOnline && !groupChat && (
+        {badgeCount > 0 && (
+          <Box
+            aria-label={`${badgeCount} unread`}
+            sx={{
+              minWidth: 22,
+              height: 22,
+              px: 0.75,
+              borderRadius: "999px",
+              bgcolor: isMuted ? "#6B7280" : "#22C55E",
+              color: "#FFFFFF",
+              fontSize: "0.72rem",
+              fontWeight: 700,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            {badgeCount > 99 ? "99+" : badgeCount}
+          </Box>
+        )}
+
+        {isOnline && !groupChat && !badgeCount && (
           <Box
             sx={{
               width: "9px",

@@ -1,4 +1,6 @@
 from datetime import timedelta
+import uuid
+from django.core.files.storage import default_storage
 from django.utils import timezone
 from django.db import transaction
 from django.shortcuts import get_object_or_404
@@ -9,7 +11,6 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 
 from apps.authentication.models import User, BlockedUser, Contact
-from apps.storage_app.services.chunk_service import ChunkUploadService
 from apps.storage_app.services.file_validator import sanitize_filename, validate_file_header
 from .models import UserStatus, StatusView, StatusReaction
 from .serializers import UserStatusSerializer, StatusViewerSerializer
@@ -43,24 +44,9 @@ class CreateStatusView(APIView):
             if not valid:
                 return Response({"success": False, "message": err}, status=status.HTTP_400_BAD_REQUEST)
 
-            ok, msg, session_data = ChunkUploadService.create_session(
-                user=request.user,
-                file_name=file_name,
-                total_size=media_file.size,
-                total_chunks=1,
-                mime_type=media_file.content_type or "application/octet-stream",
-            )
-            if not ok:
-                return Response({"success": False, "message": msg}, status=status.HTTP_400_BAD_REQUEST)
-
-            sess_id = session_data["session_id"]
-            ChunkUploadService.save_chunk(sess_id, request.user, 0, media_file)
-            ok, msg, fin_data = ChunkUploadService.finalize_upload(sess_id, request.user)
-            if not ok:
-                return Response({"success": False, "message": msg}, status=status.HTTP_400_BAD_REQUEST)
-
-            media_url = fin_data.get("download_url", "")
-            media_path = fin_data.get("final_path", "")
+            saved_name = default_storage.save(f"statuses/{request.user.id}_{uuid.uuid4().hex[:8]}_{file_name}", media_file)
+            media_url = f"/api/v1/media/{saved_name}"
+            media_path = saved_name
         elif not content:
             return Response({"success": False, "message": "Text status content cannot be empty."}, status=status.HTTP_400_BAD_REQUEST)
 

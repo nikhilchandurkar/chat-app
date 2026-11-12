@@ -13,6 +13,13 @@ import Header from './Header';
 import DeleteChatMenu from '../dialogs/DeleteChatMenu';
 import { incrementNotificationCount, setActiveChatId, setIsMobile, setIsMobileProfile, setNotificationCount, setIsDeleteMenu, setSelectedDeleteChat } from '../../redux/reducers/misc';
 import { retainProtectedSurface } from '../../utils/screenPrivacy';
+import {
+  clearChatDeviceNotification,
+  initAppForegroundTracker,
+  isAppInBackground,
+  notifyDeviceForMessage,
+  requestDeviceNotificationPermission,
+} from '../../utils/deviceNotifications';
 
 
 
@@ -40,9 +47,31 @@ const AppLayout = () => (WrappedComponent) => {
 
     const [onlineUsers, setOnlineUsers] = useState([]);
     const [newMessagesAlert, setNewMessagesAlert] = useState([]);
+    const [clearedUnreadChats, setClearedUnreadChats] = useState(() => new Set());
     const [typingChats, setTypingChats] = useState([]);
-    
-    useErrors([{ isError,error }]);
+    const alertCountsRef = useRef({});
+
+    useErrors([{ isError, error }]);
+
+    useEffect(() => {
+      initAppForegroundTracker();
+      requestDeviceNotificationPermission();
+    }, []);
+
+    // Clear unread badge & dismiss device notification immediately when entering a conversation
+    useEffect(() => {
+      if (!chatId) return;
+      const cid = String(chatId);
+      delete alertCountsRef.current[cid];
+      setNewMessagesAlert((prev) => prev.filter((a) => String(a.chatId) !== cid));
+      setClearedUnreadChats((prev) => {
+        if (prev.has(cid)) return prev;
+        const next = new Set(prev);
+        next.add(cid);
+        return next;
+      });
+      clearChatDeviceNotification(cid);
+    }, [chatId]);
 
     const newRequestHandler = useCallback(() => {
       dispatch(incrementNotificationCount());
@@ -71,23 +100,58 @@ const AppLayout = () => (WrappedComponent) => {
       }
     }, []);
 
-    const newMessageAlertListener = useCallback((data) => {
-      if (!data || data.chatId === chatId) return;
-      
-      const senderName = data.message?.sender?.name || "Someone";
-      toast(`New Message from ${senderName}`, { icon: "💬" });
+    const newMessageAlertListener = useCallback((payload) => {
+      if (!payload) return;
+      const targetChatId = String(payload.chatId || payload.conversation_id || payload.message?.chat || "");
+      if (!targetChatId) return;
+
+      const myId = String(user?._id || user?.id || "");
+      const senderId = String(payload.message?.sender?._id || payload.message?.sender?.id || payload.sender_id || "");
+      if (myId && senderId === myId) return;
+
+      const inBackground = isAppInBackground();
+      const isViewingThisChatInForeground = !inBackground && String(chatId || "") === targetChatId;
+      if (isViewingThisChatInForeground) return;
+
+      const targetChat = (data?.chats || []).find((c) => String(c._id || c.id) === targetChatId);
+      const baseServerUnread = clearedUnreadChats.has(targetChatId) ? 0 : Number(targetChat?.unreadCount || 0);
+      const senderName = payload.message?.sender?.name || payload.sender_name || targetChat?.name || "New message";
+      const snippet = payload.message?.content || (payload.message?.attachments?.length ? "📎 Attachment" : "Sent a message");
+
+      setClearedUnreadChats((prev) => {
+        if (!prev.has(targetChatId)) return prev;
+        const next = new Set(prev);
+        next.delete(targetChatId);
+        return next;
+      });
+
+      const prevCount = Number(alertCountsRef.current[targetChatId] ?? baseServerUnread);
+      const nextCount = prevCount + 1;
+      alertCountsRef.current[targetChatId] = nextCount;
 
       setNewMessagesAlert((prev) => {
         const list = Array.isArray(prev) ? prev : [];
-        const existing = list.find((i) => i.chatId === data.chatId);
+        const existing = list.find((i) => String(i.chatId) === targetChatId);
         if (existing) {
           return list.map((i) =>
-            i.chatId === data.chatId ? { ...i, count: i.count + 1, message: data.message } : i
+            String(i.chatId) === targetChatId ? { ...i, count: nextCount, message: payload.message } : i
           );
         }
-        return [...list, { chatId: data.chatId, count: 1, message: data.message }];
+        return [...list, { chatId: targetChatId, count: nextCount, message: payload.message }];
       });
-    }, [chatId]);
+
+      notifyDeviceForMessage({
+        chatId: targetChatId,
+        title: targetChat?.groupChat ? targetChat.name || senderName : senderName,
+        preview: snippet.startsWith("::e2ee:v1::")
+          ? "🔒 Encrypted message"
+          : targetChat?.groupChat
+          ? `${senderName}: ${snippet}`
+          : snippet,
+        count: nextCount,
+        isMuted: Boolean(targetChat?.isMuted),
+      });
+    }, [chatId, clearedUnreadChats, data?.chats, user]);
 
     const startTypingListener = useCallback((data) => {
       if (!data?.chatId) return;
@@ -137,6 +201,32 @@ const AppLayout = () => (WrappedComponent) => {
     
     const handleMobileClose = () => dispatch(setIsMobile(false));
 
+    const chatsWithUnread = useMemo(() => {
+      const alertMap = new Map(newMessagesAlert.map((a) => [String(a.chatId), a]));
+      return (data?.chats || []).map((c) => {
+        const cid = String(c._id || c.id);
+        const liveAlert = alertMap.get(cid);
+        const effectiveUnread =
+          chatId && String(chatId) === cid
+            ? 0
+            : liveAlert
+            ? liveAlert.count
+            : clearedUnreadChats.has(cid)
+            ? 0
+            : Number(c.unreadCount || 0);
+        return {
+          ...c,
+          unreadCount: effectiveUnread,
+          lastMessage: liveAlert?.message?.content || c.lastMessage,
+        };
+      });
+    }, [chatId, clearedUnreadChats, data?.chats, newMessagesAlert]);
+
+    const totalUnreadCount = useMemo(
+      () => chatsWithUnread.reduce((sum, c) => sum + (c.isArchived ? 0 : Number(c.unreadCount || 0)), 0),
+      [chatsWithUnread]
+    );
+
     useEffect(() => {
       if (!isMobileProfile) return undefined;
       return retainProtectedSurface();
@@ -144,7 +234,7 @@ const AppLayout = () => (WrappedComponent) => {
 
     return (
       <>
-        <Header unreadMessagesCount={newMessagesAlert.reduce((acc, alert) => acc + alert.count, 0)} />
+        <Header unreadMessagesCount={totalUnreadCount} />
         {isLoading ? (
           <Skeleton />
         ) : (
@@ -184,7 +274,7 @@ const AppLayout = () => (WrappedComponent) => {
             <ChatList
               w="100%"
               handleDeleteChat={handleDeleteChats}
-              chats={data?.chats}
+              chats={chatsWithUnread}
               chatId={chatId}
               user={user}
               onlineUsers={onlineUsers}
@@ -224,7 +314,7 @@ const AppLayout = () => (WrappedComponent) => {
                 isLoading ? (<Skeleton />) : (
                   <ChatList
                     handleDeleteChat={handleDeleteChats}
-                    chats={data?.chats || []}
+                    chats={chatsWithUnread}
                     chatId={chatId}
                     user={user}
                     onlineUsers={onlineUsers}

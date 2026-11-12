@@ -104,8 +104,10 @@ const StatusSection = () => {
   const handleFilePick = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    const isVideo = f.type.startsWith("video/");
-    const isImage = f.type.startsWith("image/");
+    const lowerName = (f.name || "").toLowerCase();
+    const isVideo = f.type.startsWith("video/") || /\.(mp4|webm|ogg|mov|mkv|m4v)$/.test(lowerName);
+    const isImage =
+      f.type.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|bmp|heic|heif|avif)$/.test(lowerName);
     if (!isVideo && !isImage) {
       toast.error("Please select an image, GIF, or video file.");
       return;
@@ -224,45 +226,50 @@ const StatusSection = () => {
           flexShrink: 0,
         }}
       >
-        {/* Add Status */}
-        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", flexShrink: 0 }}>
-          <Box sx={{ position: "relative" }}>
+        {/* Create Story CTA tile (always easy to tap on mobile) */}
+        <Box
+          onClick={() => setCreateOpen(true)}
+          sx={{ display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer", flexShrink: 0, width: 54 }}
+        >
+          <Avatar
+            sx={{
+              width: 44,
+              height: 44,
+              bgcolor: "primary.main",
+              color: "#fff",
+              border: "2px solid",
+              borderColor: "primary.light",
+            }}
+          >
+            <AddIcon />
+          </Avatar>
+          <Typography variant="caption" sx={{ fontSize: "0.68rem", mt: 0.3, fontWeight: 600 }} noWrap>
+            Add Story
+          </Typography>
+        </Box>
+
+        {/* My Active Story Ring (when at least 1 story exists) */}
+        {myStatuses.length > 0 && (
+          <Box
+            onClick={openMyStories}
+            sx={{ display: "flex", flexDirection: "column", alignItems: "center", cursor: "pointer", flexShrink: 0, width: 54 }}
+          >
             <Avatar
-              onClick={openMyStories}
               src={transformImage(myAvatar)}
               sx={{
                 width: 44,
                 height: 44,
-                cursor: "pointer",
                 bgcolor: "#236B4A",
-                border: myStatuses.length ? "2.5px solid #22C55E" : "2px dashed #9CA3AF",
+                border: "2.5px solid #22C55E",
               }}
             >
               {(user?.name || "M")[0].toUpperCase()}
             </Avatar>
-            <IconButton
-              size="small"
-              aria-label="Create 24h status"
-              onClick={() => setCreateOpen(true)}
-              sx={{
-                position: "absolute",
-                bottom: -4,
-                right: -4,
-                width: 20,
-                height: 20,
-                bgcolor: "primary.main",
-                color: "#fff",
-                border: "2px solid #fff",
-                "&:hover": { bgcolor: "primary.dark" },
-              }}
-            >
-              <AddIcon sx={{ fontSize: 13 }} />
-            </IconButton>
+            <Typography variant="caption" sx={{ fontSize: "0.68rem", mt: 0.3 }} noWrap>
+              My ({myStatuses.length})
+            </Typography>
           </Box>
-          <Typography variant="caption" sx={{ fontSize: "0.68rem", mt: 0.3 }} noWrap>
-            {myStatuses.length ? `My (${myStatuses.length})` : "Add Story"}
-          </Typography>
-        </Box>
+        )}
 
         {/* Contact Stories */}
         {feedGroups.map((grp) => {
@@ -346,11 +353,17 @@ const StatusSection = () => {
               onChange={(e) => setStoryText(e.target.value)}
             />
 
-            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-              <Button component="label" size="small" variant="outlined" startIcon={<ImageIcon />}>
-                Photo / GIF / Video
-                <input type="file" hidden accept="image/*,video/*" onChange={handleFilePick} />
-              </Button>
+            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" flexWrap="wrap" useFlexGap>
+              <Stack direction="row" spacing={0.75}>
+                <Button component="label" size="small" variant="outlined" startIcon={<ImageIcon />}>
+                  Gallery
+                  <input type="file" hidden accept="image/*,video/*" onChange={handleFilePick} />
+                </Button>
+                <Button component="label" size="small" variant="outlined">
+                  Camera
+                  <input type="file" hidden accept="image/*" capture="environment" onChange={handleFilePick} />
+                </Button>
+              </Stack>
               <Select size="small" value={privacy} onChange={(e) => setPrivacy(e.target.value)}>
                 <MenuItem value="everyone">Everyone</MenuItem>
                 <MenuItem value="contacts">Contacts Only</MenuItem>

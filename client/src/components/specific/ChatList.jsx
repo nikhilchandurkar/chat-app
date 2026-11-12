@@ -91,7 +91,7 @@ const ChatList = ({
 
       {displayedChats.length > 0 ? (
         displayedChats.map((data, index) => {
-          const { avatar, _id, name, groupChat, members, memberNames, isPinned, isMuted, isArchived } = data;
+          const { avatar, _id, name, groupChat, members, memberNames, isPinned, isMuted, isArchived, unreadCount, lastMessage } = data;
           const newMessageAlert = Array.isArray(newMessagesAlert)
             ? newMessagesAlert.find(({ chatId: alertChatId }) => alertChatId === _id)
             : undefined;
@@ -103,6 +103,8 @@ const ChatList = ({
             <ChatItem
               index={index}
               newMessageAlert={newMessageAlert}
+              unreadCount={unreadCount}
+              lastMessage={lastMessage}
               isOnline={isOnline}
               isTyping={isTyping}
               avatar={avatar}
