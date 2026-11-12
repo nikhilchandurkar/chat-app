@@ -183,7 +183,7 @@
     if (!canvas) return;
     var items = [];
     (platforms || []).forEach(function(p){ items.push({ label: "Device: " + p.label, count: p.count, color: "#0D9488" }); });
-    (methods || []).forEach(function(m){ items.push({ label: "Auth: " + m.label, count: m.count, color: "#6366F1" }); });
+    (methods || []).forEach(function(m){ items.push({ label: "Auth: " + m.label, count: m.count, color: "#B7791F" }); });
     if (!items.length) items.push({ label: "No active devices yet", count: 0, color: "#94a3b8" });
     items = items.slice(0, 6);
     var ctx = canvas.getContext("2d");

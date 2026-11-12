@@ -16,7 +16,8 @@ def _is_admin(user) -> bool:
     return bool(
         user
         and user.is_authenticated
-        and (getattr(user, "role", "user") == "admin" or user.is_staff or user.is_superuser)
+        and user.is_active
+        and (user.is_superuser or (getattr(user, "role", "user") == "admin" and user.is_staff))
     )
 
 
@@ -251,3 +252,80 @@ class AdminAuditLogsView(APIView):
             "createdAt": l.created_at.isoformat(),
         } for l in logs]
         return Response({"success": True, "auditLogs": data})
+
+
+class AdminUserRoleView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, user_id):
+        if not _is_admin(request.user):
+            return Response({"success": False, "message": "Superadmin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        target = User.objects.filter(id=user_id).first()
+        if not target:
+            return Response({"success": False, "message": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        if target.id == request.user.id:
+            return Response({"success": False, "message": "Cannot demote your own active superadmin account."}, status=status.HTTP_400_BAD_REQUEST)
+
+        make_admin = not (target.is_superuser or target.role == "admin")
+        target.role = "admin" if make_admin else "user"
+        target.is_staff = make_admin
+        target.is_superuser = make_admin
+        target.save(update_fields=["role", "is_staff", "is_superuser"])
+
+        AuditLog.objects.create(
+            user=request.user,
+            action="ADMIN_ROLE_UPDATED",
+            details={"target_email": target.email, "role": target.role, "is_superuser": target.is_superuser},
+        )
+        return Response({
+            "success": True,
+            "role": target.role,
+            "isSuperuser": target.is_superuser,
+            "message": f"{target.email} is now {'Superadmin' if make_admin else 'Standard User'}.",
+        })
+
+
+class AdminUserRevokeSessionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, user_id):
+        if not _is_admin(request.user):
+            return Response({"success": False, "message": "Superadmin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        target = User.objects.filter(id=user_id).first()
+        if not target:
+            return Response({"success": False, "message": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        count = SessionService.mark_user_sessions_revoked(target)
+        AuditLog.objects.create(
+            user=request.user,
+            action="ADMIN_USER_SESSIONS_REVOKED",
+            details={"target_email": target.email, "revoked_count": count},
+        )
+        return Response({"success": True, "revokedCount": count, "message": f"Revoked {count} active session(s) for {target.email}."})
+
+
+class AdminReportUpdateView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, report_id):
+        if not _is_admin(request.user):
+            return Response({"success": False, "message": "Superadmin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        new_status = (request.data.get("status") or "").strip().lower()
+        if new_status not in ("pending", "reviewed", "resolved", "dismissed"):
+            return Response({"success": False, "message": "Invalid status."}, status=status.HTTP_400_BAD_REQUEST)
+
+        report = Report.objects.filter(id=report_id).first()
+        if not report:
+            return Response({"success": False, "message": "Report not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        report.status = new_status
+        report.save(update_fields=["status"])
+        AuditLog.objects.create(
+            user=request.user,
+            action="ADMIN_REPORT_UPDATED",
+            details={"report_id": str(report.id), "status": new_status},
+        )
+        return Response({"success": True, "status": report.status, "message": f"Report marked as {new_status}."})

@@ -18,6 +18,24 @@ def health_check(request):
     })
 
 
+def custom_csrf_failure(request, reason=""):
+    """Clean CSRF failure handler that never leaks debug details or tracebacks."""
+    from django.http import HttpResponseForbidden
+
+    if request.path.startswith("/api/"):
+        return JsonResponse(
+            {"success": False, "message": "Session security check failed. Please refresh and try again."},
+            status=403,
+        )
+    return HttpResponseForbidden(
+        "<!doctype html><html><body style='font-family:sans-serif;padding:40px;background:#F7F7F5;color:#202421'>"
+        "<h2>Security Verification Expired</h2>"
+        "<p>Please refresh the page and submit the form again.</p>"
+        "<p><a href='/admin/login/' style='color:#236B4A;font-weight:600'>Return to Admin Sign In</a></p>"
+        "</body></html>"
+    )
+
+
 def hello_view(request):
     """Quick greeting endpoint."""
     return JsonResponse({"status": "ok", "message": "hello from nikki"}, safe=False)

@@ -842,6 +842,7 @@ jobs:
             --ulimit nofile=65535:65535 \
             -e PORT=3000 \
             -e DEBUG=False \
+            -e DJANGO_DEBUG=False \
             -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-change-me-321' }}' \
             -e ADMIN_SECRET_KEY='${{ secrets.ADMIN_SECRET_KEY || 'chat_app_admin_secret' }}' \
             -e DB_ENGINE=mysql \
@@ -902,6 +903,7 @@ jobs:
             --health-retries=3 \
             --health-start-period=15s \
             -e DEBUG=False \
+            -e DJANGO_DEBUG=False \
             -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-change-me-321' }}' \
             -e DB_ENGINE=mysql \
             -e MYSQL_DATABASE='${{ secrets.MYSQL_DATABASE || 'chat_db' }}' \

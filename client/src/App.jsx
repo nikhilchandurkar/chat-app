@@ -2,7 +2,7 @@ import axios from "axios";
 import React, { Suspense, lazy, useEffect } from "react";
 import { Toaster } from "react-hot-toast";
 import { useDispatch, useSelector } from "react-redux";
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import ProtectRoute from "./components/auth/ProtectRoute";
 import { LayoutLoader } from "./components/layout/Loaders";
 import { server } from "./constants/config";
@@ -69,6 +69,15 @@ axios.interceptors.response.use(
     return Promise.reject(error);
   }
 );
+
+const isSuperAdminUser = (u) =>
+  Boolean(u && (u.is_superuser || (u.role === "admin" && u.is_staff)));
+
+const AdminOnlyRoute = ({ user, children }) => {
+  if (!user) return <Navigate to="/login" replace />;
+  if (!isSuperAdminUser(user)) return <Navigate to="/" replace />;
+  return children;
+};
 
 const App = () => {
   const { user, loader } = useSelector((state) => state.auth);
@@ -158,8 +167,22 @@ const App = () => {
                 <Route element={<ProtectRoute user={user} />}>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/groups" element={<Groups />} />
-                  <Route path="/admin-panel" element={<AdminDashboard />} />
-                  <Route path="/admin-dashboard" element={<AdminDashboard />} />
+                  <Route
+                    path="/admin-panel"
+                    element={
+                      <AdminOnlyRoute user={user}>
+                        <AdminDashboard />
+                      </AdminOnlyRoute>
+                    }
+                  />
+                  <Route
+                    path="/admin-dashboard"
+                    element={
+                      <AdminOnlyRoute user={user}>
+                        <AdminDashboard />
+                      </AdminOnlyRoute>
+                    }
+                  />
                 </Route>
                 <Route
                   path="/login"

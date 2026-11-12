@@ -31,7 +31,7 @@ if sys.version_info >= (3, 14):
 load_dotenv(BASE_DIR / ".env")
 
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") or os.environ.get("SECRET_KEY") or "django-insecure-chat-app-production-secret-key-replace-in-env"
-DEBUG = os.environ.get("DJANGO_DEBUG", "True").lower() in ("true", "1", "yes")
+DEBUG = (os.environ.get("DJANGO_DEBUG") or os.environ.get("DEBUG") or "True").lower() in ("true", "1", "yes")
 
 # Allowed Hosts
 raw_allowed_hosts = os.environ.get("DJANGO_ALLOWED_HOSTS") or os.environ.get("ALLOWED_HOSTS") or "*"
@@ -201,6 +201,8 @@ CSRF_TRUSTED_ORIGINS = [
     "http://127.0.0.1:3000",
     "https://localhost",
     "capacitor://localhost",
+    "https://*.duckdns.org",
+    "https://chat-nikkiii.duckdns.org",
 ]
 
 client_url = os.environ.get("CLIENT_URL", "").strip().rstrip("/")
@@ -256,9 +258,11 @@ USE_X_FORWARDED_PORT = True
 
 if not DEBUG:
     SECURE_SSL_REDIRECT = True
+    SECURE_REDIRECT_EXEMPT = [r"^$", r"^hello/?$", r"^health/?$", r"^ready/?$", r"^api/v1/(health|ready)/?$"]
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
 CSRF_COOKIE_HTTPONLY = True
+CSRF_FAILURE_VIEW = "core.urls.custom_csrf_failure"
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.environ.get("JWT_ACCESS_MINUTES", 60))),

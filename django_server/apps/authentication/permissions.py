@@ -1,17 +1,17 @@
 from rest_framework.permissions import BasePermission
 
 class IsAdminUserRole(BasePermission):
-    """Grants access only to users with role='admin', is_staff, or is_superuser."""
+    """Grants strict superadmin access (is_superuser or role='admin' with staff status)."""
 
     def has_permission(self, request, view):
         user = getattr(request, "user", None)
         return bool(
             user
             and user.is_authenticated
+            and user.is_active
             and (
-                getattr(user, "role", "user") == "admin"
-                or getattr(user, "is_staff", False)
-                or getattr(user, "is_superuser", False)
+                getattr(user, "is_superuser", False)
+                or (getattr(user, "role", "user") == "admin" and getattr(user, "is_staff", False))
             )
         )
 

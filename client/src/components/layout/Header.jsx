@@ -53,7 +53,7 @@ const Header = ({ unreadMessagesCount = 0 }) => {
 
   const { isSearch, isNotification, isNewGroup, notificationCount, themeMode } = useSelector(state => state.misc);
   const { user } = useSelector(state => state.auth);
-  const isAdminUser = Boolean(user && (user.role === "admin" || user.is_superuser || user.is_staff));
+  const isAdminUser = Boolean(user && (user.is_superuser || (user.role === "admin" && user.is_staff)));
 
   const [showStarred, setShowStarred] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);

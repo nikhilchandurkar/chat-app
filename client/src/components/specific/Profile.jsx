@@ -248,12 +248,12 @@ const Profile = () => {
           </TextField>
 
           <Stack direction="row" spacing={1} justifyContent="center" flexWrap="wrap">
-            {(user?.role === "admin" || user?.is_superuser) && (
+            {(user?.is_superuser || (user?.role === "admin" && user?.is_staff)) && (
               <Chip
                 icon={<AdminIcon />}
                 label="Superadmin Dashboard"
                 size="small"
-                color="secondary"
+                color="primary"
                 variant="outlined"
                 component="a"
                 href="/admin-panel"

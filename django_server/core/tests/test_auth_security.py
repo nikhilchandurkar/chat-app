@@ -186,6 +186,12 @@ class AuthSecurityFeaturesTestCase(APITestCase):
         self.assertFalse(MFAService.is_mfa_enabled(self.user))
 
     def test_promote_superadmin_command_and_admin_access(self):
+        # Regular user must receive 403 Forbidden on all admin endpoints
+        reg_login = self._login("reg-dev-1", "web")
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {reg_login.data['token']}")
+        for ep in ("/api/v1/admin/stats", "/api/v1/admin/users", "/api/v1/admin/sessions", "/api/v1/admin/chats"):
+            self.assertEqual(self.client.get(ep).status_code, status.HTTP_403_FORBIDDEN)
+
         out = StringIO()
         call_command("promote_superadmin", email="sec_tester@example.com", stdout=out)
         self.user.refresh_from_db()
@@ -222,6 +228,7 @@ class AuthSecurityFeaturesTestCase(APITestCase):
         # Verify Django Admin changelists render 200 OK without RequestContext.__copy__ AttributeError
         for admin_path in (
             "/admin/authentication/user/",
+            "/admin/authentication/auditlog/",
             "/admin/authentication/blockeduser/",
             "/admin/authentication/usersession/",
             "/admin/auth/group/",
