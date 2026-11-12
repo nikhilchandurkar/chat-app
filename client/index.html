@@ -39,6 +39,9 @@
         background: #F7F7F5;
       }
       #root { min-height: 100vh; }
+      @media print {
+        body.chitchat-screen-protected { display: none !important; }
+      }
     </style>
     <script>
       (function () {

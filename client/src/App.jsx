@@ -1,20 +1,35 @@
 import axios from "axios";
-import React, { Suspense, lazy, useEffect, useState } from "react";
+import React, { Suspense, lazy, useEffect, useRef, useState } from "react";
 import { Toaster } from "react-hot-toast";
 import { useDispatch, useSelector } from "react-redux";
-import { BrowserRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { App as CapacitorApp } from "@capacitor/app";
 import { Browser } from "@capacitor/browser";
 import ProtectRoute from "./components/auth/ProtectRoute";
 import { LayoutLoader } from "./components/layout/Loaders";
 import { server } from "./constants/config";
 import { userExists, userNotExists } from "./redux/reducers/auth";
+import {
+  setActiveChatId,
+  setIsMobile,
+  setIsMobileProfile,
+  setIsNewGroup,
+  setIsNotification,
+  setIsSearch,
+} from "./redux/reducers/misc";
 import { SocketProvider } from "./socket.jsx";
 import { isCapacitorNative } from "./utils/device";
 import { getPendingBrowserAndroidOAuthUrl, parseIncomingOAuthAppUrl } from "./utils/oauthDeepLink";
+import {
+  isPrivacyBlurEnabled,
+  isScreenshotBlockEnabled,
+  PREFS_EVENT,
+} from "./utils/feedback";
+import { syncScreenPrivacy } from "./utils/screenPrivacy";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { Box, Button, Paper, Stack, Typography } from "@mui/material";
 import CssBaseline from "@mui/material/CssBaseline";
+import toast from "react-hot-toast";
 
 import {
   lightBackground,
@@ -86,9 +101,35 @@ const AdminOnlyRoute = ({ user, children }) => {
 
 let handledColdStartOAuthUrl = null;
 
-/** Listens for incoming custom-scheme OAuth callbacks when running inside Capacitor Android. */
+/** Handles Capacitor deep links AND native Android hardware back button navigation. */
 const CapacitorDeepLinkHandler = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const dispatch = useDispatch();
+  const { activeChatId, isMobile, isMobileProfile, isSearch, isNotification, isNewGroup } = useSelector(
+    (state) => state.misc
+  );
+  const backStateRef = useRef({
+    activeChatId,
+    isMobile,
+    isMobileProfile,
+    isSearch,
+    isNotification,
+    isNewGroup,
+    pathname: location.pathname,
+  });
+
+  useEffect(() => {
+    backStateRef.current = {
+      activeChatId,
+      isMobile,
+      isMobileProfile,
+      isSearch,
+      isNotification,
+      isNewGroup,
+      pathname: location.pathname,
+    };
+  }, [activeChatId, isMobile, isMobileProfile, isSearch, isNotification, isNewGroup, location.pathname]);
 
   useEffect(() => {
     if (!isCapacitorNative()) return undefined;
@@ -100,18 +141,42 @@ const CapacitorDeepLinkHandler = () => {
       navigate(nextRoute, { replace: true });
     };
 
-    let listenerHandle;
+    let urlHandle;
+    let backHandle;
     let cancelled = false;
 
     CapacitorApp.addListener("appUrlOpen", ({ url }) => {
       if (!cancelled) handleIncomingUrl(url);
     })
       .then((handle) => {
-        if (cancelled) {
-          handle.remove();
-        } else {
-          listenerHandle = handle;
-        }
+        if (cancelled) handle.remove();
+        else urlHandle = handle;
+      })
+      .catch(() => {});
+
+    CapacitorApp.addListener("backButton", () => {
+      const st = backStateRef.current;
+      if (st.isSearch) {
+        dispatch(setIsSearch(false));
+      } else if (st.isNotification) {
+        dispatch(setIsNotification(false));
+      } else if (st.isNewGroup) {
+        dispatch(setIsNewGroup(false));
+      } else if (st.isMobileProfile) {
+        dispatch(setIsMobileProfile(false));
+      } else if (st.isMobile) {
+        dispatch(setIsMobile(false));
+      } else if (st.activeChatId) {
+        dispatch(setActiveChatId(null));
+      } else if (st.pathname !== "/" && st.pathname !== "/login") {
+        navigate("/", { replace: true });
+      } else {
+        CapacitorApp.minimizeApp().catch(() => {});
+      }
+    })
+      .then((handle) => {
+        if (cancelled) backHandle?.remove();
+        else backHandle = handle;
       })
       .catch(() => {});
 
@@ -126,11 +191,10 @@ const CapacitorDeepLinkHandler = () => {
 
     return () => {
       cancelled = true;
-      if (listenerHandle) {
-        listenerHandle.remove();
-      }
+      if (urlHandle) urlHandle.remove();
+      if (backHandle) backHandle.remove();
     };
-  }, [navigate]);
+  }, [dispatch, navigate]);
 
   return null;
 };
@@ -177,8 +241,59 @@ const App = () => {
   const { user, loader } = useSelector((state) => state.auth);
   const { themeMode, fontFamily } = useSelector((state) => state.misc);
   const [stayInBrowser, setStayInBrowser] = useState(false);
+  const [privacyShielded, setPrivacyShielded] = useState(false);
   const dispatch = useDispatch();
   const browserAndroidOAuthUrl = stayInBrowser ? null : getPendingBrowserAndroidOAuthUrl();
+
+  useEffect(() => {
+    syncScreenPrivacy();
+    const onPrefs = () => syncScreenPrivacy();
+    window.addEventListener(PREFS_EVENT, onPrefs);
+    return () => window.removeEventListener(PREFS_EVENT, onPrefs);
+  }, []);
+
+  // Privacy Shield: blur app switcher / hidden tab & deter Web PrintScreen captures
+  useEffect(() => {
+    const onVisibility = () => {
+      if (isPrivacyBlurEnabled()) {
+        setPrivacyShielded(document.hidden);
+      } else {
+        setPrivacyShielded(false);
+      }
+    };
+    const onKeyUp = (e) => {
+      if (!isScreenshotBlockEnabled()) return;
+      if (e.key === "PrintScreen") {
+        navigator.clipboard?.writeText?.("").catch(() => {});
+        toast("Screen capture protection is enabled", { icon: "🛡️" });
+      }
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("keyup", onKeyUp);
+
+    let stateHandle;
+    let cancelled = false;
+    if (isCapacitorNative()) {
+      CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+        if (!cancelled && isPrivacyBlurEnabled()) {
+          setPrivacyShielded(!isActive);
+        }
+      })
+        .then((h) => {
+          if (cancelled) h.remove();
+          else stateHandle = h;
+        })
+        .catch(() => {});
+    }
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("keyup", onKeyUp);
+      if (stateHandle) stateHandle.remove();
+    };
+  }, []);
 
   const theme = React.useMemo(() => createTheme({
     palette: {
@@ -301,6 +416,30 @@ const App = () => {
               </Routes>
             </Suspense>
             <Toaster position="bottom-center" />
+            {privacyShielded && (
+              <Box
+                sx={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 9998,
+                  bgcolor: "rgba(18, 22, 19, 0.88)",
+                  backdropFilter: "blur(18px)",
+                  WebkitBackdropFilter: "blur(18px)",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  color: "#FFFFFF",
+                }}
+              >
+                <Typography variant="h6" fontWeight={700}>
+                  ChitChat Privacy Shield
+                </Typography>
+                <Typography variant="caption" color="rgba(255,255,255,0.75)">
+                  Screen hidden while app is inactive
+                </Typography>
+              </Box>
+            )}
           </BrowserRouter>
         </SocketProvider>
       )}

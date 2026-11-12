@@ -23,7 +23,7 @@ const PinnedMessages = ({ chatId, onScrollToMessage }) => {
           borderLeft: "3px solid",
           borderLeftColor: "primary.main",
           borderRadius: "0 8px 8px 0",
-          bgcolor: "rgba(102,126,234,0.06)",
+          bgcolor: "rgba(35, 107, 74, 0.08)",
           overflow: "hidden",
         }}
       >

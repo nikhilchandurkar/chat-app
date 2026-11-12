@@ -65,40 +65,36 @@ const Notifications = () => {
 const NotificationItem = memo(({ sender, _id, handler }) => {
   const { name, avatar } = sender;
   return (
-    <ListItem divider>
+    <ListItem divider disableGutters sx={{ px: 0.5 }}>
       <Stack
         direction={"row"}
         alignItems={"center"}
-        spacing={"1rem"}
+        spacing={1.25}
         width={"100%"}
+        minWidth={0}
       >
         <Avatar
           src={avatar}
           alt={`${name}'s avatar`}
-          sx={{ width: 48, height: 48 }}
+          sx={{ width: 42, height: 42, flexShrink: 0, bgcolor: "#236B4A" }}
         />
 
         <Typography
-          variant="body1"
+          variant="body2"
+          fontWeight={600}
+          noWrap
           sx={{
-            flexGrow: 2,
-            display: "-webkit-box",
-            WebkitLineClamp: 1,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            width: "100%",
+            flex: 1,
+            minWidth: 0,
           }}
         >
           {`${name}`}
         </Typography>
 
         <Stack
-          direction={{
-            xs: "column",
-            sm: "row",
-          }}
-          spacing={1}
+          direction="row"
+          spacing={0.75}
+          flexShrink={0}
         >
           <Button
             variant="contained"

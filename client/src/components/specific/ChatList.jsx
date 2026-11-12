@@ -1,5 +1,7 @@
-import { Stack, Typography } from "@mui/material";
+import { Button, Stack, Typography } from "@mui/material";
 import React from "react";
+import { useDispatch } from "react-redux";
+import { setIsNewGroup, setIsSearch } from "../../redux/reducers/misc";
 import ChatItem from "../shared/ChatItem";
 
 const checkIsOnline = (members, onlineUsers) => {
@@ -42,6 +44,8 @@ const ChatList = ({
   typingChats = [],
   handleDeleteChat,
 }) => {
+  const dispatch = useDispatch();
+
   return (
     <Stack width={w} direction={"column"} overflow={"auto"} height={"100%"}>
       {chats?.length > 0 ? (
@@ -72,9 +76,19 @@ const ChatList = ({
           );
         })
       ) : (
-        <Stack alignItems="center" justifyContent="center" height="100%" color="text.secondary" spacing={1} p={2}>
-          <Typography variant="body1" fontWeight={500}>No chats yet</Typography>
-          <Typography variant="caption" textAlign="center">Search for friends to start chatting!</Typography>
+        <Stack alignItems="center" justifyContent="center" height="100%" color="text.secondary" spacing={1.5} p={2.5}>
+          <Typography variant="body1" fontWeight={600}>No conversations yet</Typography>
+          <Typography variant="caption" textAlign="center">
+            Find friends or start a group to begin chatting.
+          </Typography>
+          <Stack direction="row" spacing={1}>
+            <Button size="small" variant="contained" onClick={() => dispatch(setIsSearch(true))}>
+              Find People
+            </Button>
+            <Button size="small" variant="outlined" onClick={() => dispatch(setIsNewGroup(true))}>
+              New Group
+            </Button>
+          </Stack>
         </Stack>
       )}
     </Stack>

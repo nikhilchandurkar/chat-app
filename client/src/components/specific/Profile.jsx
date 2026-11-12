@@ -12,13 +12,20 @@ import {
 } from "@mui/icons-material";
 import {
   Avatar, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent,
-  DialogContentText, DialogTitle, Divider, IconButton, InputAdornment,
-  Stack, TextField, Typography
+  DialogContentText, DialogTitle, Divider, FormControlLabel, IconButton, InputAdornment,
+  Paper, Stack, Switch, TextField, Typography
 } from "@mui/material";
 import React, { useState, lazy, Suspense } from "react";
 import { useDispatch, useSelector } from "react-redux";
+import { useNavigate } from "react-router-dom";
 import { setFontFamily } from "../../redux/reducers/misc";
 import { formatTimeAgo, transformImage } from "../../lib/feature";
+import {
+  isPrivacyBlurEnabled,
+  isScreenshotBlockEnabled,
+  setPrivacyBlurPreference,
+  setScreenshotBlockPreference,
+} from "../../utils/feedback";
 import {
   useUpdateProfileMutation,
   useDeleteProfileMutation,
@@ -37,6 +44,10 @@ const Profile = () => {
   const { user } = useSelector((state) => state.auth);
   const { fontFamily } = useSelector((state) => state.misc);
   const dispatch = useDispatch();
+  const navigate = useNavigate();
+
+  const [blockScreenshots, setBlockScreenshots] = useState(isScreenshotBlockEnabled);
+  const [blurOnSwitch, setBlurOnSwitch] = useState(isPrivacyBlurEnabled);
 
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(user?.name || "");
@@ -143,7 +154,9 @@ const Profile = () => {
         <Avatar
           src={avatarPreview}
           alt={user?.name || "User"}
-          sx={{ width: 160, height: 160, objectFit: "cover", border: "4px solid", borderColor: "background.paper", fontSize: "4rem" }}
+          imgProps={{ draggable: false }}
+          onContextMenu={(e) => blockScreenshots && e.preventDefault()}
+          sx={{ width: { xs: 120, sm: 150 }, height: { xs: 120, sm: 150 }, objectFit: "cover", border: "4px solid", borderColor: "background.paper", fontSize: "3.2rem", userSelect: "none" }}
         >
           {user?.name ? user.name[0].toUpperCase() : user?.username ? user.username[0].toUpperCase() : "U"}
         </Avatar>
@@ -247,7 +260,7 @@ const Profile = () => {
             <option value="Roboto">Roboto (Classic Material)</option>
           </TextField>
 
-          <Stack direction="row" spacing={1} justifyContent="center" flexWrap="wrap">
+          <Stack direction="row" spacing={1} justifyContent="center" flexWrap="wrap" useFlexGap>
             {(user?.is_superuser || (user?.role === "admin" && user?.is_staff)) && (
               <Chip
                 icon={<AdminIcon />}
@@ -255,8 +268,7 @@ const Profile = () => {
                 size="small"
                 color="primary"
                 variant="outlined"
-                component="a"
-                href="/admin-panel"
+                onClick={() => navigate("/admin-panel")}
                 clickable
               />
             )}
@@ -268,6 +280,40 @@ const Profile = () => {
               onClick={() => setIsSecurityOpen(true)}
             />
           </Stack>
+
+          <Paper variant="outlined" sx={{ width: "100%", maxWidth: "350px", p: 1.5, borderRadius: 2 }}>
+            <Typography variant="caption" fontWeight={700} color="primary" display="block" mb={0.5}>
+              Screen Privacy Shield
+            </Typography>
+            <Stack spacing={0.25}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={blockScreenshots}
+                    onChange={(e) => {
+                      setBlockScreenshots(e.target.checked);
+                      setScreenshotBlockPreference(e.target.checked);
+                    }}
+                  />
+                }
+                label={<Typography variant="caption">Block Screenshots &amp; Screen Recording</Typography>}
+              />
+              <FormControlLabel
+                control={
+                  <Switch
+                    size="small"
+                    checked={blurOnSwitch}
+                    onChange={(e) => {
+                      setBlurOnSwitch(e.target.checked);
+                      setPrivacyBlurPreference(e.target.checked);
+                    }}
+                  />
+                }
+                label={<Typography variant="caption">Blur Preview When Switching Apps</Typography>}
+              />
+            </Stack>
+          </Paper>
 
           <Button
             variant="outlined"

@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { extractBurstEmoji, getChatFontSize, isEnterToSendEnabled } from "../utils/feedback";
+import {
+  extractBurstEmoji,
+  getChatFontSize,
+  isEnterToSendEnabled,
+  isPrivacyBlurEnabled,
+  isScreenshotBlockEnabled,
+} from "../utils/feedback";
 
 describe("Chat UX feedback helpers", () => {
   it("extracts celebration emojis from short festive messages only", () => {
@@ -12,6 +18,8 @@ describe("Chat UX feedback helpers", () => {
   it("provides sensible defaults in non-browser environment", () => {
     expect(getChatFontSize()).toBe(14.5);
     expect(isEnterToSendEnabled()).toBe(true);
+    expect(isScreenshotBlockEnabled()).toBe(true);
+    expect(isPrivacyBlurEnabled()).toBe(true);
   });
 });
 

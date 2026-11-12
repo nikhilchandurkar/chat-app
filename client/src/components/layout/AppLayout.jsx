@@ -1,4 +1,5 @@
-import { Drawer, Grid, Skeleton, Box } from '@mui/material';
+import { Drawer, Grid, Skeleton, Box, Stack, Typography, IconButton } from '@mui/material';
+import { Close as CloseIcon, Home as HomeIcon } from '@mui/icons-material';
 import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import toast from 'react-hot-toast';
 import { useDispatch, useSelector } from 'react-redux';
@@ -10,7 +11,8 @@ import ChatList from '../specific/ChatList';
 import Profile from '../specific/Profile';
 import Header from './Header';
 import DeleteChatMenu from '../dialogs/DeleteChatMenu';
-import { incrementNotificationCount, setIsMobile, setIsMobileProfile, setNotificationCount, setIsDeleteMenu, setSelectedDeleteChat } from '../../redux/reducers/misc';
+import { incrementNotificationCount, setActiveChatId, setIsMobile, setIsMobileProfile, setNotificationCount, setIsDeleteMenu, setSelectedDeleteChat } from '../../redux/reducers/misc';
+import { retainProtectedSurface } from '../../utils/screenPrivacy';
 
 
 
@@ -125,8 +127,12 @@ const AppLayout = () => (WrappedComponent) => {
       dispatch(setSelectedDeleteChat({ chatId: _id, groupChat }));
     };
     
-    const handleMobileClose = () => dispatch(setIsMobile(false))
+    const handleMobileClose = () => dispatch(setIsMobile(false));
 
+    useEffect(() => {
+      if (!isMobileProfile) return undefined;
+      return retainProtectedSurface();
+    }, [isMobileProfile]);
 
     return (
       <>
@@ -134,28 +140,57 @@ const AppLayout = () => (WrappedComponent) => {
         {isLoading ? (
           <Skeleton />
         ) : (
-          <Drawer 
+          <Drawer
             open={isMobile}
             onClose={handleMobileClose}
+            PaperProps={{ sx: { width: "min(82vw, 320px)" } }}
           >
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              px={2}
+              py={1.25}
+              borderBottom="1px solid"
+              borderColor="divider"
+            >
+              <Typography variant="subtitle1" fontWeight={700}>
+                Conversations
+              </Typography>
+              <Stack direction="row" spacing={0.5}>
+                <IconButton
+                  size="small"
+                  aria-label="Go to Home screen"
+                  onClick={() => {
+                    dispatch(setActiveChatId(null));
+                    dispatch(setIsMobile(false));
+                  }}
+                >
+                  <HomeIcon fontSize="small" color="primary" />
+                </IconButton>
+                <IconButton size="small" aria-label="Close drawer" onClick={handleMobileClose}>
+                  <CloseIcon fontSize="small" />
+                </IconButton>
+              </Stack>
+            </Stack>
             <ChatList
-              w="70vw"
+              w="100%"
               chats={data?.chats}
               chatId={chatId}
+              user={user}
               onlineUsers={onlineUsers}
               newMessagesAlert={newMessagesAlert}
               typingChats={typingChats}
-              // handleDeleteChat={handleDeleteChats}
             />
           </Drawer>
         )}
 
-        <Drawer 
-          anchor="right" 
-          open={isMobileProfile} 
+        <Drawer
+          anchor="right"
+          open={isMobileProfile}
           onClose={() => dispatch(setIsMobileProfile(false))}
         >
-          <Box sx={{ width: "80vw", maxWidth: 400, height: "100%", overflowY: "auto", p: 2 }}>
+          <Box sx={{ width: "min(86vw, 380px)", height: "100%", overflowY: "auto", p: 2 }}>
             <Profile />
           </Box>
         </Drawer>

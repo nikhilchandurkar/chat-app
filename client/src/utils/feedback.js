@@ -58,6 +58,32 @@ export function isShakeEnabled() {
   return readBoolPref("chat_shake_enabled", true);
 }
 
+export function isScreenshotBlockEnabled() {
+  return readBoolPref("chat_block_screenshots", true);
+}
+
+export function setScreenshotBlockPreference(enabled) {
+  try {
+    localStorage.setItem("chat_block_screenshots", enabled ? "true" : "false");
+    window.dispatchEvent(new Event(PREFS_EVENT));
+  } catch {
+    // ignore storage restriction
+  }
+}
+
+export function isPrivacyBlurEnabled() {
+  return readBoolPref("chat_privacy_blur_switch", true);
+}
+
+export function setPrivacyBlurPreference(enabled) {
+  try {
+    localStorage.setItem("chat_privacy_blur_switch", enabled ? "true" : "false");
+    window.dispatchEvent(new Event(PREFS_EVENT));
+  } catch {
+    // ignore storage restriction
+  }
+}
+
 export function getShakeAction() {
   try {
     return localStorage.getItem("chat_shake_action") || "wave";

@@ -18,6 +18,7 @@ import {
   Switch,
   FormControlLabel,
   Backdrop,
+  Chip,
 } from "@mui/material";
 import { 
   Close as CloseIcon, 
@@ -27,7 +28,8 @@ import {
   Check as CheckIcon,
   PersonAdd as PersonAddIcon,
   ExitToApp as ExitToAppIcon,
-  Delete as DeleteIcon
+  Delete as DeleteIcon,
+  Security as SecurityIcon,
 } from "@mui/icons-material";
 import { 
   useLazyGetChatMediaQuery, 
@@ -44,6 +46,8 @@ import { useSelector, useDispatch } from "react-redux";
 import { useAsyncMutation } from "../../hooks/hook";
 import { useNavigate } from "react-router-dom";
 import { setIsAddMember } from "../../redux/reducers/misc";
+import { retainProtectedSurface } from "../../utils/screenPrivacy";
+import { isScreenshotBlockEnabled } from "../../utils/feedback";
 
 const ConfirmDeleteDialog = lazy(() => import("../dialogs/ConfirmDeleteDialog"));
 const AddMemberDialog = lazy(() => import("../dialogs/AddMemberDialog"));
@@ -85,8 +89,25 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
   );
 
   const groupDetails = chatData?.chat;
+  const myIdStr = String(user?._id || user?.id || "");
+  const dmPartner =
+    !isGroupChat && Array.isArray(groupDetails?.members)
+      ? groupDetails.members.find((m) => String(m?._id || m?.id || m) !== myIdStr)
+      : null;
+  const profileTitle = isGroupChat
+    ? groupDetails?.name
+    : dmPartner?.name || dmPartner?.username || groupDetails?.name || "Contact";
+  const profileAvatar = isGroupChat
+    ? avatarPreview || groupDetails?.avatar?.[0]
+    : dmPartner?.avatar?.url || dmPartner?.avatar || groupDetails?.avatar?.[0];
+
   const isCreator = groupDetails?.creator === user?._id;
   const isAdmin = isCreator || groupDetails?.admins?.includes(user?._id);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    return retainProtectedSurface();
+  }, [open]);
 
   useEffect(() => {
     if (open && chatId && tabIndex >= (isGroupChat ? 1 : 0)) {
@@ -179,9 +200,12 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
 
   return (
     <Drawer anchor="right" open={open} onClose={onClose}>
-      <Box sx={{ width: 350, display: "flex", flexDirection: "column", height: "100%" }}>
+      <Box
+        onContextMenu={(e) => isScreenshotBlockEnabled() && e.preventDefault()}
+        sx={{ width: { xs: "88vw", sm: 370 }, maxWidth: "100vw", display: "flex", flexDirection: "column", height: "100%", userSelect: "none" }}
+      >
         <Box sx={{ p: 2, display: "flex", alignItems: "center", justifyContent: "space-between", bgcolor: "primary.main", color: "white" }}>
-          <Typography variant="h6">{isGroupChat ? "Group Info" : "Contact Info"}</Typography>
+          <Typography variant="h6" fontWeight={700}>{isGroupChat ? "Group Info" : "Contact Info"}</Typography>
           <IconButton onClick={onClose} sx={{ color: "white" }}>
             <CloseIcon />
           </IconButton>
@@ -190,14 +214,15 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
         {isChatLoading ? (
           <CircularProgress sx={{ m: "auto", mt: 4 }} />
         ) : (
-          <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", p: 3, bgcolor: "rgba(0,0,0,0.03)" }}>
-            {isAdmin ? (
+          <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", p: 2.5, bgcolor: "rgba(35,107,74,0.04)" }}>
+            {isGroupChat && isAdmin ? (
               <label htmlFor="group-avatar-upload" style={{ cursor: "pointer", position: "relative" }}>
                 <Avatar 
-                  src={avatarPreview || groupDetails?.avatar?.[0]} 
-                  sx={{ width: 120, height: 120, mb: 2, fontSize: "3rem", transition: "0.2s", "&:hover": { opacity: 0.7 } }}
+                  src={profileAvatar}
+                  imgProps={{ draggable: false }}
+                  sx={{ width: 112, height: 112, mb: 1.5, fontSize: "2.8rem", transition: "0.2s", "&:hover": { opacity: 0.7 } }}
                 >
-                  {groupDetails?.name ? groupDetails.name[0].toUpperCase() : "U"}
+                  {profileTitle ? profileTitle[0].toUpperCase() : "U"}
                 </Avatar>
                 <input 
                   type="file" 
@@ -209,10 +234,11 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
               </label>
             ) : (
               <Avatar 
-                src={groupDetails?.avatar?.[0]} 
-                sx={{ width: 120, height: 120, mb: 2, fontSize: "3rem" }}
+                src={profileAvatar}
+                imgProps={{ draggable: false }}
+                sx={{ width: 112, height: 112, mb: 1.5, fontSize: "2.8rem", bgcolor: "#236B4A" }}
               >
-                {groupDetails?.name ? groupDetails.name[0].toUpperCase() : "U"}
+                {profileTitle ? profileTitle[0].toUpperCase() : "U"}
               </Avatar>
             )}
             
@@ -230,14 +256,32 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat }) => {
               </Stack>
             ) : (
               <Stack direction="row" alignItems="center" spacing={1}>
-                <Typography variant="h5" fontWeight="bold">{groupDetails?.name}</Typography>
-                {isAdmin && (
+                <Typography variant="h6" fontWeight="bold" textAlign="center">{profileTitle}</Typography>
+                {isGroupChat && isAdmin && (
                   <IconButton size="small" onClick={() => setIsEditingName(true)}>
                     <EditIcon fontSize="small" />
                   </IconButton>
                 )}
               </Stack>
             )}
+            {!isGroupChat && dmPartner?.username && (
+              <Typography variant="caption" color="text.secondary">
+                @{dmPartner.username}
+              </Typography>
+            )}
+            {!isGroupChat && dmPartner?.bio && (
+              <Typography variant="body2" color="text.secondary" textAlign="center" mt={0.5}>
+                {dmPartner.bio}
+              </Typography>
+            )}
+            <Chip
+              icon={<SecurityIcon sx={{ fontSize: 15 }} />}
+              label="Screenshot Protection Active"
+              size="small"
+              color="success"
+              variant="outlined"
+              sx={{ mt: 1 }}
+            />
             
             {isGroupChat && (
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
