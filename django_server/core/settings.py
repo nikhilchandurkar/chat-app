@@ -1,5 +1,6 @@
 import os
 import re
+import sys
 import urllib.parse as urlparse
 from pathlib import Path
 from datetime import timedelta
@@ -7,23 +8,24 @@ from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Python 3.15+ Compatibility: Patch Django Context.__copy__ for instrumented test rendering
-import copy
-import django.template.context as _dtc
+# Python 3.14+ Compatibility: Patch Django Context.__copy__ while preserving full __dict__ attributes
+if sys.version_info >= (3, 14):
+    import copy
+    import django.template.context as _dtc
 
-def _safe_base_context_copy(self):
-    obj = self.__class__.__new__(self.__class__)
-    obj.dicts = self.dicts[:]
-    return obj
+    def _safe_base_context_copy(self):
+        obj = self.__class__.__new__(self.__class__)
+        obj.__dict__ = copy.copy(self.__dict__)
+        obj.dicts = self.dicts[:]
+        return obj
 
-def _safe_context_copy(self):
-    obj = self.__class__.__new__(self.__class__)
-    obj.dicts = self.dicts[:]
-    obj.render_context = copy.copy(self.render_context)
-    return obj
+    def _safe_context_copy(self):
+        obj = _safe_base_context_copy(self)
+        obj.render_context = copy.copy(self.render_context)
+        return obj
 
-_dtc.BaseContext.__copy__ = _safe_base_context_copy
-_dtc.Context.__copy__ = _safe_context_copy
+    _dtc.BaseContext.__copy__ = _safe_base_context_copy
+    _dtc.Context.__copy__ = _safe_context_copy
 
 # Load environment variables
 load_dotenv(BASE_DIR / ".env")

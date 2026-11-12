@@ -218,3 +218,15 @@ class AuthSecurityFeaturesTestCase(APITestCase):
         self.assertIn("Live System Overview", html)
         self.assertIn("/admin/authentication/usermfa/", html)
         self.assertIn("/admin/authentication/qrloginsession/", html)
+
+        # Verify Django Admin changelists render 200 OK without RequestContext.__copy__ AttributeError
+        for admin_path in (
+            "/admin/authentication/user/",
+            "/admin/authentication/blockeduser/",
+            "/admin/authentication/usersession/",
+            "/admin/auth/group/",
+            "/admin/chat/conversation/",
+            "/admin/messages_app/message/",
+        ):
+            res_cl = self.client.get(admin_path)
+            self.assertEqual(res_cl.status_code, status.HTTP_200_OK, f"Admin changelist failed on {admin_path}")
