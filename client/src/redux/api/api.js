@@ -207,6 +207,15 @@ const api = createApi({
       invalidatesTags: ["Chat"],
     }),
 
+    clearChat: builder.mutation({
+      query: (chatId) => ({
+        url: `chat/clear/${chatId}`,
+        method: "POST",
+        credentials: "include",
+      }),
+      invalidatesTags: ["Chat"],
+    }),
+
     leaveGroup: builder.mutation({
       query: (chatId) => ({
         url: `chat/leave/${chatId}`,
@@ -270,8 +279,8 @@ const api = createApi({
     }),
 
     searchMessages: builder.query({
-      query: ({ chatId, q, page = 1 }) => ({
-        url: `message/search/${chatId}?q=${encodeURIComponent(q)}&page=${page}`,
+      query: ({ chatId, q = "", page = 1, senderId = "", fuzzy = true }) => ({
+        url: `message/search/${chatId}?q=${encodeURIComponent(q)}&page=${page}&fuzzy=${fuzzy}${senderId ? `&senderId=${encodeURIComponent(senderId)}` : ""}`,
         credentials: "include",
       }),
       keepUnusedDataFor: 0,
@@ -634,6 +643,7 @@ export const {
   useRemoveGroupMemberMutation,
   useAddGroupMembersMutation,
   useDeleteChatMutation,
+  useClearChatMutation,
   useLeaveGroupMutation,
   useUpdateProfileMutation,
   useDeleteProfileMutation,

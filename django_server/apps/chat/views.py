@@ -168,7 +168,9 @@ class MyChatsView(APIView):
 
     def get(self, request):
         memberships = list(
-            ConversationMember.objects.filter(user=request.user).select_related("conversation")
+            ConversationMember.objects.filter(
+                user=request.user, is_deleted_for_user=False
+            ).select_related("conversation")
         )
         if not memberships:
             return Response({"success": True, "chats": []})
@@ -210,7 +212,8 @@ class MyChatsView(APIView):
         results = []
         for mem in memberships:
             c = mem.conversation
-            last_msg = last_msg_by_conv.get(c.id)
+            raw_last = last_msg_by_conv.get(c.id)
+            last_msg = raw_last if (raw_last and (not mem.cleared_at or raw_last.created_at > mem.cleared_at)) else None
             co_members = members_by_conv.get(c.id, [])
 
             if not c.group_chat:
@@ -323,11 +326,53 @@ class ChatDetailsView(APIView):
 
     def delete(self, request, id):
         chat = get_object_or_404(Conversation, id=id)
-        if chat.creator != request.user and not chat.admins.filter(id=request.user.id).exists():
+        mem = chat.member_records.filter(user=request.user).first()
+        if not mem:
             return Response({"success": False, "message": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
 
+        # In 1-on-1 DMs, deleting removes & clears chat only for the requesting user (never wipes the peer's history)
+        if not chat.group_chat:
+            mem.cleared_at = timezone.now()
+            mem.is_deleted_for_user = True
+            mem.unread_count = 0
+            mem.save(update_fields=["cleared_at", "is_deleted_for_user", "unread_count"])
+            _emit_member_sync(request.user.id, id)
+            return Response({"success": True, "message": "Chat deleted for you."})
+
+        if chat.creator != request.user and not chat.admins.filter(id=request.user.id).exists():
+            return Response({"success": False, "message": "Only group admins can delete this group."}, status=status.HTTP_403_FORBIDDEN)
+
         chat.delete()
-        return Response({"success": True, "message": "Conversation deleted."})
+        return Response({"success": True, "message": "Group deleted."})
+
+
+class ClearChatView(APIView):
+    """Clears all existing messages in a chat ONLY for the requesting user without affecting other members."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        chat = get_object_or_404(Conversation, id=id)
+        mem = chat.member_records.filter(user=request.user).first()
+        if not mem:
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        mem.cleared_at = timezone.now()
+        mem.unread_count = 0
+        mem.save(update_fields=["cleared_at", "unread_count"])
+
+        entry = OutboxService.create_outbox_event(
+            event_type="chat.cleared",
+            conversation_id="",
+            payload={
+                "event": "chat.cleared",
+                "legacy_event": "REFETCH_CHATS",
+                "chatId": str(chat.id),
+                "clearedAt": mem.cleared_at.isoformat(),
+                "recipient_ids": [str(request.user.id)],
+            },
+        )
+        OutboxService.publish_item(entry)
+        return Response({"success": True, "message": "Chat cleared for you.", "clearedAt": mem.cleared_at.isoformat()})
 
 
 class AddMembersView(APIView):

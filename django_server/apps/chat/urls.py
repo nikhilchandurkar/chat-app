@@ -22,6 +22,7 @@ from .views import (
     GetPinnedMessagesView,
     PinMessageActionView,
     ManageTopicView,
+    ClearChatView,
 )
 
 urlpatterns = [
@@ -43,6 +44,8 @@ urlpatterns = [
     path("remove-admin/", ManageAdminView.as_view(action="remove"), name="chat-remove-admin-slash"),
     path("leave/<str:id>", LeaveGroupView.as_view(), name="chat-leave"),
     path("leave/<str:id>/", LeaveGroupView.as_view(), name="chat-leave-slash"),
+    path("clear/<str:id>", ClearChatView.as_view(), name="chat-clear"),
+    path("clear/<str:id>/", ClearChatView.as_view(), name="chat-clear-slash"),
     path("pin/<str:id>", TogglePinConversationView.as_view(), name="chat-pin"),
     path("pin/<str:id>/", TogglePinConversationView.as_view(), name="chat-pin-slash"),
     path("mute/<str:id>", ToggleMuteConversationView.as_view(), name="chat-mute"),

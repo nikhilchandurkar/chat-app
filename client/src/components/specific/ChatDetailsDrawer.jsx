@@ -34,6 +34,8 @@ import {
   Security as SecurityIcon,
   Share as ShareIcon,
   Timer as TimerIcon,
+  CleaningServices as ClearIcon,
+  Wallpaper as WallpaperIcon,
 } from "@mui/icons-material";
 import { 
   useLazyGetChatMediaQuery, 
@@ -44,6 +46,7 @@ import {
   useRemoveAdminMutation,
   useToggleRestrictMessagesMutation,
   useDeleteChatMutation,
+  useClearChatMutation,
   useUpdateEphemeralTtlMutation,
   useGenerateInviteLinkMutation,
   useRevokeInviteLinkMutation,
@@ -88,7 +91,48 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
   const [removeAdmin] = useAsyncMutation(useRemoveAdminMutation);
   const [toggleRestrict, isLoadingRestrict] = useAsyncMutation(useToggleRestrictMessagesMutation);
   const [deleteGroup, isLoadingDeleteGroup] = useAsyncMutation(useDeleteChatMutation);
+  const [clearChatMutation, { isLoading: isClearingChat }] = useClearChatMutation();
   const [updateEphemeralTtl, { isLoading: isUpdatingTtl }] = useUpdateEphemeralTtlMutation();
+  const [wallpaper, setWallpaper] = useState(() => {
+    try {
+      return localStorage.getItem(`chitchat_wallpaper_${chatId}`) || "default";
+    } catch {
+      return "default";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      setWallpaper(localStorage.getItem(`chitchat_wallpaper_${chatId}`) || "default");
+    } catch {
+      setWallpaper("default");
+    }
+  }, [chatId]);
+
+  const handleSelectWallpaper = (wp) => {
+    setWallpaper(wp);
+    try {
+      localStorage.setItem(`chitchat_wallpaper_${chatId}`, wp);
+      window.dispatchEvent(new CustomEvent("chitchat:wallpaper-changed", { detail: { chatId, wallpaper: wp } }));
+    } catch {
+      // ignore
+    }
+  };
+
+  const handleClearChatHistory = async () => {
+    if (!chatId) return;
+    try {
+      await clearChatMutation(chatId).unwrap();
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(`chitchat_draft_${chatId}`);
+        window.dispatchEvent(new CustomEvent("chitchat:chat-cleared", { detail: { chatId } }));
+      }
+      toast.success("Chat cleared for you");
+      onClose();
+    } catch {
+      toast.error("Failed to clear chat");
+    }
+  };
   const [generateInviteLink, { isLoading: isGeneratingInvite }] = useGenerateInviteLinkMutation();
   const [revokeInviteLink] = useRevokeInviteLinkMutation();
   const [generatedInvite, setGeneratedInvite] = useState(null);
@@ -122,7 +166,9 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
   }, [open]);
 
   useEffect(() => {
-    if (open && chatId && tabIndex >= (isGroupChat ? 1 : 0)) {
+    const mediaTabIdx = isGroupChat ? 1 : 0;
+    const docsTabIdx = isGroupChat ? 2 : 1;
+    if (open && chatId && (tabIndex === mediaTabIdx || tabIndex === docsTabIdx)) {
       fetchMedia({ chatId, page: 1 })
         .unwrap()
         .then((res) => {
@@ -317,6 +363,7 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
           {isGroupChat && <Tab label="Members" />}
           <Tab label="Media" />
           <Tab label="Docs" />
+          <Tab label="Settings" />
         </Tabs>
 
         <Box sx={{ flex: 1, overflowY: "auto", p: 2 }}>
@@ -509,8 +556,14 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
                 </>
               )}
 
-              {!isGroupChat && (
-                <Box px={2} pt={1}>
+              {!isGroupChat && null}
+            </Stack>
+          )}
+
+          {((isGroupChat && tabIndex === 3) || (!isGroupChat && tabIndex === 2)) && (
+            <Stack spacing={2}>
+              {(!isGroupChat || isAdmin) && (
+                <Box>
                   <Stack direction="row" alignItems="center" spacing={0.75} mb={0.75}>
                     <TimerIcon fontSize="small" color="primary" />
                     <Typography variant="subtitle2" fontWeight={600}>Disappearing Messages</Typography>
@@ -554,17 +607,56 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
                 </Box>
               )}
 
-              {/* Leave/Delete Group */}
-              <Divider sx={{ my: 2 }} />
-              <Button 
-                startIcon={isCreator ? <DeleteIcon /> : <ExitToAppIcon />}
-                color="error"
-                variant="text"
-                onClick={() => setConfirmDeleteDialog(true)}
+              <Divider />
+              <Stack spacing={1}>
+                <Stack direction="row" alignItems="center" spacing={0.75}>
+                  <WallpaperIcon fontSize="small" color="primary" />
+                  <Typography variant="subtitle2" fontWeight={600}>Chat Wallpaper</Typography>
+                </Stack>
+                <Stack direction="row" spacing={0.6} flexWrap="wrap" useFlexGap>
+                  {[
+                    { id: "default", label: "Default" },
+                    { id: "mint", label: "Mint Mist" },
+                    { id: "sand", label: "Warm Sand" },
+                    { id: "ocean", label: "Ocean Mist" },
+                    { id: "midnight", label: "Midnight" },
+                  ].map((wp) => (
+                    <Chip
+                      key={wp.id}
+                      size="small"
+                      clickable
+                      label={wp.label}
+                      color={wallpaper === wp.id ? "primary" : "default"}
+                      variant={wallpaper === wp.id ? "filled" : "outlined"}
+                      onClick={() => handleSelectWallpaper(wp.id)}
+                    />
+                  ))}
+                </Stack>
+              </Stack>
+
+              <Divider />
+              <Button
+                startIcon={<ClearIcon />}
+                color="warning"
+                variant="outlined"
+                disabled={isClearingChat}
+                onClick={handleClearChatHistory}
                 fullWidth
               >
-                {isCreator ? "Delete Group" : "Leave Group"}
+                {isClearingChat ? "Clearing..." : "Clear Chat History (For Me)"}
               </Button>
+
+              {isGroupChat && (
+                <Button
+                  startIcon={isCreator ? <DeleteIcon /> : <ExitToAppIcon />}
+                  color="error"
+                  variant="text"
+                  onClick={() => setConfirmDeleteDialog(true)}
+                  fullWidth
+                >
+                  {isCreator ? "Delete Group" : "Leave Group"}
+                </Button>
+              )}
             </Stack>
           )}
 

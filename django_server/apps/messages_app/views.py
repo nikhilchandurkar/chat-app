@@ -161,7 +161,10 @@ class SendMessageView(APIView):
             conversation.updated_at = timezone.now()
             conversation.save(update_fields=["updated_at"])
 
-            # Increment unread count for recipients
+            # Increment unread count for recipients & restore any user who previously hid the DM
+            ConversationMember.objects.filter(
+                conversation=conversation, is_deleted_for_user=True
+            ).update(is_deleted_for_user=False)
             ConversationMember.objects.filter(
                 conversation=conversation
             ).exclude(user=request.user).update(unread_count=models.F("unread_count") + 1)
@@ -211,7 +214,8 @@ class GetMessagesView(APIView):
         from .interactive import apply_seen_ephemeral_expiry, flush_due_scheduled_messages
 
         conversation = get_object_or_404(Conversation, id=id)
-        if not conversation.member_records.filter(user=request.user).exists():
+        member_rec = conversation.member_records.filter(user=request.user).first()
+        if not member_rec:
             return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
         flush_due_scheduled_messages(conversation_id=conversation.id)
@@ -221,7 +225,7 @@ class GetMessagesView(APIView):
         topic = (request.query_params.get("topic") or "").strip().lstrip("#")
         now = timezone.now()
 
-        # Exclude messages deleted for this user, expired messages, future scheduled, and thread replies
+        # Exclude messages deleted for this user, cleared before user's cleared_at, expired messages, future scheduled, and thread replies
         messages_qs = (
             Message.objects.filter(conversation=conversation, delivery_pending=False, thread_root_id__isnull=True)
             .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
@@ -229,6 +233,8 @@ class GetMessagesView(APIView):
             .select_related("sender")
             .order_by("-created_at")
         )
+        if member_rec.cleared_at:
+            messages_qs = messages_qs.filter(created_at__gt=member_rec.cleared_at)
         if topic and topic.lower() != "all":
             messages_qs = messages_qs.filter(topic_name=topic)
 
@@ -514,28 +520,72 @@ class SearchMessagesView(APIView):
     throttle_classes = [SearchThrottle]
 
     def get(self, request, chat_id):
+        from .interactive import fuzzy_match_score
+
         conversation = get_object_or_404(Conversation, id=chat_id)
-        if not conversation.member_records.filter(user=request.user).exists():
+        member_rec = conversation.member_records.filter(user=request.user).first()
+        if not member_rec:
             return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
-        query = request.query_params.get("q", "").strip().lower()
+        query = request.query_params.get("q", "").strip()
+        sender_id_filter = request.query_params.get("senderId", "").strip()
+        use_fuzzy = str(request.query_params.get("fuzzy", "true")).lower() != "false"
+        page = max(1, int(request.query_params.get("page", 1)))
+        limit = 20
         now = timezone.now()
 
-        # Exclude deleted messages and expired messages
-        all_messages = Message.objects.filter(
-            conversation=conversation,
-            is_deleted=False
-        ).filter(
-            Q(expires_at__isnull=True) | Q(expires_at__gt=now)
-        ).select_related("sender").order_by("-created_at")
+        if not query and not sender_id_filter:
+            return Response({"success": True, "messages": [], "totalPages": 0})
 
-        matched = []
+        all_messages = (
+            Message.objects.filter(conversation=conversation, is_deleted=False, delivery_pending=False)
+            .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+            .filter(~Exists(DeletedMessageForUser.objects.filter(message_id=OuterRef("pk"), user=request.user)))
+            .select_related("sender")
+            .order_by("-created_at")[:600]
+        )
+        if member_rec.cleared_at:
+            all_messages = [m for m in all_messages if m.created_at > member_rec.cleared_at]
+
+        scored = []
+        threshold = 0.56 if use_fuzzy else 0.9
         for m in all_messages:
-            decrypted = m.decrypted_content.lower()
-            if query in decrypted:
-                matched.append(MessageSerializer(m).data)
+            if sender_id_filter and str(m.sender_id) != sender_id_filter:
+                continue
 
-        return Response({"success": True, "messages": matched[:50]})
+            decrypted = m.decrypted_content or ""
+            att_text = " ".join(
+                str(a.get("name") or a.get("question") or "")
+                for a in (m.attachments or [])
+                if isinstance(a, dict)
+            )
+            sender_text = f"{m.sender.name or ''} {m.sender.username or ''}".strip()
+            searchable = f"{decrypted} {att_text}".strip()
+
+            if not query:
+                score = 1.0
+            else:
+                text_score = fuzzy_match_score(query, searchable)
+                sender_score = fuzzy_match_score(query, sender_text) * 0.85
+                score = max(text_score, sender_score)
+
+            if score >= threshold:
+                item = MessageSerializer(m, context={"request": request}).data
+                item["matchScore"] = int(round(score * 100))
+                scored.append((score, m.created_at, item))
+
+        scored.sort(key=lambda tup: (tup[0], tup[1]), reverse=True)
+        total = len(scored)
+        total_pages = max(1, (total + limit - 1) // limit) if total else 0
+        start = (page - 1) * limit
+        page_items = [tup[2] for tup in scored[start : start + limit]]
+
+        return Response({
+            "success": True,
+            "messages": page_items,
+            "totalPages": total_pages,
+            "totalMatches": total,
+        })
 
 
 class GetChatMediaView(APIView):
@@ -543,16 +593,20 @@ class GetChatMediaView(APIView):
 
     def get(self, request, chat_id):
         conversation = get_object_or_404(Conversation, id=chat_id)
-        if not conversation.member_records.filter(user=request.user).exists():
+        member_rec = conversation.member_records.filter(user=request.user).first()
+        if not member_rec:
             return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
         now = timezone.now()
-        messages_with_media = Message.objects.filter(
-            conversation=conversation,
-            is_deleted=False
-        ).filter(
-            Q(expires_at__isnull=True) | Q(expires_at__gt=now)
-        ).exclude(attachments=[]).order_by("-created_at")[:100]
+        qs = (
+            Message.objects.filter(conversation=conversation, is_deleted=False, delivery_pending=False)
+            .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+            .filter(~Exists(DeletedMessageForUser.objects.filter(message_id=OuterRef("pk"), user=request.user)))
+            .exclude(attachments=[])
+        )
+        if member_rec.cleared_at:
+            qs = qs.filter(created_at__gt=member_rec.cleared_at)
+        messages_with_media = qs.order_by("-created_at")[:100]
 
         all_attachments = []
         for m in messages_with_media:

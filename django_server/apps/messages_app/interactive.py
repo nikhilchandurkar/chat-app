@@ -1,8 +1,48 @@
 import html
 import random
 from datetime import timedelta
+from difflib import SequenceMatcher
 import requests
 from django.utils import timezone
+
+
+def fuzzy_match_score(query: str, text: str) -> float:
+    """
+    Computes similarity score in [0.0, 1.0] combining exact substring, token overlap,
+    and difflib/character similarity so typos and partial phrases match reliably.
+    """
+    q = (query or "").strip().lower()
+    t = (text or "").strip().lower()
+    if not q or not t:
+        return 0.0
+    if q in t:
+        return 1.0 if t.startswith(q) else 0.94
+
+    q_tokens = [tok for tok in q.split() if tok]
+    t_tokens = [tok for tok in t.split() if tok]
+    if not q_tokens or not t_tokens:
+        return 0.0
+
+    # All query words match via substring
+    if all(any(qt in tt for tt in t_tokens) for qt in q_tokens):
+        return 0.88
+
+    # Per-token best fuzzy similarity using SequenceMatcher
+    token_scores = []
+    for qt in q_tokens:
+        best_tok = 0.0
+        for tt in t_tokens:
+            if qt in tt or tt in qt:
+                ratio = 0.9
+            else:
+                ratio = SequenceMatcher(None, qt, tt).ratio()
+            if ratio > best_tok:
+                best_tok = ratio
+        token_scores.append(best_tok)
+
+    avg_tok = sum(token_scores) / len(token_scores)
+    whole_ratio = SequenceMatcher(None, q, t[: max(len(q) * 2, 60)]).ratio()
+    return round(max(avg_tok, whole_ratio), 3)
 from django.db import models
 from apps.chat.models import ConversationMember
 from apps.outbox.services.outbox_service import OutboxService

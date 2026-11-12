@@ -1336,10 +1336,34 @@ class SearchUserView(APIView):
             )
         )
 
-        # Indexed prefix lookup first; only fall back to mid-string match if zero prefix hits
+        # Indexed prefix lookup first; only fall back to mid-string & fuzzy similarity match
         users = list(base_qs.filter(Q(username__istartswith=query) | Q(name__istartswith=query)).order_by("name")[:20])
-        if not users:
-            users = list(base_qs.filter(Q(name__icontains=query) | Q(username__icontains=query)).order_by("name")[:20])
+        if len(users) < 5:
+            seen_ids = {u.id for u in users}
+            mid_hits = base_qs.filter(Q(name__icontains=query) | Q(username__icontains=query)).order_by("name")[:20]
+            for u in mid_hits:
+                if u.id not in seen_ids:
+                    users.append(u)
+                    seen_ids.add(u.id)
+
+        if len(users) < 5 and len(query) >= 2:
+            from apps.messages_app.interactive import fuzzy_match_score
+
+            seen_ids = {u.id for u in users}
+            candidates = base_qs[:250]
+            fuzzy_ranked = []
+            for cand in candidates:
+                if cand.id in seen_ids:
+                    continue
+                score = max(
+                    fuzzy_match_score(query, cand.name or ""),
+                    fuzzy_match_score(query, cand.username or ""),
+                )
+                if score >= 0.56:
+                    fuzzy_ranked.append((score, cand))
+            fuzzy_ranked.sort(key=lambda item: item[0], reverse=True)
+            for _, cand in fuzzy_ranked[: max(0, 20 - len(users))]:
+                users.append(cand)
 
         return Response({
             "success": True,

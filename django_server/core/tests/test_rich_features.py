@@ -305,6 +305,47 @@ class RichFeaturesTestCase(APITestCase):
         self.assertEqual(viewers_res.data["totalReactions"], 1)
         self.assertEqual(viewers_res.data["reactions"][0]["reaction"], "🔥")
 
+    def test_clear_chat_per_user_dm_delete_and_fuzzy_search(self):
+        dm = Conversation.objects.create(type="direct", creator=self.alice)
+        ConversationMember.objects.create(conversation=dm, user=self.alice, role="member")
+        ConversationMember.objects.create(conversation=dm, user=self.bob, role="member")
+
+        m1 = Message.objects.create(conversation=dm, sender=self.alice, content="Hello world meeting tomorrow")
+        m2 = Message.objects.create(conversation=dm, sender=self.bob, content="Invoice attached for design")
+
+        # 1. Fuzzy similarity search (typos + senderId filter)
+        fuzzy_res = self.client.get(f"/api/v1/message/search/{dm.id}?q=meetng%20tomorw")
+        self.assertEqual(fuzzy_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(any(m["_id"] == str(m1.id) for m in fuzzy_res.data["messages"]))
+        self.assertGreaterEqual(fuzzy_res.data["messages"][0]["matchScore"], 56)
+
+        sender_filtered = self.client.get(f"/api/v1/message/search/{dm.id}?q=invoce&senderId={self.bob.id}")
+        self.assertEqual(sender_filtered.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(sender_filtered.data["messages"]), 1)
+        self.assertEqual(sender_filtered.data["messages"][0]["_id"], str(m2.id))
+
+        # 2. Per-user Clear Chat hides messages ONLY for Alice, keeps Bob's untouched
+        clr = self.client.post(f"/api/v1/chat/clear/{dm.id}")
+        self.assertEqual(clr.status_code, status.HTTP_200_OK)
+
+        alice_msgs = self.client.get(f"/api/v1/message/chat/{dm.id}")
+        self.assertEqual(len(alice_msgs.data["messages"]), 0)
+
+        self.client.force_authenticate(user=self.bob)
+        bob_msgs = self.client.get(f"/api/v1/message/chat/{dm.id}")
+        self.assertEqual(len(bob_msgs.data["messages"]), 2)
+
+        # 3. Non-creator Bob can delete DM for himself without deleting Alice's chat
+        del_bob = self.client.delete(f"/api/v1/chat/{dm.id}")
+        self.assertEqual(del_bob.status_code, status.HTTP_200_OK)
+        bob_list = self.client.get("/api/v1/chat/my")
+        self.assertFalse(any(c["_id"] == str(dm.id) for c in bob_list.data["chats"]))
+
+        self.client.force_authenticate(user=self.alice)
+        alice_list = self.client.get("/api/v1/chat/my")
+        self.assertTrue(any(c["_id"] == str(dm.id) for c in alice_list.data["chats"]))
+
+
 
 
 

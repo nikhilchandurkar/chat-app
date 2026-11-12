@@ -32,6 +32,14 @@ const ChatItem = ({
   const theme = useTheme();
   const isDarkMode = theme.palette.mode === "dark";
   const badgeCount = sameSender ? 0 : Math.max(Number(unreadCount || 0), Number(newMessageAlert?.count || 0));
+  let savedDraft = "";
+  try {
+    if (!sameSender && typeof localStorage !== "undefined") {
+      savedDraft = (localStorage.getItem(`chitchat_draft_${_id}`) || "").trim();
+    }
+  } catch {
+    savedDraft = "";
+  }
   const previewText = newMessageAlert?.message?.content || lastMessage || "";
 
   const handleClick = () => {
@@ -99,6 +107,10 @@ const ChatItem = ({
             {isTyping ? (
               <Typography variant="caption" sx={{ color: sameSender ? "#d1fae5" : "#48bb78", fontStyle: "italic", fontWeight: 600 }}>
                 Typing...
+              </Typography>
+            ) : savedDraft ? (
+              <Typography variant="caption" noWrap sx={{ color: "warning.main", fontWeight: 600 }}>
+                📝 Draft: {savedDraft}
               </Typography>
             ) : previewText ? (
               <Typography

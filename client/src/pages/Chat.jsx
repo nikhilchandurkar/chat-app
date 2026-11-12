@@ -160,13 +160,31 @@ const ChatComposer = React.memo(
     }, []);
 
     useEffect(() => {
-      setMessage("");
+      let restored = "";
+      try {
+        restored = localStorage.getItem(`chitchat_draft_${chatId}`) || "";
+      } catch {
+        restored = "";
+      }
+      setMessage(restored);
       setShowEmoji(false);
       lastTypingEmit.current = 0;
       if (inputRef.current) {
         inputRef.current.style.height = "40px";
       }
     }, [chatId]);
+
+    useEffect(() => {
+      if (!chatId) return;
+      try {
+        const key = `chitchat_draft_${chatId}`;
+        if (message.trim()) localStorage.setItem(key, message);
+        else localStorage.removeItem(key);
+        window.dispatchEvent(new Event("chitchat:drafts-updated"));
+      } catch {
+        // ignore storage quota errors
+      }
+    }, [chatId, message]);
 
     useEffect(() => {
       if (replyingTo) {
@@ -1019,10 +1037,20 @@ const Chat = ({ chatId, user }) => {
     setOldMessages((prev) => prev.map(patch));
   }, []);
 
-  const handleScrollToMessage = useCallback((messageId) => {
+  const handleScrollToMessage = useCallback((messageId, fullMsg = null) => {
     setShowSearch(false);
     const el = messageRefs.current[messageId];
-    if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    } else if (fullMsg && fullMsg._id) {
+      setOldMessages((prev) => {
+        if (prev.some((m) => String(m._id) === String(fullMsg._id))) return prev;
+        return [fullMsg, ...prev];
+      });
+      requestAnimationFrame(() => {
+        messageRefs.current[messageId]?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    }
   }, []);
 
   const startTypingListener = useCallback(
@@ -1151,6 +1179,48 @@ const Chat = ({ chatId, user }) => {
     [chatId, myIdStr]
   );
 
+  const [wallpaper, setWallpaper] = useState(() => {
+    try {
+      return localStorage.getItem(`chitchat_wallpaper_${chatId}`) || "default";
+    } catch {
+      return "default";
+    }
+  });
+
+  useEffect(() => {
+    try {
+      setWallpaper(localStorage.getItem(`chitchat_wallpaper_${chatId}`) || "default");
+    } catch {
+      setWallpaper("default");
+    }
+    const onWp = (ev) => {
+      if (!ev?.detail?.chatId || String(ev.detail.chatId) === String(chatId)) {
+        setWallpaper(ev?.detail?.wallpaper || "default");
+      }
+    };
+    const onCleared = (ev) => {
+      if (!ev?.detail?.chatId || String(ev.detail.chatId) === String(chatId)) {
+        setOldMessages([]);
+        setMessages([]);
+      }
+    };
+    window.addEventListener("chitchat:wallpaper-changed", onWp);
+    window.addEventListener("chitchat:chat-cleared", onCleared);
+    return () => {
+      window.removeEventListener("chitchat:wallpaper-changed", onWp);
+      window.removeEventListener("chitchat:chat-cleared", onCleared);
+    };
+  }, [chatId]);
+
+  const chatClearedSocketHandler = useCallback(
+    (data) => {
+      if (!data || String(data.chatId) !== String(chatId)) return;
+      setOldMessages([]);
+      setMessages([]);
+    },
+    [chatId]
+  );
+
   const topicsUpdatedHandler = useCallback(
     (data) => {
       if (!data || String(data.chatId) !== String(chatId)) return;
@@ -1176,6 +1246,7 @@ const Chat = ({ chatId, user }) => {
     MESSAGE_INTERACTIVE_UPDATED: pollUpdatedHandler,
     "message.interactive_updated": pollUpdatedHandler,
     "chat.topics_updated": topicsUpdatedHandler,
+    "chat.cleared": chatClearedSocketHandler,
     "watch.sync": watchSyncOpenHandler,
     "walkie.signal": walkieSignalHandler,
     [MESSAGE_READ_UPDATE]: messageReadUpdateHandler,
@@ -1648,7 +1719,12 @@ const Chat = ({ chatId, user }) => {
         }}
       >
         {showSearch && (
-          <ChatSearch chatId={chatId} onScrollToMessage={handleScrollToMessage} onClose={() => setShowSearch(false)} />
+          <ChatSearch
+            chatId={chatId}
+            members={members}
+            onScrollToMessage={handleScrollToMessage}
+            onClose={() => setShowSearch(false)}
+          />
         )}
 
         {/* Message list */}
@@ -1661,9 +1737,25 @@ const Chat = ({ chatId, user }) => {
             pb: 2,
             overflowX: "hidden",
             overflowY: "auto",
+            background:
+              wallpaper === "mint"
+                ? isDark
+                  ? "linear-gradient(180deg, #13211B 0%, #171A18 100%)"
+                  : "linear-gradient(180deg, #EBF7F1 0%, #F7FBF8 100%)"
+                : wallpaper === "sand"
+                ? isDark
+                  ? "linear-gradient(180deg, #221E17 0%, #191815 100%)"
+                  : "linear-gradient(180deg, #FDF6E9 0%, #FAF7F0 100%)"
+                : wallpaper === "ocean"
+                ? isDark
+                  ? "linear-gradient(180deg, #111D26 0%, #15191E 100%)"
+                  : "linear-gradient(180deg, #E8F4FA 0%, #F5FAFD 100%)"
+                : wallpaper === "midnight"
+                ? "radial-gradient(circle at top right, #1E293B 0%, #0F172A 100%)"
+                : undefined,
           }}
           spacing="0.65rem"
-          bgcolor={isDark ? "#171A18" : "#F7F8F6"}
+          bgcolor={wallpaper === "default" ? (isDark ? "#171A18" : "#F7F8F6") : undefined}
           flex={1}
         >
           {allMessages.map((value, idx) => {

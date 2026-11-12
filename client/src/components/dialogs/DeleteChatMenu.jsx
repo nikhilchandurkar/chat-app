@@ -4,6 +4,7 @@ import { useSelector } from "react-redux";
 import { setActiveChatId, setIsDeleteMenu } from "../../redux/reducers/misc";
 import {
   Archive as ArchiveIcon,
+  CleaningServices as ClearIcon,
   Delete as DeleteIcon,
   ExitToApp as ExitToAppIcon,
   NotificationsActive as UnmuteIcon,
@@ -15,6 +16,7 @@ import { useNavigate } from "react-router-dom";
 import toast from "react-hot-toast";
 import { useAsyncMutation } from "../../hooks/hook";
 import {
+  useClearChatMutation,
   useDeleteChatMutation,
   useLeaveGroupMutation,
   useToggleArchiveChatMutation,
@@ -28,6 +30,7 @@ const DeleteChatMenu = ({ dispatch, deleteMenuAnchor }) => {
   const { isDeleteMenu, selectedDeleteChat } = useSelector((state) => state.misc);
 
   const [deleteChat, _, deleteChatData] = useAsyncMutation(useDeleteChatMutation);
+  const [clearChat] = useClearChatMutation();
   const [leaveGroup, __, leaveGroupData] = useAsyncMutation(useLeaveGroupMutation);
   const [togglePinChat] = useTogglePinChatMutation();
   const [toggleMuteChat] = useToggleMuteChatMutation();
@@ -81,6 +84,20 @@ const DeleteChatMenu = ({ dispatch, deleteMenuAnchor }) => {
     }
   };
 
+  const handleClearChat = async () => {
+    closeHandler();
+    try {
+      await clearChat(chatId).unwrap();
+      if (typeof window !== "undefined") {
+        localStorage.removeItem(`chitchat_draft_${chatId}`);
+        window.dispatchEvent(new CustomEvent("chitchat:chat-cleared", { detail: { chatId } }));
+      }
+      toast.success("Messages cleared for you");
+    } catch {
+      toast.error("Failed to clear chat");
+    }
+  };
+
   useEffect(() => {
     if (deleteChatData || leaveGroupData) {
       dispatch(setActiveChatId(null));
@@ -113,11 +130,15 @@ const DeleteChatMenu = ({ dispatch, deleteMenuAnchor }) => {
         <ListItemText>{isArchived ? "Unarchive Chat" : "Archive Chat"}</ListItemText>
       </MenuItem>
       <Divider />
+      <MenuItem onClick={handleClearChat} dense>
+        <ListItemIcon><ClearIcon fontSize="small" color="warning" /></ListItemIcon>
+        <ListItemText>Clear Chat (For Me)</ListItemText>
+      </MenuItem>
       <MenuItem onClick={isGroup ? leaveGroupHandler : deleteChatHandler} dense sx={{ color: "error.main" }}>
         <ListItemIcon>
           {isGroup ? <ExitToAppIcon fontSize="small" color="error" /> : <DeleteIcon fontSize="small" color="error" />}
         </ListItemIcon>
-        <ListItemText>{isGroup ? "Leave Group" : "Delete Chat"}</ListItemText>
+        <ListItemText>{isGroup ? "Leave Group" : "Delete Chat (For Me)"}</ListItemText>
       </MenuItem>
     </Menu>
   );

@@ -77,7 +77,16 @@ Type any of these inside any DM or Group message box to trigger full-screen Fram
 
 ---
 
-## 6. Stories, Formatting & Security
+## 6. Clear Chat, Fuzzy Search & Organization
+
+- **Per-User Clear Chat (`⋮ -> Clear Chat (For Me)` or `Chat Header -> Settings`):** Clears your message history locally & on your synced devices without affecting the other user, while still letting future messages arrive normally.
+- **Per-User DM Delete (`⋮ -> Delete Chat (For Me)`):** Removes and clears a DM only from your chat list (both creator & recipient can use it independently; reopens automatically if they message you again).
+- **Fuzzy Similarity Search (`Search icon` inside any chat + User Search):** Tolerates typos and partial words (`"meetng tomorw"` matches `"meeting tomorrow"` with a similarity `%` score), plus lets you filter by **sender chip** in 2–3+ member groups.
+- **Chat List Filters, Saved Drafts & Wallpapers:** Filter chats with **All | Unread | Groups | Archived** chips; unfinished messages auto-save per chat (`📝 Draft: ...`); customize chat backgrounds under **Chat Header -> Settings -> Chat Wallpaper**.
+
+---
+
+## 7. Stories, Formatting & Security
 
 - **24-Hour Stories & Reactions Viewer:** Post text cards, photos (`.jpg`, `.png`, `.gif`, `.webp`, `.jfif`, `.heic`, `.avif`), or videos via **Gallery** or **Camera**. Viewing or opening **Viewers & Reactions** shows live reaction emoji counts and who reacted/viewed.
 - **Rich Composer:** Supports `**bold**`, `*italic*`, `` `code` ``, fenced ` ```language ` blocks, `@mentions` in groups, **Polls**, and **GIF Studio** (draw frames & encode looping `GIF89a`).

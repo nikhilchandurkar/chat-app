@@ -86,6 +86,8 @@ class ConversationMember(models.Model):
     mute_until = models.DateTimeField(null=True, blank=True)
     is_archived = models.BooleanField(default=False)
     is_pinned = models.BooleanField(default=False)
+    is_deleted_for_user = models.BooleanField(default=False)
+    cleared_at = models.DateTimeField(null=True, blank=True)
     last_read_message_id = models.CharField(max_length=64, blank=True, default="")
     unread_count = models.IntegerField(default=0)
 

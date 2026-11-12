@@ -210,6 +210,9 @@ def save_incoming_message(
 
         from django.db import models as dj_models
         ConversationMember.objects.filter(
+            conversation=conv, is_deleted_for_user=True
+        ).update(is_deleted_for_user=False)
+        ConversationMember.objects.filter(
             conversation=conv
         ).exclude(user=sender).update(unread_count=dj_models.F("unread_count") + 1)
 

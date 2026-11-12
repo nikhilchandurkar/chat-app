@@ -1,6 +1,6 @@
 import { Box, Button, Chip, Stack, Typography } from "@mui/material";
 import { Archive as ArchiveIcon } from "@mui/icons-material";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useDispatch } from "react-redux";
 import { setIsNewGroup, setIsSearch } from "../../redux/reducers/misc";
 import ChatItem from "../shared/ChatItem";
@@ -47,46 +47,101 @@ const ChatList = ({
   handleDeleteChat,
 }) => {
   const dispatch = useDispatch();
-  const [showArchived, setShowArchived] = useState(false);
+  const [filterMode, setFilterMode] = useState("all");
+  const [draftTick, setDraftTick] = useState(0);
 
-  const { activeChats, archivedChats } = useMemo(() => {
+  useEffect(() => {
+    const bump = () => setDraftTick((t) => t + 1);
+    window.addEventListener("chitchat:drafts-updated", bump);
+    return () => window.removeEventListener("chitchat:drafts-updated", bump);
+  }, []);
+
+  const { activeChats, unreadChats, groupChats, archivedChats } = useMemo(() => {
     const active = [];
+    const unread = [];
+    const groups = [];
     const archived = [];
     for (const c of chats || []) {
-      if (c.isArchived) archived.push(c);
-      else active.push(c);
+      if (c.isArchived) {
+        archived.push(c);
+      } else {
+        active.push(c);
+        const liveAlert = Array.isArray(newMessagesAlert)
+          ? newMessagesAlert.find((a) => String(a.chatId) === String(c._id))
+          : null;
+        if (Number(c.unreadCount || 0) > 0 || Number(liveAlert?.count || 0) > 0) {
+          unread.push(c);
+        }
+        if (c.groupChat) groups.push(c);
+      }
     }
-    return { activeChats: active, archivedChats: archived };
-  }, [chats]);
+    return { activeChats: active, unreadChats: unread, groupChats: groups, archivedChats: archived };
+  }, [chats, newMessagesAlert]);
 
-  const displayedChats = showArchived ? archivedChats : activeChats;
+  const showArchived = filterMode === "archived";
+  const displayedChats =
+    filterMode === "archived"
+      ? archivedChats
+      : filterMode === "unread"
+      ? unreadChats
+      : filterMode === "groups"
+      ? groupChats
+      : activeChats;
 
   return (
     <Stack width={w} direction="column" overflow="auto" height="100%">
       <StatusSection />
 
-      {archivedChats.length > 0 && (
-        <Box
+      {chats.length > 0 && (
+        <Stack
+          direction="row"
+          spacing={0.6}
+          alignItems="center"
           sx={{
             px: 1.5,
             py: 0.75,
             borderBottom: "1px solid",
             borderColor: "divider",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
+            overflowX: "auto",
+            flexShrink: 0,
           }}
         >
           <Chip
             size="small"
-            icon={<ArchiveIcon sx={{ fontSize: 15 }} />}
-            label={showArchived ? `← Back to Active (${activeChats.length})` : `Archived (${archivedChats.length})`}
             clickable
-            color={showArchived ? "primary" : "default"}
-            variant={showArchived ? "filled" : "outlined"}
-            onClick={() => setShowArchived((v) => !v)}
+            label={`All (${activeChats.length})`}
+            color={filterMode === "all" ? "primary" : "default"}
+            variant={filterMode === "all" ? "filled" : "outlined"}
+            onClick={() => setFilterMode("all")}
           />
-        </Box>
+          <Chip
+            size="small"
+            clickable
+            label={`Unread (${unreadChats.length})`}
+            color={filterMode === "unread" ? "primary" : "default"}
+            variant={filterMode === "unread" ? "filled" : "outlined"}
+            onClick={() => setFilterMode("unread")}
+          />
+          <Chip
+            size="small"
+            clickable
+            label={`Groups (${groupChats.length})`}
+            color={filterMode === "groups" ? "primary" : "default"}
+            variant={filterMode === "groups" ? "filled" : "outlined"}
+            onClick={() => setFilterMode("groups")}
+          />
+          {archivedChats.length > 0 && (
+            <Chip
+              size="small"
+              icon={<ArchiveIcon sx={{ fontSize: 14 }} />}
+              label={`Archived (${archivedChats.length})`}
+              clickable
+              color={filterMode === "archived" ? "primary" : "default"}
+              variant={filterMode === "archived" ? "filled" : "outlined"}
+              onClick={() => setFilterMode("archived")}
+            />
+          )}
+        </Stack>
       )}
 
       {displayedChats.length > 0 ? (
@@ -102,6 +157,7 @@ const ChatList = ({
           return (
             <ChatItem
               index={index}
+              draftTick={draftTick}
               newMessageAlert={newMessageAlert}
               unreadCount={unreadCount}
               lastMessage={lastMessage}
