@@ -100,6 +100,8 @@ const ScheduleMessageDialog = lazy(() => import("../components/dialogs/ScheduleM
 
 const QUICK_EMOJIS = ["❤️", "🔥", "😂", "👍", "🙏", "🎉", "😍", "🥳", "🚀", "👏"];
 const LAST_SEEN_KEY = "chat_last_seen";
+// Walkie-Talkie Push-to-Talk stays implemented & wired, hidden from UI until toggled to true.
+const ENABLE_WALKIE_TALKIE = false;
 
 const getLastSeen = (chatId) => {
   try {
@@ -569,26 +571,7 @@ const ChatComposer = React.memo(
                   />
                 </Box>
 
-                {hasText ? (
-                  <Tooltip title={enterToSend ? "Send message (Enter)" : "Tap to send message"}>
-                    <IconButton
-                      type="submit"
-                      aria-label="Send message"
-                      sx={{
-                        bgcolor: "#236B4A",
-                        color: "#FFFFFF",
-                        borderRadius: "50%",
-                        width: "40px",
-                        height: "40px",
-                        flexShrink: 0,
-                        transition: "all 0.16s ease",
-                        "&:hover": { bgcolor: "#1B573C", transform: "scale(1.04)" },
-                      }}
-                    >
-                      <SendIcon sx={{ fontSize: "1.15rem", ml: "2px" }} />
-                    </IconButton>
-                  </Tooltip>
-                ) : (
+                {ENABLE_WALKIE_TALKIE && !hasText ? (
                   <Tooltip title="Hold for Walkie-Talkie Push-to-Talk">
                     <IconButton
                       type="button"
@@ -611,6 +594,26 @@ const ChatComposer = React.memo(
                       }}
                     >
                       <WalkieIcon sx={{ fontSize: "1.2rem" }} />
+                    </IconButton>
+                  </Tooltip>
+                ) : (
+                  <Tooltip title={enterToSend ? "Send message (Enter)" : "Tap to send message"}>
+                    <IconButton
+                      type="submit"
+                      disabled={!hasText}
+                      aria-label="Send message"
+                      sx={{
+                        bgcolor: hasText ? "#236B4A" : isDark ? "#2C332E" : "#E5EAE6",
+                        color: hasText ? "#FFFFFF" : "text.disabled",
+                        borderRadius: "50%",
+                        width: "40px",
+                        height: "40px",
+                        flexShrink: 0,
+                        transition: "all 0.16s ease",
+                        "&:hover": { bgcolor: hasText ? "#1B573C" : undefined, transform: hasText ? "scale(1.04)" : "none" },
+                      }}
+                    >
+                      <SendIcon sx={{ fontSize: "1.15rem", ml: "2px" }} />
                     </IconButton>
                   </Tooltip>
                 )}
@@ -1116,6 +1119,7 @@ const Chat = ({ chatId, user }) => {
 
   const walkieSignalHandler = useCallback(
     (data) => {
+      if (!ENABLE_WALKIE_TALKIE) return;
       if (!data || String(data.chatId) !== String(chatId)) return;
       if (String(data.senderId || "") === myIdStr) return;
       if (data.state === "talking") {
@@ -1180,7 +1184,7 @@ const Chat = ({ chatId, user }) => {
   });
 
   const handleWalkieStart = useCallback(async () => {
-    if (walkieRecording || !chatId) return;
+    if (!ENABLE_WALKIE_TALKIE || walkieRecording || !chatId) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       walkieStreamRef.current = stream;
@@ -1207,6 +1211,7 @@ const Chat = ({ chatId, user }) => {
   }, [chatId, socket, walkieRecording]);
 
   const handleWalkieStop = useCallback(() => {
+    if (!ENABLE_WALKIE_TALKIE) return;
     const recorder = walkieRecorderRef.current;
     if (!recorder || recorder.state === "inactive") {
       setWalkieRecording(false);
@@ -1595,7 +1600,7 @@ const Chat = ({ chatId, user }) => {
       )}
 
       {/* Walkie-Talkie Live / Incoming Banner */}
-      {(walkiePeerName || incomingWalkieClip) && (
+      {ENABLE_WALKIE_TALKIE && (walkiePeerName || incomingWalkieClip) && (
         <Paper
           square
           elevation={0}
