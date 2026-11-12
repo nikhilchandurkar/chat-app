@@ -2,6 +2,7 @@ import os
 import uuid
 import mimetypes
 from datetime import timedelta
+from django.core.cache import cache
 from django.db import transaction, models
 from django.db.models import Exists, OuterRef, Q
 from django.shortcuts import get_object_or_404
@@ -213,6 +214,14 @@ class SendMessageView(APIView):
 
         # Publish the newly created outbox item directly without scanning table
         OutboxService.publish_item(outbox_entry)
+        try:
+            cache.delete_many([
+                f"msg_count:{conversation.id}",
+                f"my_chats_v2:{request.user.id}",
+                *[f"my_chats_v2:{uid}" for uid in recipient_ids],
+            ])
+        except Exception:
+            pass
 
         return Response({
             "success": True,
@@ -224,15 +233,37 @@ class GetMessagesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, id):
+        from django.conf import settings
         from django.db.models import Count
         from .interactive import apply_seen_ephemeral_expiry, flush_due_scheduled_messages
 
-        conversation = get_object_or_404(Conversation, id=id)
-        member_rec = conversation.member_records.filter(user=request.user).first()
+        member_rec = (
+            ConversationMember.objects.select_related("conversation")
+            .only(
+                "id", "user_id", "cleared_at", "unread_count",
+                "conversation__id", "conversation__ephemeral_ttl", "conversation__topics",
+            )
+            .filter(conversation_id=id, user=request.user)
+            .first()
+        )
         if not member_rec:
+            if not Conversation.objects.filter(id=id).exists():
+                return Response({"success": False, "message": "Not found."}, status=status.HTTP_404_NOT_FOUND)
             return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
-        flush_due_scheduled_messages(conversation_id=conversation.id)
+        conversation = member_rec.conversation
+        use_redis = str(getattr(settings, "CACHES", {}).get("default", {}).get("BACKEND", "")).endswith("RedisCache")
+
+        # Only scan scheduled messages if we don't know for sure there are none
+        sched_flag_key = f"no_sched:{conversation.id}"
+        if not (use_redis and cache.get(sched_flag_key)):
+            if Message.objects.filter(conversation=conversation, delivery_pending=True).exists():
+                flush_due_scheduled_messages(conversation_id=conversation.id)
+            elif use_redis:
+                try:
+                    cache.set(sched_flag_key, 1, timeout=45)
+                except Exception:
+                    pass
 
         page = max(1, int(request.query_params.get("page", 1)))
         limit = max(1, min(int(request.query_params.get("limit", 25)), 100))
@@ -245,6 +276,13 @@ class GetMessagesView(APIView):
             .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
             .filter(~Exists(DeletedMessageForUser.objects.filter(message_id=OuterRef("pk"), user=request.user)))
             .select_related("sender")
+            .only(
+                "id", "conversation_id", "sender_id", "client_message_id", "message_type",
+                "content", "attachments", "reply_to", "reactions", "is_edited", "is_deleted",
+                "status", "read_by", "topic_name", "thread_root_id", "view_once", "viewed_by",
+                "scheduled_for", "delivery_pending", "expires_at", "created_at",
+                "sender__id", "sender__name", "sender__username", "sender__avatar",
+            )
             .order_by("-created_at")
         )
         if member_rec.cleared_at:
@@ -256,7 +294,7 @@ class GetMessagesView(APIView):
         rows = list(messages_qs[offset : offset + limit + 1])
         has_next = len(rows) > limit
         page_items = rows[:limit]
-        if page == 1 and page_items:
+        if page == 1 and page_items and conversation.ephemeral_ttl in (-1, -120):
             apply_seen_ephemeral_expiry(conversation, page_items, request.user.id)
 
         page_ids = [m.id for m in page_items]
@@ -273,7 +311,17 @@ class GetMessagesView(APIView):
             total_count = len(page_items)
             total_pages = 1
         else:
-            total_count = messages_qs.count()
+            count_key = f"msg_count:{conversation.id}"
+            cached_cnt = cache.get(count_key) if (use_redis and not member_rec.cleared_at and not topic) else None
+            if cached_cnt is not None:
+                total_count = int(cached_cnt)
+            else:
+                total_count = messages_qs.count()
+                if use_redis and not member_rec.cleared_at and not topic:
+                    try:
+                        cache.set(count_key, total_count, timeout=5)
+                    except Exception:
+                        pass
             total_pages = max(1, (total_count + limit - 1) // limit)
 
         # Only issue write UPDATE if unread_count is actually > 0
@@ -281,6 +329,10 @@ class GetMessagesView(APIView):
             conversation=conversation, user=request.user, unread_count__gt=0
         ).update(unread_count=0)
         if updated_unread:
+            try:
+                cache.delete(f"my_chats_v2:{request.user.id}")
+            except Exception:
+                pass
             outbox_entry = OutboxService.create_outbox_event(
                 event_type="message.read",
                 conversation_id="",
@@ -1110,6 +1162,10 @@ class ScheduleMessageView(APIView):
             delivery_pending=True,
             status="pending",
         )
+        try:
+            cache.delete(f"no_sched:{conversation.id}")
+        except Exception:
+            pass
         return Response({
             "success": True,
             "scheduled": MessageSerializer(msg, context={"request": request}).data,

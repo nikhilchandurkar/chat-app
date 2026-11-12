@@ -21,7 +21,15 @@ def get_user_from_token(token_str):
         if sid and SessionService.is_session_revoked(str(sid)):
             return AnonymousUser()
         user_id = access_token.get("user_id")
-        return User.objects.select_related("profile").get(id=user_id, is_active=True)
+        return (
+            User.objects.select_related("profile")
+            .only(
+                "id", "username", "name", "avatar", "status", "is_active",
+                "profile__privacy_online", "profile__privacy_last_seen",
+                "profile__privacy_read_receipts", "profile__privacy_typing_indicator",
+            )
+            .get(id=user_id, is_active=True)
+        )
     except Exception:
         return AnonymousUser()
 

@@ -72,9 +72,10 @@ class OutboxService:
             except Exception as ne:
                 logger.warning("Notification dispatch failed for %s: %s", item.event_id, str(ne))
 
-        item.status = "published"
-        item.processed_at = timezone.now()
-        item.save(update_fields=["status", "processed_at"])
+        MessageOutbox.objects.filter(id=item.id).update(
+            status="published",
+            processed_at=timezone.now(),
+        )
         return True
 
     @classmethod

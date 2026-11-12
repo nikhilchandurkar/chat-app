@@ -855,7 +855,8 @@ jobs:
             -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD || 'chat_password' }}' \
             -e MYSQL_HOST=127.0.0.1 \
             -e MYSQL_PORT=3306 \
-            -e DB_CONN_MAX_AGE=30 \
+            -e DB_CONN_MAX_AGE=120 \
+            -e PYTHONOPTIMIZE=1 \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS=True \
             -e CLIENT_URL='${{ env.CLIENT_URL }}' \
@@ -872,7 +873,7 @@ jobs:
             -v /opt/chat-app/logs:/app/logs \
             -v /opt/chat-app/staticfiles:/app/staticfiles \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
-            sh -c "WSGI_PORT=3010 WSGI_THREADS=12 python -m core.run_wsgi & WSGI_PORT=3011 WSGI_THREADS=12 python -m core.run_wsgi & daphne -v 0 -e tcp:port=3000:interface=127.0.0.1:backlog=2048 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application & daphne -v 0 -e tcp:port=3001:interface=127.0.0.1:backlog=2048 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application & exec daphne -v 0 -e tcp:port=3002:interface=127.0.0.1:backlog=2048 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application"
+            sh -c "WSGI_PORT=3010 WSGI_MIN_THREADS=12 WSGI_THREADS=24 WSGI_BACKLOG=4096 python -m core.run_wsgi & WSGI_PORT=3011 WSGI_MIN_THREADS=12 WSGI_THREADS=24 WSGI_BACKLOG=4096 python -m core.run_wsgi & daphne -v 0 -e tcp:port=3000:interface=127.0.0.1:backlog=4096 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application & exec daphne -v 0 -e tcp:port=3001:interface=127.0.0.1:backlog=4096 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application"
           echo "⏳ Waiting for container to start..."
           sleep 8
 

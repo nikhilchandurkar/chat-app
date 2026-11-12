@@ -280,6 +280,11 @@ def save_incoming_message(
                 "message": serialized_msg,
             }
         )
+        try:
+            from django.core.cache import cache
+            cache.delete_many([f"msg_count:{conv.id}", *[f"my_chats_v2:{uid}" for uid in recipient_ids]])
+        except Exception:
+            pass
 
         return serialized_msg, None, outbox_entry
     except Exception as e:
@@ -373,7 +378,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 "event_legacy": "ONLINE_USERS",
                 "data": {"user_id": str(self.user.id), "status": "online"},
             }
-            await asyncio.gather(*(self.channel_layer.group_send(f"chat_{cid}", packet) for cid in self.conv_ids[:50]))
+            await asyncio.gather(*(self.channel_layer.group_send(f"chat_{cid}", packet) for cid in self.conv_ids[:8]))
 
     async def disconnect(self, close_code):
         if hasattr(self, "user") and self.user.is_authenticated:
@@ -393,7 +398,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     "event_legacy": "ONLINE_USERS",
                     "data": {"user_id": str(self.user.id), "status": "offline"},
                 }
-                await asyncio.gather(*(self.channel_layer.group_send(f"chat_{cid}", packet) for cid in self.conv_ids[:50]), return_exceptions=True)
+                await asyncio.gather(*(self.channel_layer.group_send(f"chat_{cid}", packet) for cid in self.conv_ids[:8]), return_exceptions=True)
 
     async def receive_json(self, content):
         # 1. Rate Limiting per WebSocket connection

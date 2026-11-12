@@ -30,9 +30,9 @@ from twisted.web.wsgi import WSGIResource  # noqa: E402
 def main() -> None:
     host = os.environ.get("WSGI_HOST", "127.0.0.1")
     port = int(os.environ.get("WSGI_PORT", os.environ.get("PORT", "3010")))
-    min_threads = int(os.environ.get("WSGI_MIN_THREADS", "6"))
-    max_threads = int(os.environ.get("WSGI_THREADS", "12"))
-    backlog = int(os.environ.get("WSGI_BACKLOG", "2048"))
+    min_threads = int(os.environ.get("WSGI_MIN_THREADS", "12"))
+    max_threads = int(os.environ.get("WSGI_THREADS", "24"))
+    backlog = int(os.environ.get("WSGI_BACKLOG", "4096"))
 
     pool = ThreadPool(minthreads=min_threads, maxthreads=max_threads, name=f"wsgi-{port}")
     pool.start()

@@ -2,6 +2,8 @@ import uuid
 import secrets
 import hashlib
 from datetime import timedelta
+from django.conf import settings
+from django.core.cache import cache
 from django.utils import timezone
 from django.db import transaction
 from django.db.models import OuterRef, Subquery
@@ -21,6 +23,16 @@ from .serializers import ChatDetailsSerializer
 def get_recipient_ids(conversation, sender_id):
     """Returns member IDs excluding sender for notification/broadcast purposes."""
     return [str(m.user_id) for m in conversation.member_records.exclude(user_id=sender_id)]
+
+
+def invalidate_user_chats_cache(user_ids):
+    """Invalidates cached MyChatsView responses for the affected users."""
+    if not user_ids:
+        return
+    try:
+        cache.delete_many([f"my_chats_v2:{uid}" for uid in set(str(u) for u in user_ids if u)])
+    except Exception:
+        pass
 
 
 class NewGroupChatView(APIView):
@@ -167,10 +179,28 @@ class MyChatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        use_redis = str(getattr(settings, "CACHES", {}).get("default", {}).get("BACKEND", "")).endswith("RedisCache")
+        cache_key = f"my_chats_v2:{request.user.id}"
+        if use_redis:
+            try:
+                cached = cache.get(cache_key)
+                if cached is not None:
+                    return Response({"success": True, "chats": cached})
+            except Exception:
+                pass
+
         memberships = list(
             ConversationMember.objects.filter(
                 user=request.user, is_deleted_for_user=False
-            ).select_related("conversation")
+            )
+            .select_related("conversation")
+            .only(
+                "id", "conversation_id", "user_id", "is_pinned", "is_muted", "mute_until",
+                "is_archived", "cleared_at", "unread_count",
+                "conversation__id", "conversation__name", "conversation__group_chat",
+                "conversation__creator_id", "conversation__avatar", "conversation__ephemeral_ttl",
+                "conversation__updated_at",
+            )
         )
         if not memberships:
             return Response({"success": True, "chats": []})
@@ -184,6 +214,11 @@ class MyChatsView(APIView):
             ConversationMember.objects.filter(conversation_id__in=conv_ids)
             .exclude(user=request.user)
             .select_related("user", "user__profile")
+            .only(
+                "conversation_id", "user_id",
+                "user__id", "user__name", "user__username", "user__avatar",
+                "user__profile__privacy_avatar",
+            )
         ):
             members_by_conv.setdefault(cm.conversation_id, []).append(cm.user)
             other_user_ids.add(cm.user_id)
@@ -206,16 +241,17 @@ class MyChatsView(APIView):
         ]
         last_msg_by_conv = {}
         if last_msg_ids:
-            for msg in Message.objects.filter(id__in=last_msg_ids):
+            for msg in Message.objects.filter(id__in=last_msg_ids).only("id", "conversation_id", "content", "is_deleted", "created_at"):
                 last_msg_by_conv[msg.conversation_id] = msg
 
         results = []
         now = timezone.now()
+        expired_mute_ids = []
         for mem in memberships:
             if mem.is_muted and mem.mute_until and mem.mute_until <= now:
                 mem.is_muted = False
                 mem.mute_until = None
-                mem.save(update_fields=["is_muted", "mute_until"])
+                expired_mute_ids.append(mem.id)
 
             c = mem.conversation
             raw_last = last_msg_by_conv.get(c.id)
@@ -303,8 +339,16 @@ class MyChatsView(APIView):
                     "lastMessageTime": last_msg.created_at.isoformat() if last_msg else c.updated_at.isoformat(),
                 })
 
+        if expired_mute_ids:
+            ConversationMember.objects.filter(id__in=expired_mute_ids).update(is_muted=False, mute_until=None)
+
         # Sort pinned chats first, then latest activity
         results.sort(key=lambda x: (1 if x.get("isPinned") else 0, x.get("lastMessageTime", "")), reverse=True)
+        if use_redis:
+            try:
+                cache.set(cache_key, results, timeout=8)
+            except Exception:
+                pass
         return Response({"success": True, "chats": results})
 
 
@@ -389,6 +433,7 @@ class ClearChatView(APIView):
         mem.cleared_at = timezone.now()
         mem.unread_count = 0
         mem.save(update_fields=["cleared_at", "unread_count"])
+        invalidate_user_chats_cache([request.user.id])
 
         entry = OutboxService.create_outbox_event(
             event_type="chat.cleared",
@@ -483,6 +528,7 @@ class LeaveGroupView(APIView):
 
 
 def _emit_member_sync(user_id, chat_id):
+    invalidate_user_chats_cache([user_id])
     entry = OutboxService.create_outbox_event(
         event_type="chat.member_updated",
         conversation_id="",

@@ -10,9 +10,25 @@ from apps.authentication.models import User
 from apps.chat.models import Conversation
 
 
+_LAST_RAW_KEY = None
+_CACHED_KEY_BYTES = b""
+_CACHED_AES_ALGO = None
+_PKCS7_128 = padding.PKCS7(128)
+
+
+def _get_aes_components():
+    global _LAST_RAW_KEY, _CACHED_KEY_BYTES, _CACHED_AES_ALGO
+    raw = os.environ.get("MESSAGE_ENCRYPTION_KEY", "12345678901234567890123456789012")
+    if _CACHED_AES_ALGO is None or raw != _LAST_RAW_KEY:
+        _LAST_RAW_KEY = raw
+        _CACHED_KEY_BYTES = raw.encode("utf-8")[:32].ljust(32, b"0")
+        _CACHED_AES_ALGO = algorithms.AES(_CACHED_KEY_BYTES)
+    return _CACHED_AES_ALGO
+
+
 def get_encryption_key():
-    key = os.environ.get("MESSAGE_ENCRYPTION_KEY", "12345678901234567890123456789012")
-    return key.encode("utf-8")[:32].ljust(32, b"0")
+    _get_aes_components()
+    return _CACHED_KEY_BYTES
 
 
 def encrypt_message(text: str) -> str:
@@ -20,11 +36,11 @@ def encrypt_message(text: str) -> str:
         return text
     if text.startswith("ENC:"):
         return text
-    key = get_encryption_key()
+    algo = _get_aes_components()
     iv = os.urandom(16)
-    padder = padding.PKCS7(128).padder()
+    padder = _PKCS7_128.padder()
     padded_data = padder.update(text.encode("utf-8")) + padder.finalize()
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+    cipher = Cipher(algo, modes.CBC(iv))
     encryptor = cipher.encryptor()
     ct = encryptor.update(padded_data) + encryptor.finalize()
     return f"ENC:{iv.hex()}:{ct.hex()}"
@@ -34,14 +50,14 @@ def decrypt_message(text: str) -> str:
     if not text or not text.startswith("ENC:"):
         return text
     try:
-        parts = text[4:].split(":")
-        iv = bytes.fromhex(parts[0])
-        ct = bytes.fromhex(parts[1])
-        key = get_encryption_key()
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+        idx = text.find(":", 4)
+        iv = bytes.fromhex(text[4:idx])
+        ct = bytes.fromhex(text[idx + 1 :])
+        algo = _get_aes_components()
+        cipher = Cipher(algo, modes.CBC(iv))
         decryptor = cipher.decryptor()
         padded_data = decryptor.update(ct) + decryptor.finalize()
-        unpadder = padding.PKCS7(128).unpadder()
+        unpadder = _PKCS7_128.unpadder()
         data = unpadder.update(padded_data) + unpadder.finalize()
         return data.decode("utf-8")
     except Exception:
