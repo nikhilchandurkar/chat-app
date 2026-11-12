@@ -1,0 +1,3 @@
+users,rps,avg_ms,p50_ms,p95_ms,p99_ms,total_req,failed_req,http_4xx,http_5xx,timeouts,ws_ok,ws_fail,ws_msg_per_sec,ws_del_p95_ms,ws_del_p99_ms,cpu_peak_pct,ram_peak_mb,swap_peak_mb,mysql_conns_peak,redis_mem_peak_mb
+10,4.11,876.36,428.09,2502.65,5396.13,78,3,0,3,0,11,0,12.27,844.27,978.88,100.0,1123.96,111.77,29,2.35
+100,5.07,15422.69,15383.52,15944.26,15989.17,100,89,0,0,89,1,109,0.0,0.0,0.0,100.0,1233.88,123.94,27,4.21

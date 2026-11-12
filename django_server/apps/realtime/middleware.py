@@ -1,18 +1,27 @@
 from urllib.parse import parse_qs
-from channels.db import database_sync_to_async
+from channels.db import DatabaseSyncToAsync
 from channels.middleware import BaseMiddleware
 from django.contrib.auth.models import AnonymousUser
 from rest_framework_simplejwt.tokens import AccessToken
 
 from apps.authentication.models import User
+from apps.authentication.services.session_service import SessionService
 
 
-@database_sync_to_async
+def db_async(func):
+    """Runs synchronous DB lookups across the worker threadpool without single-thread serialization."""
+    return DatabaseSyncToAsync(func, thread_sensitive=False)
+
+
+@db_async
 def get_user_from_token(token_str):
     try:
         access_token = AccessToken(token_str)
+        sid = access_token.get("sid")
+        if sid and SessionService.is_session_revoked(str(sid)):
+            return AnonymousUser()
         user_id = access_token.get("user_id")
-        return User.objects.get(id=user_id)
+        return User.objects.select_related("profile").get(id=user_id, is_active=True)
     except Exception:
         return AnonymousUser()
 

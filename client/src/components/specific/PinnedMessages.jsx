@@ -4,7 +4,7 @@ import {
 } from "@mui/material";
 import { PushPin as PinIcon, ExpandMore as ExpandMoreIcon, ExpandLess as ExpandLessIcon } from "@mui/icons-material";
 import { useGetPinnedMessagesQuery } from "../../redux/api/api";
-import moment from "moment";
+import { formatTimeAgo } from "../../lib/feature";
 
 const PinnedMessages = ({ chatId, onScrollToMessage }) => {
   const [expanded, setExpanded] = useState(false);
@@ -71,7 +71,7 @@ const PinnedMessages = ({ chatId, onScrollToMessage }) => {
                 {msg.isDeleted ? "🚫 This message was deleted" : msg.content || "📎 Attachment"}
               </Typography>
               <Typography variant="caption" color="text.disabled" display="block" mt={0.2}>
-                {moment(msg.createdAt).fromNow()}
+                {formatTimeAgo(msg.createdAt)}
               </Typography>
             </Box>
           ))}

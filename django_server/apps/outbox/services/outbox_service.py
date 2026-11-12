@@ -29,101 +29,121 @@ class OutboxService:
         return outbox_entry
 
     @classmethod
-    def publish_pending(cls, limit: int = 50) -> int:
-        """
-        Drains pending events from the MySQL outbox table,
-        publishes to Redis Streams, broadcasts via Channels,
-        and triggers notification dispatches.
-        """
-        pending_events = MessageOutbox.objects.filter(status="pending").order_by("created_at")[:limit]
-        published_count = 0
-
+    def publish_item(cls, item: MessageOutbox) -> bool:
+        """Publishes a single outbox event directly without scanning the outbox table."""
         channel_layer = get_channel_layer()
 
-        for item in pending_events:
-            # Attempt publishing to Redis Streams
-            msg_id = publish_to_stream(
-                stream_name=item.stream_name,
-                event_id=item.event_id,
-                event_type=item.event_type,
-                payload=item.payload
-            )
+        publish_to_stream(
+            stream_name=item.stream_name,
+            event_id=item.event_id,
+            event_type=item.event_type,
+            payload=item.payload,
+        )
 
-            # Broadcast to Django Channels WebSocket groups
-            recipient_ids = item.payload.get("recipient_ids", [])
-            conversation_id = item.conversation_id
+        recipient_ids = item.payload.get("recipient_ids", [])
+        conversation_id = item.conversation_id
 
-            if channel_layer:
-                event_packet = {
-                    "type": "chat.event",
-                    "event": item.event_type,
-                    "event_legacy": item.payload.get("legacy_event"),
-                    "event_id": item.event_id,
-                    "conversation_id": conversation_id,
-                    "data": item.payload,
-                    "timestamp": timezone.now().isoformat(),
-                }
+        if channel_layer:
+            event_packet = {
+                "type": "chat.event",
+                "event": item.event_type,
+                "event_legacy": item.payload.get("legacy_event"),
+                "event_id": item.event_id,
+                "conversation_id": conversation_id,
+                "data": item.payload,
+                "timestamp": timezone.now().isoformat(),
+            }
 
-                # Send to user-specific groups
+            if conversation_id:
+                try:
+                    async_to_sync(channel_layer.group_send)(f"chat_{conversation_id}", event_packet)
+                except Exception as err:
+                    logger.warning("Failed Channels group_send to chat_%s: %s", conversation_id, str(err))
+            else:
                 for uid in recipient_ids:
                     try:
                         async_to_sync(channel_layer.group_send)(f"user_{uid}", event_packet)
                     except Exception as err:
                         logger.warning("Failed Channels group_send to user_%s: %s", uid, str(err))
 
-                # Send to conversation group
-                if conversation_id:
-                    try:
-                        async_to_sync(channel_layer.group_send)(f"chat_{conversation_id}", event_packet)
-                    except Exception as err:
-                        logger.warning("Failed Channels group_send to chat_%s: %s", conversation_id, str(err))
+        if item.event_type in ("message.created", "NEW_MESSAGE"):
+            try:
+                cls._dispatch_notifications(item.payload)
+            except Exception as ne:
+                logger.warning("Notification dispatch failed for %s: %s", item.event_id, str(ne))
 
-            # Trigger push notification dispatch for new messages
+        item.status = "published"
+        item.processed_at = timezone.now()
+        item.save(update_fields=["status", "processed_at"])
+        return True
+
+    @classmethod
+    async def publish_item_async(cls, item: MessageOutbox) -> bool:
+        """Async outbox publisher for WebSocket consumers running on the ASGI event loop."""
+        from channels.db import DatabaseSyncToAsync
+        import asyncio
+
+        channel_layer = get_channel_layer()
+        recipient_ids = item.payload.get("recipient_ids", [])
+        conversation_id = item.conversation_id
+
+        # Push onto Redis Stream + mark published in a quick thread call without bridging event loops
+        def _record_stream_and_mark():
+            publish_to_stream(
+                stream_name=item.stream_name,
+                event_id=item.event_id,
+                event_type=item.event_type,
+                payload=item.payload,
+            )
             if item.event_type in ("message.created", "NEW_MESSAGE"):
-                try:
-                    cls._dispatch_notifications(item.payload)
-                except Exception as ne:
-                    logger.warning("Notification dispatch failed for %s: %s", item.event_id, str(ne))
+                cls._dispatch_notifications(item.payload)
+            MessageOutbox.objects.filter(id=item.id).update(
+                status="published",
+                processed_at=timezone.now(),
+            )
 
-            # Update outbox status
-            item.status = "published"
-            item.processed_at = timezone.now()
-            item.save(update_fields=["status", "processed_at"])
-            published_count += 1
+        if channel_layer:
+            event_packet = {
+                "type": "chat.event",
+                "event": item.event_type,
+                "event_legacy": item.payload.get("legacy_event"),
+                "event_id": item.event_id,
+                "conversation_id": conversation_id,
+                "data": item.payload,
+                "timestamp": timezone.now().isoformat(),
+            }
+            if conversation_id:
+                await channel_layer.group_send(f"chat_{conversation_id}", event_packet)
+            else:
+                await asyncio.gather(*(channel_layer.group_send(f"user_{uid}", event_packet) for uid in recipient_ids))
 
+        await DatabaseSyncToAsync(_record_stream_and_mark, thread_sensitive=False)()
+        return True
+
+    @classmethod
+    def publish_pending(cls, limit: int = 50) -> int:
+        """Drains pending events from the MySQL outbox table safely under concurrency."""
+        from django.db import transaction
+
+        published_count = 0
+        with transaction.atomic():
+            pending_events = list(
+                MessageOutbox.objects.select_for_update(skip_locked=True)
+                .filter(status="pending")
+                .order_by("created_at")[:limit]
+            )
+            for item in pending_events:
+                cls.publish_item(item)
+                published_count += 1
         return published_count
 
     @staticmethod
     def _dispatch_notifications(payload: dict):
-        """Asynchronously dispatches FCM and Web Push notifications to recipient devices."""
-        from apps.notifications.services.fcm_service import FCMService
-        from apps.notifications.services.webpush_service import WebPushService
-
-        sender_name = payload.get("sender_name", "Someone")
-        content_preview = payload.get("content", "Sent an attachment")
-        if content_preview.startswith("ENC:"):
-            content_preview = "New encrypted message"
-        conversation_id = payload.get("conversation_id", "")
-        recipients = payload.get("recipient_ids", [])
-        sender_id = payload.get("sender_id", "")
-
-        for rec_id in recipients:
-            if str(rec_id) == str(sender_id):
-                continue  # Don't notify the sender
-
-            # FCM Android Push
-            FCMService.send_fcm_notification(
-                user_id=rec_id,
-                title=f"Message from {sender_name}",
-                body=content_preview[:120],
-                data={"conversation_id": str(conversation_id)}
-            )
-
-            # Web Browser Push
-            WebPushService.send_web_push(
-                user_id=rec_id,
-                title=f"New message from {sender_name}",
-                body=content_preview[:120],
-                data={"conversation_id": str(conversation_id)}
-            )
+        """Offloads FCM and Web Push dispatch to Celery worker so chat latency stays sub-millisecond."""
+        try:
+            from apps.notifications.tasks import dispatch_push_notifications_task
+            dispatch_push_notifications_task.delay(payload)
+            return
+        except Exception as err:
+            logger.debug("Celery enqueue unavailable, skipping sync push on hot path: %s", str(err))
 

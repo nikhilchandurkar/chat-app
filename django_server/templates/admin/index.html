@@ -1,0 +1,214 @@
+{% extends "admin/index.html" %}
+{% load static %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+  .cc-admin-wrap {
+    margin: 0 0 24px 0;
+    padding: 18px;
+    border-radius: 12px;
+    background: var(--body-bg, #f8fafc);
+    border: 1px solid var(--hairline-color, #d8dee4);
+  }
+  .cc-admin-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .cc-admin-title {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--body-fg, #1f2937);
+  }
+  .cc-admin-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+    border-radius: 8px;
+    background: #236B4A;
+    color: #fff !important;
+    font-weight: 600;
+    text-decoration: none;
+    font-size: 13px;
+  }
+  .cc-admin-btn:hover { background: #1B573C; }
+  .cc-kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+    gap: 12px;
+    margin-bottom: 18px;
+  }
+  .cc-kpi-card {
+    padding: 14px;
+    border-radius: 10px;
+    background: var(--darkened-bg, #ffffff);
+    border: 1px solid var(--hairline-color, #e2e8f0);
+  }
+  .cc-kpi-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    color: var(--body-quiet-color, #64748b);
+    margin-bottom: 4px;
+  }
+  .cc-kpi-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: var(--body-fg, #0f172a);
+  }
+  .cc-kpi-sub {
+    font-size: 11px;
+    color: var(--body-quiet-color, #64748b);
+    margin-top: 3px;
+  }
+  .cc-charts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 14px;
+  }
+  .cc-chart-box {
+    padding: 14px;
+    border-radius: 10px;
+    background: var(--darkened-bg, #ffffff);
+    border: 1px solid var(--hairline-color, #e2e8f0);
+  }
+  .cc-chart-box h3 {
+    margin: 0 0 10px 0;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--body-fg, #1e293b);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+{% if analytics %}
+{{ analytics|json_script:"cc-admin-analytics" }}
+<div class="cc-admin-wrap">
+  <div class="cc-admin-top">
+    <div>
+      <h2 class="cc-admin-title">Live System Overview &amp; Analytics</h2>
+      <span class="cc-kpi-sub">Server time: {{ analytics.serverTime }} · Redis: {{ analytics.redisStatus }} ({{ analytics.redisMemory }}, {{ analytics.redisClients }} clients)</span>
+    </div>
+    <a class="cc-admin-btn" href="/admin-panel">Open Custom React Dashboard &rarr;</a>
+  </div>
+
+  <div class="cc-kpi-grid">
+    <div class="cc-kpi-card">
+      <div class="cc-kpi-label">Users (Real / Seeded)</div>
+      <div class="cc-kpi-value">{{ analytics.realUsersCount }} <small style="font-size:12px;font-weight:500;">/ {{ analytics.usersCount }}</small></div>
+      <div class="cc-kpi-sub"><a href="/admin/authentication/user/">Manage Users &rarr;</a></div>
+    </div>
+    <div class="cc-kpi-card">
+      <div class="cc-kpi-label">Active Sessions &amp; 2FA</div>
+      <div class="cc-kpi-value">{{ analytics.activeSessions }} <small style="font-size:12px;font-weight:500;">({{ analytics.mfaEnabledCount }} MFA)</small></div>
+      <div class="cc-kpi-sub"><a href="/admin/authentication/usersession/">Inspect Sessions &rarr;</a></div>
+    </div>
+    <div class="cc-kpi-card">
+      <div class="cc-kpi-label">Conversations (Groups)</div>
+      <div class="cc-kpi-value">{{ analytics.totalChatsCount }} <small style="font-size:12px;font-weight:500;">({{ analytics.groupChatsCount }} grp)</small></div>
+      <div class="cc-kpi-sub"><a href="/admin/chat/conversation/">View Chats &rarr;</a></div>
+    </div>
+    <div class="cc-kpi-card">
+      <div class="cc-kpi-label">Total Messages</div>
+      <div class="cc-kpi-value">{{ analytics.messagesCount }}</div>
+      <div class="cc-kpi-sub">QR Logins: {{ analytics.qrApprovedCount }}</div>
+    </div>
+    <div class="cc-kpi-card">
+      <div class="cc-kpi-label">Outbox Queue</div>
+      <div class="cc-kpi-value">{{ analytics.pendingOutboxEvents }} <small style="font-size:12px;color:#dc2626;">{{ analytics.failedOutboxEvents }} fail</small></div>
+      <div class="cc-kpi-sub"><a href="/admin/outbox/messageoutbox/">Outbox Logs &rarr;</a></div>
+    </div>
+    <div class="cc-kpi-card">
+      <div class="cc-kpi-label">Storage Used</div>
+      <div class="cc-kpi-value">{{ analytics.storageUsedMB }} MB</div>
+      <div class="cc-kpi-sub"><a href="/admin/storage_app/userstorageusage/">Storage Quotas &rarr;</a></div>
+    </div>
+  </div>
+
+  <div class="cc-charts-grid">
+    <div class="cc-chart-box">
+      <h3>7-Day Activity (Messages &amp; New Signups)</h3>
+      <canvas id="ccDailyChart" height="170" style="width:100%;max-height:190px;"></canvas>
+    </div>
+    <div class="cc-chart-box">
+      <h3>Device Platforms &amp; Session Auth Methods</h3>
+      <canvas id="ccDistChart" height="170" style="width:100%;max-height:190px;"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  var el = document.getElementById("cc-admin-analytics");
+  if (!el) return;
+  var data = JSON.parse(el.textContent || "{}");
+
+  function drawDaily(canvas, rows) {
+    if (!canvas || !rows || !rows.length) return;
+    var ctx = canvas.getContext("2d");
+    var W = canvas.width = canvas.clientWidth || 440;
+    var H = canvas.height = 180;
+    ctx.clearRect(0, 0, W, H);
+    var maxM = Math.max(1, ...rows.map(function(r){ return r.messages || 0; }));
+    var maxU = Math.max(1, ...rows.map(function(r){ return r.users || 0; }));
+    var padL = 32, padR = 12, padT = 18, padB = 26;
+    var gw = (W - padL - padR) / rows.length;
+    rows.forEach(function(r, i) {
+      var x = padL + i * gw;
+      var bh = ((r.messages || 0) / maxM) * (H - padT - padB);
+      ctx.fillStyle = "#236B4A";
+      ctx.fillRect(x + gw * 0.18, H - padB - bh, gw * 0.34, bh);
+      var uh = ((r.users || 0) / maxU) * (H - padT - padB);
+      ctx.fillStyle = "#3B82F6";
+      ctx.fillRect(x + gw * 0.54, H - padB - uh, gw * 0.28, uh);
+      ctx.fillStyle = "#64748b";
+      ctx.font = "10px sans-serif";
+      ctx.fillText(r.label || "", x + gw * 0.15, H - 8);
+      if ((r.messages || 0) > 0) ctx.fillText(String(r.messages), x + gw * 0.18, H - padB - bh - 4);
+    });
+    ctx.fillStyle = "#236B4A"; ctx.fillRect(padL, 4, 10, 8);
+    ctx.fillStyle = "#475569"; ctx.font = "11px sans-serif"; ctx.fillText("Messages (" + maxM + " max)", padL + 14, 12);
+    ctx.fillStyle = "#3B82F6"; ctx.fillRect(padL + 135, 4, 10, 8);
+    ctx.fillStyle = "#475569"; ctx.fillText("New Users (" + maxU + " max)", padL + 149, 12);
+  }
+
+  function drawHoriz(canvas, platforms, methods) {
+    if (!canvas) return;
+    var items = [];
+    (platforms || []).forEach(function(p){ items.push({ label: "Device: " + p.label, count: p.count, color: "#0D9488" }); });
+    (methods || []).forEach(function(m){ items.push({ label: "Auth: " + m.label, count: m.count, color: "#6366F1" }); });
+    if (!items.length) items.push({ label: "No active devices yet", count: 0, color: "#94a3b8" });
+    items = items.slice(0, 6);
+    var ctx = canvas.getContext("2d");
+    var W = canvas.width = canvas.clientWidth || 440;
+    var H = canvas.height = Math.max(150, items.length * 28 + 12);
+    ctx.clearRect(0, 0, W, H);
+    var maxV = Math.max(1, ...items.map(function(i){ return i.count || 0; }));
+    items.forEach(function(it, idx) {
+      var y = 10 + idx * 28;
+      ctx.fillStyle = "#475569";
+      ctx.font = "11px sans-serif";
+      ctx.fillText(it.label, 8, y + 13);
+      var barW = ((it.count || 0) / maxV) * Math.max(40, W - 180);
+      ctx.fillStyle = it.color;
+      ctx.fillRect(130, y + 2, Math.max(2, barW), 14);
+      ctx.fillStyle = "#334155";
+      ctx.fillText(String(it.count), 136 + barW, y + 13);
+    });
+  }
+
+  drawDaily(document.getElementById("ccDailyChart"), data.dailyActivity);
+  drawHoriz(document.getElementById("ccDistChart"), data.devicePlatforms, data.authMethods);
+})();
+</script>
+{% endif %}
+{{ block.super }}
+{% endblock %}
+

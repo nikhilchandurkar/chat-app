@@ -1,0 +1,4 @@
+id,run_name,environment,application_version,server_configuration,started_at,completed_at,test_status,notes
+1,baseline_before_opt,ec2_prod_2vcpu_2gb,d1d37b0,baseline_daphne_1worker_mysql30_nginx768_redis64mb,2026-11-12T02:43:30,2026-11-12T02:44:11,stopped_by_safeguard,"Unoptimized baseline: 1x Daphne, Nginx 768 worker_conns, MySQL max_conns=30, Redis 64mb, N+1 ORM queries"
+2,optimized_after_opt,ec2_prod_2vcpu_2gb,d1d37b0,optimized_3x_daphne_nginx8192_mysql150_redis128mb_orm_batch,2026-11-12T03:04:19,2026-11-12T03:04:57,stopped_by_safeguard,Post-optimization progressive benchmark across 20k seeded users up to EC2 ceiling
+3,optimized_r2_20k,ec2_prod_2vcpu_2gb,d1d37b0,wsgi_2w12t_daphne_3w_backlog2048_fastbcrypt10_mysql250_redis128m_nginx_split,2026-11-12T03:32:10,2026-11-12T03:33:46,stopped_by_safeguard,Round 2 optimized: Twisted WSGI 2x12t HTTP + 3x Daphne WS backlog=2048 + FastBCrypt r=10 + split Nginx upstreams + Redis/Channel capacity tuning + 20k pool

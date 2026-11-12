@@ -3,9 +3,8 @@ import uuid
 import mimetypes
 from datetime import timedelta
 from django.db import transaction, models
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.shortcuts import get_object_or_404
-from django.core.paginator import Paginator
 from django.utils import timezone
 from django.core.files.storage import default_storage
 from rest_framework.views import APIView
@@ -97,9 +96,11 @@ class SendMessageView(APIView):
 
         # Check user blocking in direct chats
         if not conversation.group_chat:
-            other_mem = conversation.member_records.exclude(user=request.user).first()
-            if other_mem:
-                if BlockedUser.objects.filter(user=other_mem.user, blocked_user=request.user).exists() or BlockedUser.objects.filter(user=request.user, blocked_user=other_mem.user).exists():
+            other_id = conversation.member_records.exclude(user=request.user).values_list("user_id", flat=True).first()
+            if other_id:
+                if BlockedUser.objects.filter(
+                    Q(user=request.user, blocked_user_id=other_id) | Q(user_id=other_id, blocked_user=request.user)
+                ).exists():
                     return Response({"success": False, "message": "Unable to send message due to block status."}, status=status.HTTP_403_FORBIDDEN)
 
         # Idempotency check: prevent duplicate message on network retries
@@ -126,19 +127,22 @@ class SendMessageView(APIView):
                 expires_at=expires_at,
             )
 
-            # Link attachments in relational table for strict authorization on downloads
-            for att in attachments:
-                file_path = att.get("path") or att.get("file_path") or ""
-                if file_path:
-                    MessageAttachment.objects.create(
-                        message=message,
-                        file_path=file_path,
-                        file_name=att.get("name") or "file",
-                        file_type=att.get("type") or msg_type,
-                        file_size=att.get("size") or 0,
-                        mime_type=att.get("mime_type") or "application/octet-stream",
-                        thumbnail_path=att.get("thumbnail") or "",
-                    )
+            # Link attachments in bulk for strict authorization on downloads
+            attachment_objs = [
+                MessageAttachment(
+                    message=message,
+                    file_path=att.get("path") or att.get("file_path") or "",
+                    file_name=att.get("name") or "file",
+                    file_type=att.get("type") or msg_type,
+                    file_size=att.get("size") or 0,
+                    mime_type=att.get("mime_type") or "application/octet-stream",
+                    thumbnail_path=att.get("thumbnail") or "",
+                )
+                for att in attachments
+                if (att.get("path") or att.get("file_path"))
+            ]
+            if attachment_objs:
+                MessageAttachment.objects.bulk_create(attachment_objs)
 
             # Update conversation timestamp
             conversation.updated_at = timezone.now()
@@ -154,7 +158,7 @@ class SendMessageView(APIView):
             serialized_msg = MessageSerializer(message).data
 
             # Record outbox event for reliable publishing and notification
-            OutboxService.create_outbox_event(
+            outbox_entry = OutboxService.create_outbox_event(
                 event_type="message.created",
                 conversation_id=str(conversation.id),
                 payload={
@@ -177,8 +181,8 @@ class SendMessageView(APIView):
                 }
             )
 
-        # Trigger background outbox draining
-        OutboxService.publish_pending()
+        # Publish the newly created outbox item directly without scanning table
+        OutboxService.publish_item(outbox_entry)
 
         return Response({
             "success": True,
@@ -194,32 +198,42 @@ class GetMessagesView(APIView):
         if not conversation.member_records.filter(user=request.user).exists():
             return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
-        page = int(request.query_params.get("page", 1))
-        limit = min(int(request.query_params.get("limit", 25)), 100)
+        page = max(1, int(request.query_params.get("page", 1)))
+        limit = max(1, min(int(request.query_params.get("limit", 25)), 100))
         now = timezone.now()
 
-        # Exclude messages deleted for this user
-        deleted_for_me = DeletedMessageForUser.objects.filter(user=request.user).values_list("message_id", flat=True)
+        # Exclude messages deleted for this user and expired disappearing messages
+        messages_qs = (
+            Message.objects.filter(conversation=conversation)
+            .filter(Q(expires_at__isnull=True) | Q(expires_at__gt=now))
+            .filter(~Exists(DeletedMessageForUser.objects.filter(message_id=OuterRef("pk"), user=request.user)))
+            .select_related("sender")
+            .order_by("-created_at")
+        )
 
-        # Exclude expired disappearing messages
-        messages_qs = Message.objects.filter(
-            conversation=conversation
-        ).filter(
-            Q(expires_at__isnull=True) | Q(expires_at__gt=now)
-        ).exclude(id__in=deleted_for_me).select_related("sender").order_by("-created_at")
+        offset = (page - 1) * limit
+        rows = list(messages_qs[offset : offset + limit + 1])
+        has_next = len(rows) > limit
+        page_items = rows[:limit]
 
-        paginator = Paginator(messages_qs, limit)
-        page_obj = paginator.get_page(page)
+        if page == 1 and not has_next:
+            total_count = len(page_items)
+            total_pages = 1
+        else:
+            total_count = messages_qs.count()
+            total_pages = max(1, (total_count + limit - 1) // limit)
 
-        # Mark member's unread count to 0
-        ConversationMember.objects.filter(conversation=conversation, user=request.user).update(unread_count=0)
+        # Only issue write UPDATE if unread_count is actually > 0
+        ConversationMember.objects.filter(
+            conversation=conversation, user=request.user, unread_count__gt=0
+        ).update(unread_count=0)
 
         return Response({
             "success": True,
-            "messages": MessageSerializer(page_obj.object_list, many=True).data,
-            "totalPages": paginator.num_pages,
+            "messages": MessageSerializer(page_items, many=True).data,
+            "totalPages": total_pages,
             "currentPage": page,
-            "totalMessages": paginator.count,
+            "totalMessages": total_count,
             "ephemeral_ttl": conversation.ephemeral_ttl,
         })
 
@@ -249,7 +263,7 @@ class EditMessageView(APIView):
             message.save(update_fields=["content", "is_edited"])
 
             recipient_ids = get_conversation_recipient_ids(message.conversation, request.user.id)
-            OutboxService.create_outbox_event(
+            outbox_entry = OutboxService.create_outbox_event(
                 event_type="message.updated",
                 conversation_id=str(message.conversation_id),
                 payload={
@@ -262,7 +276,7 @@ class EditMessageView(APIView):
                 }
             )
 
-        OutboxService.publish_pending()
+        OutboxService.publish_item(outbox_entry)
         return Response({"success": True, "message": "Message edited.", "data": {"content": new_content, "isEdited": True}})
 
 
@@ -281,7 +295,7 @@ class DeleteMessageView(APIView):
             message.save(update_fields=["is_deleted"])
 
             recipient_ids = get_conversation_recipient_ids(message.conversation, request.user.id)
-            OutboxService.create_outbox_event(
+            outbox_entry = OutboxService.create_outbox_event(
                 event_type="message.deleted",
                 conversation_id=str(message.conversation_id),
                 payload={
@@ -292,7 +306,7 @@ class DeleteMessageView(APIView):
                 }
             )
 
-        OutboxService.publish_pending()
+        OutboxService.publish_item(outbox_entry)
         return Response({"success": True, "message": "Message deleted for everyone."})
 
 
@@ -346,7 +360,7 @@ class ReactMessageView(APIView):
         message.save(update_fields=["reactions"])
 
         recipient_ids = get_conversation_recipient_ids(message.conversation, request.user.id)
-        OutboxService.create_outbox_event(
+        outbox_entry = OutboxService.create_outbox_event(
             event_type="message.reaction",
             conversation_id=str(message.conversation_id),
             payload={
@@ -363,7 +377,7 @@ class ReactMessageView(APIView):
                 "recipient_ids": recipient_ids,
             }
         )
-        OutboxService.publish_pending()
+        OutboxService.publish_item(outbox_entry)
 
         return Response({"success": True, "reactions": all_rx})
 

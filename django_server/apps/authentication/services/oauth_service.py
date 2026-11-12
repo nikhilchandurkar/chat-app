@@ -173,7 +173,22 @@ class OAuthService:
         }
 
     @classmethod
-    def authenticate_or_link_social(cls, provider: str, profile_data: dict, current_user=None, device_id="web-client", platform="web", app_version="1.0.0", ip_address=None, user_agent="") -> tuple[bool, str, dict]:
+    def authenticate_or_link_social(
+        cls,
+        provider: str,
+        profile_data: dict,
+        current_user=None,
+        device_id="web-client",
+        platform="web",
+        app_version="1.0.0",
+        ip_address=None,
+        user_agent="",
+        device_name="",
+        replace_session_id=None,
+    ) -> tuple[bool, str, dict]:
+        from apps.authentication.services.mfa_service import MFAService
+        from apps.authentication.services.session_service import SessionService
+
         uid = str(profile_data["uid"])
         email = profile_data.get("email", "").lower().strip()
         email_verified = profile_data.get("email_verified", False)
@@ -266,52 +281,40 @@ class OAuthService:
             # Ensure profile exists
             UserProfile.objects.get_or_create(user=user, defaults={"display_name": user.name or user.username})
 
-            # Register device
-            device, _ = Device.objects.update_or_create(
+            if MFAService.is_mfa_enabled(user):
+                mfa_token = MFAService.issue_login_challenge(
+                    user=user,
+                    auth_method=f"oauth_{provider}",
+                    device_id=device_id,
+                    platform=platform,
+                    app_version=app_version,
+                    device_name=device_name,
+                )
+                return True, "Two-factor verification required.", {
+                    "mfa_required": True,
+                    "mfa_token": mfa_token,
+                    "methods": ["totp", "backup_code"],
+                }
+
+            ok, sess_msg, sess_data = SessionService.create_enforced_session_and_tokens(
                 user=user,
                 device_id=device_id,
-                defaults={
-                    "platform": platform,
-                    "app_version": app_version,
-                    "is_active": True,
-                    "last_active_at": now,
-                }
-            )
-
-            # Create UserSession
-            session_token = secrets.token_hex(32)
-            session = UserSession.objects.create(
-                user=user,
-                device=device,
-                session_token=session_token,
+                platform=platform,
+                app_version=app_version,
+                device_name=device_name,
                 ip_address=ip_address,
                 user_agent=user_agent,
-                expires_at=now + timedelta(days=30),
-                is_revoked=False
+                auth_method=f"oauth_{provider}",
+                replace_session_id=replace_session_id,
+                audit_action=f"auth.login.oauth.{provider}",
+                audit_details={"provider": provider, "uid": uid, "is_new_user": is_new_user},
             )
+            if not ok:
+                return False, sess_msg, sess_data
 
-            # Generate JWT Token Pair
-            refresh = SimpleRefreshToken.for_user(user)
-            access_token = str(refresh.access_token)
-            jti = refresh.get("jti")
-            token_hash = hashlib.sha256(str(refresh).encode()).hexdigest()
-
-            RefreshToken.objects.create(
-                user=user,
-                session=session,
-                token_hash=token_hash,
-                jti=jti,
-                expires_at=now + timedelta(days=30),
-                is_revoked=False
-            )
-
-            AuditLog.objects.create(
-                user=user,
-                action=f"auth.login.oauth.{provider}",
-                ip_address=ip_address,
-                user_agent=user_agent,
-                details={"provider": provider, "uid": uid, "is_new_user": is_new_user}
-            )
+            session = sess_data["session"]
+            access_token = sess_data["access"]
+            refresh_str = sess_data["refresh"]
 
         if is_new_user and email:
             EmailNotificationService.send_welcome(email=email, user_name=user.name or user.username)
@@ -325,11 +328,14 @@ class OAuthService:
                 "name": user.name,
                 "avatar": user.avatar,
                 "role": user.role,
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
+                "mfa_enabled": MFAService.is_mfa_enabled(user),
                 "is_new_user": is_new_user,
             },
             "tokens": {
                 "access": access_token,
-                "refresh": str(refresh),
+                "refresh": refresh_str,
             },
             "session_id": str(session.id),
         }

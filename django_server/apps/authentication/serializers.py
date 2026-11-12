@@ -27,6 +27,13 @@ class UserSerializer(serializers.ModelSerializer):
     id = serializers.CharField(read_only=True)
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     profile = UserProfileSerializer(read_only=True)
+    mfa_enabled = serializers.SerializerMethodField()
+
+    def get_mfa_enabled(self, obj):
+        try:
+            return bool(obj.mfa.is_enabled)
+        except Exception:
+            return False
 
     class Meta:
         model = User
@@ -41,6 +48,9 @@ class UserSerializer(serializers.ModelSerializer):
             "status",
             "privacy",
             "role",
+            "is_staff",
+            "is_superuser",
+            "mfa_enabled",
             "starred_messages",
             "profile",
             "created_at",
@@ -52,8 +62,10 @@ class PasswordLoginSerializer(serializers.Serializer):
     username = serializers.CharField(required=True)
     password = serializers.CharField(required=True, write_only=True)
     device_id = serializers.CharField(required=False, default="web-client")
+    device_name = serializers.CharField(required=False, allow_blank=True, default="")
     platform = serializers.ChoiceField(choices=["android", "web", "ios"], default="web")
     app_version = serializers.CharField(required=False, default="1.0.0")
+    replace_session_id = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 class RegisterRequestSerializer(serializers.Serializer):
@@ -84,8 +96,10 @@ class VerifyOTPSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)
     otp = serializers.CharField(required=True, min_length=6, max_length=6)
     device_id = serializers.CharField(required=False, default="web-client")
+    device_name = serializers.CharField(required=False, allow_blank=True, default="")
     platform = serializers.ChoiceField(choices=["android", "web", "ios"], default="web")
     app_version = serializers.CharField(required=False, default="1.0.0")
+    replace_session_id = serializers.CharField(required=False, allow_blank=True, default="")
 
 
 class GoogleAuthSerializer(serializers.Serializer):
@@ -142,3 +156,40 @@ class FriendRequestSerializer(serializers.ModelSerializer):
     class Meta:
         model = Request
         fields = ["_id", "sender", "receiver", "status", "created_at"]
+
+
+class MFACodeSerializer(serializers.Serializer):
+    code = serializers.CharField(required=True, min_length=6, max_length=16)
+
+
+class MFALoginVerifySerializer(serializers.Serializer):
+    mfa_token = serializers.CharField(required=True)
+    code = serializers.CharField(required=True, min_length=6, max_length=16)
+    replace_session_id = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class MFADisableSerializer(serializers.Serializer):
+    password = serializers.CharField(required=False, allow_blank=True, default="")
+    code = serializers.CharField(required=True, min_length=6, max_length=16)
+
+
+class ResolveDeviceLimitSerializer(serializers.Serializer):
+    device_limit_token = serializers.CharField(required=True)
+    replace_session_id = serializers.CharField(required=True)
+
+
+class QRCreateSerializer(serializers.Serializer):
+    device_id = serializers.CharField(required=False, allow_blank=True, default="")
+    device_name = serializers.CharField(required=False, allow_blank=True, default="Web Browser")
+    platform = serializers.ChoiceField(choices=["android", "web", "ios"], default="web")
+
+
+class QRApproveSerializer(serializers.Serializer):
+    qr_token = serializers.CharField(required=True)
+    replace_session_id = serializers.CharField(required=False, allow_blank=True, default="")
+
+
+class QRClaimSerializer(serializers.Serializer):
+    qr_token = serializers.CharField(required=True)
+    claim_secret = serializers.CharField(required=True)
+    replace_session_id = serializers.CharField(required=False, allow_blank=True, default="")

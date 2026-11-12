@@ -76,3 +76,31 @@ class SearchThrottle(SimpleRateThrottle):
             return self.cache_format % {"scope": self.scope, "ident": request.user.pk}
         ip = get_client_ip(request)
         return self.cache_format % {"scope": self.scope, "ident": ip or "anon"}
+
+
+class PasswordLoginThrottle(SimpleRateThrottle):
+    scope = "password_login"
+
+    def get_cache_key(self, request, view):
+        ip = get_client_ip(request)
+        identifier = ""
+        if hasattr(request, "data") and isinstance(request.data, dict):
+            identifier = str(request.data.get("username") or "").strip().lower()
+        ident = f"{ip}_{identifier}" if identifier else (ip or "anon")
+        return self.cache_format % {"scope": self.scope, "ident": ident}
+
+
+class MFAVerifyThrottle(SimpleRateThrottle):
+    scope = "mfa_verify"
+
+    def get_cache_key(self, request, view):
+        ip = get_client_ip(request)
+        return self.cache_format % {"scope": self.scope, "ident": ip or "anon"}
+
+
+class QRCreateThrottle(SimpleRateThrottle):
+    scope = "qr_create"
+
+    def get_cache_key(self, request, view):
+        ip = get_client_ip(request)
+        return self.cache_format % {"scope": self.scope, "ident": ip or "anon"}

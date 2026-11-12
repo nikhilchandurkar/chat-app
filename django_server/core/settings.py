@@ -118,7 +118,7 @@ if db_url.startswith("mysql://"):
                 "charset": "utf8mb4",
                 "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
             },
-            "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", 600)),
+            "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", 60)),
             "CONN_HEALTH_CHECKS": True,
         }
     }
@@ -135,7 +135,7 @@ else:
                 "charset": "utf8mb4",
                 "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
             },
-            "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", 600)),
+            "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", 60)),
             "CONN_HEALTH_CHECKS": True,
         }
     }
@@ -143,8 +143,9 @@ else:
 AUTH_USER_MODEL = "authentication.User"
 
 PASSWORD_HASHERS = [
-    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "apps.authentication.hashers.FastBCryptSHA256PasswordHasher",
     "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
     "django.contrib.auth.hashers.BCryptPasswordHasher",
 ]
 
@@ -219,7 +220,7 @@ if public_domain:
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.authentication.middleware.SessionValidatedJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -231,8 +232,11 @@ REST_FRAMEWORK = {
     "DEFAULT_THROTTLE_RATES": {
         "anon": "60/minute",
         "user": "600/minute",
+        "password_login": "120/minute",
         "otp_request": "6/minute",
         "otp_verify": "10/minute",
+        "mfa_verify": "15/minute",
+        "qr_create": "30/minute",
         "message_send": "60/minute",
         "file_upload": "30/minute",
         "search": "45/minute",
@@ -263,6 +267,9 @@ SIMPLE_JWT = {
     "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
 }
 
+# Maximum simultaneous active device sessions allowed per user (prevents unlimited shared logins)
+MAX_ACTIVE_SESSIONS_PER_USER = int(os.environ.get("MAX_ACTIVE_SESSIONS_PER_USER", 3))
+
 # ─── Redis, Celery & Channel Layer ──────────────────────────────────────────
 REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
 CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", REDIS_URL)
@@ -276,7 +283,15 @@ if os.environ.get("USE_REDIS", "False").lower() in ("true", "1"):
         "default": {
             "BACKEND": "django_redis.cache.RedisCache",
             "LOCATION": REDIS_URL,
-            "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
+            "OPTIONS": {
+                "CLIENT_CLASS": "django_redis.client.DefaultClient",
+                "CONNECTION_POOL_KWARGS": {
+                    "max_connections": 40,
+                    "retry_on_timeout": True,
+                },
+                "SOCKET_CONNECT_TIMEOUT": 5,
+                "SOCKET_TIMEOUT": 5,
+            },
         }
     }
     CHANNEL_LAYERS = {
@@ -286,9 +301,12 @@ if os.environ.get("USE_REDIS", "False").lower() in ("true", "1"):
                 "hosts": [
                     {
                         "address": REDIS_URL,
-                        "socket_timeout": 30,
+                        "socket_timeout": 15,
+                        "max_connections": 128,
                     }
                 ],
+                "capacity": 5000,
+                "expiry": 30,
             },
         },
     }

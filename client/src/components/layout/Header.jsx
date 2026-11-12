@@ -12,6 +12,8 @@ import {
   Speed as SpeedIcon,
   Wifi as WifiIcon,
   MoreVert as MoreVertIcon,
+  Security as SecurityIcon,
+  AdminPanelSettings as AdminIcon,
 } from "@mui/icons-material";
 import {
   AppBar,
@@ -43,17 +45,21 @@ const StarredMessages = lazy(() => import("../specific/StarredMessages"));
 const AppearanceSettingsDialog = lazy(() => import("../dialogs/AppearanceSettingsDialog"));
 const DevicePerformanceDialog = lazy(() => import("../dialogs/DevicePerformanceDialog"));
 const ConnectivityOfflineDialog = lazy(() => import("../dialogs/ConnectivityOfflineDialog"));
+const SecurityDevicesDialog = lazy(() => import("../dialogs/SecurityDevicesDialog"));
 
 const Header = ({ unreadMessagesCount = 0 }) => {
   const navigate = useNavigate();
   const dispatch = useDispatch();
 
   const { isSearch, isNotification, isNewGroup, notificationCount, themeMode } = useSelector(state => state.misc);
+  const { user } = useSelector(state => state.auth);
+  const isAdminUser = Boolean(user && (user.role === "admin" || user.is_superuser || user.is_staff));
 
   const [showStarred, setShowStarred] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
   const [showConnectivity, setShowConnectivity] = useState(false);
+  const [showSecurity, setShowSecurity] = useState(false);
   const [mobileMenuAnchor, setMobileMenuAnchor] = useState(null);
 
   const handleMobile = () => dispatch(setIsMobile(true));
@@ -134,6 +140,10 @@ const Header = ({ unreadMessagesCount = 0 }) => {
               <Box sx={{ display: { xs: "none", md: "inline-flex" }, alignItems: "center" }}>
                 <IconBtn title="Starred Messages" icon={<StarIcon />} onClick={() => setShowStarred(true)} />
                 <IconBtn title="Appearance & Experience" icon={<PaletteIcon />} onClick={() => setShowAppearance(true)} />
+                <IconBtn title="Security, 2FA & Linked Devices" icon={<SecurityIcon />} onClick={() => setShowSecurity(true)} />
+                {isAdminUser && (
+                  <IconBtn title="Superadmin Dashboard" icon={<AdminIcon color="secondary" />} onClick={() => navigate("/admin-panel")} />
+                )}
                 <IconBtn title="Device & Performance" icon={<SpeedIcon />} onClick={() => setShowPerformance(true)} />
                 <IconBtn title="Connectivity & Offline" icon={<WifiIcon />} onClick={() => setShowConnectivity(true)} />
                 <IconBtn 
@@ -162,6 +172,16 @@ const Header = ({ unreadMessagesCount = 0 }) => {
                     <ListItemIcon><PaletteIcon fontSize="small" /></ListItemIcon>
                     <ListItemText>Appearance</ListItemText>
                   </MenuItem>
+                  <MenuItem onClick={() => { setMobileMenuAnchor(null); setShowSecurity(true); }}>
+                    <ListItemIcon><SecurityIcon fontSize="small" /></ListItemIcon>
+                    <ListItemText>Security, 2FA &amp; Devices</ListItemText>
+                  </MenuItem>
+                  {isAdminUser && (
+                    <MenuItem onClick={() => { setMobileMenuAnchor(null); navigate("/admin-panel"); }}>
+                      <ListItemIcon><AdminIcon fontSize="small" color="secondary" /></ListItemIcon>
+                      <ListItemText>Admin Dashboard</ListItemText>
+                    </MenuItem>
+                  )}
                   <MenuItem onClick={() => { setMobileMenuAnchor(null); setShowPerformance(true); }}>
                     <ListItemIcon><SpeedIcon fontSize="small" /></ListItemIcon>
                     <ListItemText>Device & Performance</ListItemText>
@@ -217,6 +237,10 @@ const Header = ({ unreadMessagesCount = 0 }) => {
 
       <Suspense fallback={null}>
         <ConnectivityOfflineDialog open={showConnectivity} onClose={() => setShowConnectivity(false)} />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <SecurityDevicesDialog open={showSecurity} onClose={() => setShowSecurity(false)} />
       </Suspense>
     </>
   );

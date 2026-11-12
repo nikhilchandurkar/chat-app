@@ -56,6 +56,22 @@ def ready_check(request):
     }, status=status_code)
 
 
+_orig_admin_index = admin.site.index
+
+
+def _custom_admin_index(request, extra_context=None):
+    ctx = dict(extra_context or {})
+    try:
+        from apps.authentication.services.admin_analytics_service import AdminAnalyticsService
+        ctx["analytics"] = AdminAnalyticsService.get_dashboard_analytics()
+    except Exception:
+        ctx["analytics"] = {}
+    return _orig_admin_index(request, extra_context=ctx)
+
+
+admin.site.index = _custom_admin_index
+
+
 urlpatterns = [
     # Probes and Hello
     path("", health_check, name="root"),

@@ -2,7 +2,7 @@ import os
 from urllib.parse import quote
 from django.utils import timezone
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Exists, OuterRef, Q
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
@@ -14,7 +14,15 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 
 from .models import User, UserProfile, Request, SocialAccount, BlockedUser, Report, AuditLog, Device, UserSession
-from .throttles import OTPRequestThrottle, OTPVerifyThrottle, SearchThrottle, get_client_ip
+from .throttles import (
+    MFAVerifyThrottle,
+    OTPRequestThrottle,
+    OTPVerifyThrottle,
+    PasswordLoginThrottle,
+    QRCreateThrottle,
+    SearchThrottle,
+    get_client_ip,
+)
 from rest_framework_simplejwt.tokens import RefreshToken as SimpleRefreshToken
 from .serializers import (
     UserSerializer,
@@ -31,10 +39,40 @@ from .serializers import (
     DeviceRegisterSerializer,
     SessionSerializer,
     FriendRequestSerializer,
+    MFACodeSerializer,
+    MFADisableSerializer,
+    MFALoginVerifySerializer,
+    QRApproveSerializer,
+    QRClaimSerializer,
+    QRCreateSerializer,
+    ResolveDeviceLimitSerializer,
 )
+from .services.mfa_service import MFAService
 from .services.otp_service import OTPService
 from .services.oauth_service import OAuthService
+from .services.qr_service import QRAuthService
 from .services.session_service import SessionService
+
+
+def _session_conflict_response(message: str, data: dict) -> Response:
+    return Response({
+        "success": False,
+        "code": data.get("code", "DEVICE_LIMIT_REACHED"),
+        "message": message,
+        "max_devices": data.get("max_devices"),
+        "active_sessions": data.get("active_sessions", []),
+        "deviceLimitToken": data.get("device_limit_token"),
+    }, status=status.HTTP_409_CONFLICT)
+
+
+def _mfa_challenge_response(data: dict) -> Response:
+    return Response({
+        "success": True,
+        "mfaRequired": True,
+        "mfaToken": data.get("mfa_token"),
+        "methods": data.get("methods", ["totp", "backup_code"]),
+        "message": "Enter your 6-digit authenticator code or a backup recovery code.",
+    })
 
 
 def set_jwt_cookie(response, access_token: str, refresh_token: str = None):
@@ -69,7 +107,7 @@ class AuthConfigView(APIView):
 # ─── Username / Email + Password Login ──────────────────────────────────────
 class PasswordLoginView(APIView):
     permission_classes = [AllowAny]
-    throttle_classes = [OTPRequestThrottle]
+    throttle_classes = [PasswordLoginThrottle]
 
     def post(self, request):
         serializer = PasswordLoginSerializer(data=request.data)
@@ -79,10 +117,12 @@ class PasswordLoginView(APIView):
         identifier = serializer.validated_data["username"].strip()
         password = serializer.validated_data["password"]
         device_id = serializer.validated_data.get("device_id", "web-client")
+        device_name = serializer.validated_data.get("device_name", "")
         platform = serializer.validated_data.get("platform", "web")
         app_version = serializer.validated_data.get("app_version", "1.0.0")
+        replace_session_id = serializer.validated_data.get("replace_session_id", "").strip() or None
 
-        user = User.objects.filter(
+        user = User.objects.select_related("profile", "mfa").filter(
             Q(username__iexact=identifier) | Q(email__iexact=identifier)
         ).first()
 
@@ -92,53 +132,41 @@ class PasswordLoginView(APIView):
         if not user.is_active:
             return Response({"success": False, "message": "Your account has been deactivated. Please contact support."}, status=status.HTTP_403_FORBIDDEN)
 
-        # Update last active & status
-        now = timezone.now()
-        user.status = "online"
-        user.last_login = now
-        user.save(update_fields=["status", "last_login"])
+        if MFAService.is_mfa_enabled(user):
+            mfa_token = MFAService.issue_login_challenge(
+                user=user,
+                auth_method="password",
+                device_id=device_id,
+                platform=platform,
+                app_version=app_version,
+                device_name=device_name,
+            )
+            return _mfa_challenge_response({"mfa_token": mfa_token, "methods": ["totp", "backup_code"]})
 
-        # Session & Device
-        device, _ = Device.objects.update_or_create(
+        ok, sess_msg, sess_data = SessionService.create_enforced_session_and_tokens(
             user=user,
             device_id=device_id,
-            defaults={
-                "platform": platform,
-                "app_version": app_version,
-                "is_active": True,
-                "last_active_at": now,
-            }
-        )
-
-        session = SessionService.create_session(
-            user=user,
-            device=device,
+            platform=platform,
+            app_version=app_version,
+            device_name=device_name,
             ip_address=get_client_ip(request),
             user_agent=request.META.get("HTTP_USER_AGENT", ""),
+            auth_method="password",
+            replace_session_id=replace_session_id,
+            audit_action="LOGIN_SUCCESS",
         )
-
-        # Generate JWT
-        jwt_token = SimpleRefreshToken.for_user(user)
-        access_token = str(jwt_token.access_token)
-        refresh_token = str(jwt_token)
-
-        # Audit Log
-        AuditLog.objects.create(
-            user=user,
-            action="LOGIN_SUCCESS",
-            ip_address=get_client_ip(request),
-            user_agent=request.META.get("HTTP_USER_AGENT", "")[:255],
-            details={"method": "password", "platform": platform}
-        )
+        if not ok:
+            return _session_conflict_response(sess_msg, sess_data)
 
         response = Response({
             "success": True,
             "message": f"Welcome back, {user.name or user.username}!",
             "user": UserSerializer(user).data,
-            "token": access_token,
-            "refreshToken": refresh_token,
+            "session_id": sess_data["session_id"],
+            "token": sess_data["access"],
+            "refreshToken": sess_data["refresh"],
         })
-        set_jwt_cookie(response, access_token, refresh_token)
+        set_jwt_cookie(response, sess_data["access"], sess_data["refresh"])
         return response
 
 
@@ -244,29 +272,24 @@ class RegisterVerifyView(APIView):
                 }
             )
 
-            session = SessionService.create_session(
+            ok, _sess_msg, sess_data = SessionService.create_enforced_session_and_tokens(
                 user=user,
-                device=device,
+                device_id=device_id,
+                platform=platform,
+                app_version=app_version,
                 ip_address=get_client_ip(request),
                 user_agent=request.META.get("HTTP_USER_AGENT", ""),
+                auth_method="email_otp_register",
+                audit_action="REGISTER_SUCCESS",
             )
-
-            jwt_token = SimpleRefreshToken.for_user(user)
-            access_token = str(jwt_token.access_token)
-            refresh_token = str(jwt_token)
-
-            AuditLog.objects.create(
-                user=user,
-                action="REGISTER_SUCCESS",
-                ip_address=get_client_ip(request),
-                user_agent=request.META.get("HTTP_USER_AGENT", "")[:255],
-                details={"method": "email_otp", "platform": platform}
-            )
+            access_token = sess_data["access"]
+            refresh_token = sess_data["refresh"]
 
         response = Response({
             "success": True,
             "message": "Account created successfully! Welcome to ChitChat.",
             "user": UserSerializer(user).data,
+            "session_id": sess_data.get("session_id"),
             "token": access_token,
             "refreshToken": refresh_token,
         }, status=status.HTTP_201_CREATED)
@@ -307,8 +330,10 @@ class VerifyOTPView(APIView):
         email = serializer.validated_data["email"]
         otp = serializer.validated_data["otp"]
         device_id = serializer.validated_data.get("device_id", "web-client")
+        device_name = serializer.validated_data.get("device_name", "")
         platform = serializer.validated_data.get("platform", "web")
         app_version = serializer.validated_data.get("app_version", "1.0.0")
+        replace_session_id = serializer.validated_data.get("replace_session_id", "").strip() or None
         ip = get_client_ip(request)
         ua = request.META.get("HTTP_USER_AGENT", "")
 
@@ -320,10 +345,17 @@ class VerifyOTPView(APIView):
             app_version=app_version,
             ip_address=ip,
             user_agent=ua,
+            device_name=device_name,
+            replace_session_id=replace_session_id,
         )
 
         if not success:
+            if data.get("code") == "DEVICE_LIMIT_REACHED":
+                return _session_conflict_response(message, data)
             return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
+
+        if data.get("mfa_required"):
+            return _mfa_challenge_response(data)
 
         response = Response({
             "success": True,
@@ -415,9 +447,14 @@ class GoogleAuthView(APIView):
         )
 
         if not success:
+            if data.get("code") == "DEVICE_LIMIT_REACHED":
+                return _session_conflict_response(message, data)
             return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
 
-        response = Response({"success": True, "message": message, "user": data.get("user")})
+        if data.get("mfa_required"):
+            return _mfa_challenge_response(data)
+
+        response = Response({"success": True, "message": message, "user": data.get("user"), "session_id": data.get("session_id")})
         if "tokens" in data:
             set_jwt_cookie(response, data["tokens"]["access"], data["tokens"]["refresh"])
         return response
@@ -455,9 +492,14 @@ class GitHubAuthView(APIView):
         )
 
         if not success:
+            if data.get("code") == "DEVICE_LIMIT_REACHED":
+                return _session_conflict_response(message, data)
             return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
 
-        response = Response({"success": True, "message": message, "user": data.get("user")})
+        if data.get("mfa_required"):
+            return _mfa_challenge_response(data)
+
+        response = Response({"success": True, "message": message, "user": data.get("user"), "session_id": data.get("session_id")})
         if "tokens" in data:
             set_jwt_cookie(response, data["tokens"]["access"], data["tokens"]["refresh"])
         return response
@@ -494,9 +536,14 @@ class FacebookAuthView(APIView):
         )
 
         if not success:
+            if data.get("code") == "DEVICE_LIMIT_REACHED":
+                return _session_conflict_response(message, data)
             return Response({"success": False, "message": message}, status=status.HTTP_400_BAD_REQUEST)
 
-        response = Response({"success": True, "message": message, "user": data.get("user")})
+        if data.get("mfa_required"):
+            return _mfa_challenge_response(data)
+
+        response = Response({"success": True, "message": message, "user": data.get("user"), "session_id": data.get("session_id")})
         if "tokens" in data:
             set_jwt_cookie(response, data["tokens"]["access"], data["tokens"]["refresh"])
         return response
@@ -546,6 +593,9 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        sid = getattr(request, "current_session_id", None)
+        if sid:
+            SessionService.revoke_session(request.user, sid)
         response = Response({"success": True, "message": "Logged out successfully."})
         response.delete_cookie("chitChat-Token")
         response.delete_cookie("chitChat-RefreshToken")
@@ -556,8 +606,75 @@ class UserSessionsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        sessions = SessionService.get_user_sessions(request.user)
-        return Response({"success": True, "sessions": sessions})
+        sid = getattr(request, "current_session_id", None)
+        sessions = SessionService.get_user_sessions(request.user, current_session_id=sid)
+        return Response({
+            "success": True,
+            "sessions": sessions,
+            "active_count": len(sessions),
+            "max_devices": SessionService.get_max_devices(),
+        })
+
+
+class RevokeOtherSessionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        sid = getattr(request, "current_session_id", None)
+        revoked = SessionService.revoke_all_other_sessions(request.user, keep_session_id=sid)
+        return Response({
+            "success": True,
+            "revoked_count": revoked,
+            "message": f"Signed out of {revoked} other device(s).",
+        })
+
+
+class ResolveDeviceLimitView(APIView):
+    """Completes login after user chooses an existing device session to evict."""
+    permission_classes = [AllowAny]
+    throttle_classes = [MFAVerifyThrottle]
+
+    def post(self, request):
+        serializer = ResolveDeviceLimitSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "Device limit token and session ID are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        payload = SessionService.consume_device_limit_token(serializer.validated_data["device_limit_token"])
+        if not payload:
+            return Response({"success": False, "message": "Session selection expired. Please sign in again."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.select_related("profile", "mfa").filter(id=payload.get("user_id"), is_active=True).first()
+        if not user:
+            return Response({"success": False, "message": "User account unavailable."}, status=status.HTTP_404_NOT_FOUND)
+
+        linked_parent = None
+        if payload.get("linked_by_session_id"):
+            linked_parent = UserSession.objects.filter(id=payload["linked_by_session_id"]).first()
+
+        ok, msg, sess_data = SessionService.create_enforced_session_and_tokens(
+            user=user,
+            device_id=payload.get("device_id", "web-client"),
+            platform=payload.get("platform", "web"),
+            app_version=payload.get("app_version", "1.0.0"),
+            device_name=payload.get("device_name", ""),
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", ""),
+            auth_method=payload.get("auth_method", "password"),
+            linked_by_session=linked_parent,
+            replace_session_id=serializer.validated_data["replace_session_id"],
+            audit_action="LOGIN_DEVICE_REPLACED",
+        )
+        if not ok:
+            return _session_conflict_response(msg, sess_data)
+
+        response = Response({
+            "success": True,
+            "message": f"Welcome back, {user.name or user.username}!",
+            "user": UserSerializer(user).data,
+            "session_id": sess_data["session_id"],
+        })
+        set_jwt_cookie(response, sess_data["access"], sess_data["refresh"])
+        return response
 
 
 class RevokeSessionView(APIView):
@@ -593,9 +710,10 @@ class GetMyProfileView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        user = User.objects.select_related("profile", "mfa").filter(pk=request.user.pk).first() or request.user
         return Response({
             "success": True,
-            "user": UserSerializer(request.user).data
+            "user": UserSerializer(user).data
         })
 
 
@@ -831,19 +949,21 @@ class SearchUserView(APIView):
         if not query:
             return Response({"success": True, "users": []})
 
-        # Exclude blocked users and self
-        blocked_ids = BlockedUser.objects.filter(user=request.user).values_list("blocked_user_id", flat=True)
-        blocked_by_ids = BlockedUser.objects.filter(blocked_user=request.user).values_list("user_id", flat=True)
-        excluded_ids = set(list(blocked_ids) + list(blocked_by_ids) + [request.user.id])
+        base_qs = (
+            User.objects.select_related("profile")
+            .filter(is_active=True)
+            .exclude(id=request.user.id)
+            .filter(
+                ~Exists(BlockedUser.objects.filter(user=request.user, blocked_user_id=OuterRef("pk"))),
+                ~Exists(BlockedUser.objects.filter(user_id=OuterRef("pk"), blocked_user=request.user)),
+                ~Exists(UserProfile.objects.filter(user_id=OuterRef("pk"), hide_from_search=True)),
+            )
+        )
 
-        # Exclude users who configured 'hide_from_search'
-        hidden_users = UserProfile.objects.filter(hide_from_search=True).values_list("user_id", flat=True)
-        excluded_ids.update(hidden_users)
-
-        # Search by display name and username only (prevent email enumeration attacks)
-        users = User.objects.filter(
-            Q(name__icontains=query) | Q(username__icontains=query)
-        ).exclude(id__in=excluded_ids).order_by("name")[:20]
+        # Indexed prefix lookup first; only fall back to mid-string match if zero prefix hits
+        users = list(base_qs.filter(Q(username__istartswith=query) | Q(name__istartswith=query)).order_by("name")[:20])
+        if not users:
+            users = list(base_qs.filter(Q(name__icontains=query) | Q(username__icontains=query)).order_by("name")[:20])
 
         return Response({
             "success": True,
@@ -1074,8 +1194,7 @@ class DeleteAccountView(APIView):
         name = user.name or user.username
 
         with transaction.atomic():
-            user.sessions.update(is_revoked=True)
-            user.refresh_tokens.update(is_revoked=True)
+            SessionService.mark_user_sessions_revoked(user)
             user.is_active = False
             user.save(update_fields=["is_active"])
 
@@ -1092,4 +1211,223 @@ class DeleteAccountView(APIView):
 
         response = Response({"success": True, "message": "Your account has been deactivated and scheduled for deletion."})
         response.delete_cookie("chitChat-Token")
+        return response
+
+
+# ─── Multi-Factor Authentication (TOTP & Backup Recovery Codes) ─────────────
+class MFAStatusView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response({"success": True, **MFAService.get_status(request.user)})
+
+
+class MFASetupView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        setup_data = MFAService.begin_setup(request.user)
+        return Response({"success": True, **setup_data})
+
+
+class MFAVerifySetupView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = MFACodeSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "A 6-digit authenticator code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, msg, backup_codes = MFAService.verify_and_enable(request.user, serializer.validated_data["code"])
+        if not ok:
+            return Response({"success": False, "message": msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            "success": True,
+            "message": msg,
+            "backup_codes": backup_codes,
+        })
+
+
+class MFADisableView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = MFADisableSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "Valid authenticator code is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, msg = MFAService.disable_mfa(
+            request.user,
+            password=serializer.validated_data.get("password", ""),
+            code=serializer.validated_data["code"],
+        )
+        if not ok:
+            return Response({"success": False, "message": msg}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "message": msg})
+
+
+class MFARegenerateBackupCodesView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = MFACodeSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "Authenticator code required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, msg, codes = MFAService.regenerate_backup_codes(request.user, serializer.validated_data["code"])
+        if not ok:
+            return Response({"success": False, "message": msg}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"success": True, "message": msg, "backup_codes": codes})
+
+
+class MFALoginVerifyView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [MFAVerifyThrottle]
+
+    def post(self, request):
+        serializer = MFALoginVerifySerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "MFA token and verification code are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        raw_token = serializer.validated_data["mfa_token"]
+        code = serializer.validated_data["code"]
+        replace_sid = serializer.validated_data.get("replace_session_id", "").strip() or None
+
+        # Decode once to validate signature without consuming before checking code
+        import jwt as _jwt
+        try:
+            peek = _jwt.decode(raw_token, settings.SECRET_KEY, algorithms=["HS256"])
+        except Exception:
+            return Response({"success": False, "message": "Verification session expired. Please sign in again."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        if peek.get("purpose") != "mfa_login_challenge":
+            return Response({"success": False, "message": "Invalid MFA challenge token."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.select_related("profile", "mfa").filter(id=peek.get("user_id"), is_active=True).first()
+        if not user:
+            return Response({"success": False, "message": "Account not found or inactive."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        ok, reason = MFAService.verify_user_code(user, code)
+        if not ok:
+            return Response({"success": False, "message": reason}, status=status.HTTP_401_UNAUTHORIZED)
+
+        # Consume challenge jti now that verification succeeded
+        consumed = MFAService.verify_and_consume_login_challenge(raw_token)
+        if not consumed:
+            return Response({"success": False, "message": "MFA challenge has already been used."}, status=status.HTTP_401_UNAUTHORIZED)
+
+        sess_ok, sess_msg, sess_data = SessionService.create_enforced_session_and_tokens(
+            user=user,
+            device_id=consumed.get("device_id", "web-client"),
+            platform=consumed.get("platform", "web"),
+            app_version=consumed.get("app_version", "1.0.0"),
+            device_name=consumed.get("device_name", ""),
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", ""),
+            auth_method=f"{consumed.get('auth_method', 'password')}+mfa",
+            replace_session_id=replace_sid,
+            audit_action="LOGIN_MFA_SUCCESS",
+            audit_details={"mfa_method": reason},
+        )
+        if not sess_ok:
+            return _session_conflict_response(sess_msg, sess_data)
+
+        response = Response({
+            "success": True,
+            "message": f"Welcome back, {user.name or user.username}!",
+            "user": UserSerializer(user).data,
+            "session_id": sess_data["session_id"],
+        })
+        set_jwt_cookie(response, sess_data["access"], sess_data["refresh"])
+        return response
+
+
+# ─── QR Code Companion Device Login ─────────────────────────────────────────
+class QRCreateView(APIView):
+    permission_classes = [AllowAny]
+    throttle_classes = [QRCreateThrottle]
+
+    def post(self, request):
+        serializer = QRCreateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "errors": serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        qr_data = QRAuthService.create_session(
+            device_id=serializer.validated_data.get("device_id", ""),
+            device_name=serializer.validated_data.get("device_name", "Web Browser"),
+            platform=serializer.validated_data.get("platform", "web"),
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", ""),
+        )
+        return Response({"success": True, **qr_data})
+
+
+class QRStatusView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        qr_token = (request.query_params.get("token") or "").strip()
+        claim_secret = (request.query_params.get("claim_secret") or "").strip()
+        if not qr_token or not claim_secret:
+            return Response({"success": False, "message": "token and claim_secret are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        ok, data = QRAuthService.get_status(qr_token=qr_token, claim_secret=claim_secret)
+        return Response({"success": ok, **data}, status=status.HTTP_200_OK if ok else status.HTTP_400_BAD_REQUEST)
+
+
+class QRApproveView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = QRApproveSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "QR token is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        sid = getattr(request, "current_session_id", None)
+        approver_session = UserSession.objects.filter(user=request.user, id=sid).first() if sid else None
+        replace_sid = serializer.validated_data.get("replace_session_id", "").strip() or None
+
+        ok, msg, data = QRAuthService.approve_session(
+            qr_token=serializer.validated_data["qr_token"],
+            approver_user=request.user,
+            approver_session=approver_session,
+            replace_session_id=replace_sid,
+        )
+        if not ok:
+            if data.get("code") == "DEVICE_LIMIT_REACHED":
+                return _session_conflict_response(msg, data)
+            return Response({"success": False, "message": msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({"success": True, "message": msg, **data})
+
+
+class QRClaimView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = QRClaimSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response({"success": False, "message": "QR token and claim secret are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        replace_sid = serializer.validated_data.get("replace_session_id", "").strip() or None
+        ok, msg, data = QRAuthService.claim_session(
+            qr_token=serializer.validated_data["qr_token"].strip(),
+            claim_secret=serializer.validated_data["claim_secret"].strip(),
+            ip_address=get_client_ip(request),
+            user_agent=request.META.get("HTTP_USER_AGENT", ""),
+            replace_session_id=replace_sid,
+        )
+        if not ok:
+            if data.get("code") == "DEVICE_LIMIT_REACHED":
+                return _session_conflict_response(msg, data)
+            return Response({"success": False, "message": msg}, status=status.HTTP_400_BAD_REQUEST)
+
+        response = Response({
+            "success": True,
+            "message": msg,
+            "user": UserSerializer(data["user"]).data,
+            "session_id": data["session_id"],
+        })
+        set_jwt_cookie(response, data["access"], data["refresh"])
         return response

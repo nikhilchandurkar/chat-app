@@ -76,7 +76,22 @@ class OTPService:
         return True, "Verification code sent to your email."
 
     @classmethod
-    def verify_otp(cls, email: str, otp: str, device_id: str = "web-client", platform: str = "web", app_version: str = "1.0.0", ip_address: str = None, user_agent: str = "") -> tuple[bool, str, dict]:
+    def verify_otp(
+        cls,
+        email: str,
+        otp: str,
+        device_id: str = "web-client",
+        platform: str = "web",
+        app_version: str = "1.0.0",
+        ip_address: str = None,
+        user_agent: str = "",
+        device_name: str = "",
+        replace_session_id: str | None = None,
+        skip_mfa: bool = False,
+    ) -> tuple[bool, str, dict]:
+        from apps.authentication.services.mfa_service import MFAService
+        from apps.authentication.services.session_service import SessionService
+
         email = email.lower().strip()
         otp = otp.strip()
         now = timezone.now()
@@ -141,56 +156,43 @@ class OTPService:
             # Ensure profile exists
             UserProfile.objects.get_or_create(user=user, defaults={"display_name": user.name or user.username})
 
-            # Check if this device is new
+            # Enforce MFA if enabled for this account
+            if not skip_mfa and MFAService.is_mfa_enabled(user):
+                mfa_token = MFAService.issue_login_challenge(
+                    user=user,
+                    auth_method="otp",
+                    device_id=device_id,
+                    platform=platform,
+                    app_version=app_version,
+                    device_name=device_name,
+                )
+                return True, "Two-factor verification required.", {
+                    "mfa_required": True,
+                    "mfa_token": mfa_token,
+                    "methods": ["totp", "backup_code"],
+                }
+
             prior_device = Device.objects.filter(user=user, device_id=device_id).exists()
 
-            # Register or update Device
-            device, _ = Device.objects.update_or_create(
+            ok, sess_msg, sess_data = SessionService.create_enforced_session_and_tokens(
                 user=user,
                 device_id=device_id,
-                defaults={
-                    "platform": platform,
-                    "app_version": app_version,
-                    "is_active": True,
-                    "last_active_at": now,
-                }
-            )
-
-            # Create UserSession
-            session_token = secrets.token_hex(32)
-            session = UserSession.objects.create(
-                user=user,
-                device=device,
-                session_token=session_token,
+                platform=platform,
+                app_version=app_version,
+                device_name=device_name,
                 ip_address=ip_address,
                 user_agent=user_agent,
-                expires_at=now + timedelta(days=30),
-                is_revoked=False
+                auth_method="otp",
+                replace_session_id=replace_session_id,
+                audit_action="auth.login.otp",
+                audit_details={"is_new_user": is_new_user},
             )
+            if not ok:
+                return False, sess_msg, sess_data
 
-            # Generate JWT Token Pair with JTI Tracking
-            refresh = SimpleRefreshToken.for_user(user)
-            access_token = str(refresh.access_token)
-            jti = refresh.get("jti")
-            token_hash = hashlib.sha256(str(refresh).encode()).hexdigest()
-
-            RefreshToken.objects.create(
-                user=user,
-                session=session,
-                token_hash=token_hash,
-                jti=jti,
-                expires_at=now + timedelta(days=30),
-                is_revoked=False
-            )
-
-            # Audit log
-            AuditLog.objects.create(
-                user=user,
-                action="auth.login.otp",
-                ip_address=ip_address,
-                user_agent=user_agent,
-                details={"platform": platform, "device_id": device_id, "is_new_user": is_new_user}
-            )
+            session = sess_data["session"]
+            access_token = sess_data["access"]
+            refresh_str = sess_data["refresh"]
 
         # Dispatch notifications
         if is_new_user:
@@ -213,11 +215,14 @@ class OTPService:
                 "name": user.name,
                 "avatar": user.avatar,
                 "role": user.role,
+                "is_staff": user.is_staff,
+                "is_superuser": user.is_superuser,
+                "mfa_enabled": MFAService.is_mfa_enabled(user),
                 "is_new_user": is_new_user,
             },
             "tokens": {
                 "access": access_token,
-                "refresh": str(refresh),
+                "refresh": refresh_str,
             },
             "session_id": str(session.id),
         }
@@ -236,25 +241,24 @@ class OTPService:
         if not user:
             return False, "No account found matching this email address.", {}
 
-        # Verify OTP
+        # Verify OTP (account recovery proves mailbox ownership & revokes all old sessions)
         success, msg, data = cls.verify_otp(
             email=email,
             otp=otp,
             device_id=device_id,
             platform=platform,
             ip_address=ip_address,
-            user_agent=user_agent
+            user_agent=user_agent,
+            skip_mfa=True,
         )
         if not success:
-            return False, msg, {}
+            return False, msg, data
 
-        # Revoke all other sessions and tokens for this user
+        # Revoke all other sessions and tokens for this user (and cache-block active JWT sids)
+        from apps.authentication.services.session_service import SessionService
+
         new_session_id = data.get("session_id")
-        UserSession.objects.filter(user=user).exclude(id=new_session_id).update(is_revoked=True)
-        RefreshToken.objects.filter(user=user).exclude(session_id=new_session_id).update(is_revoked=True)
-
-        # Disallow older devices
-        Device.objects.filter(user=user).exclude(device_id=device_id).update(is_active=False)
+        SessionService.revoke_all_other_sessions(user, keep_session_id=new_session_id)
 
         # Send recovery confirmation email
         EmailNotificationService.send_account_recovery(email=email, user_name=user.name or user.username)

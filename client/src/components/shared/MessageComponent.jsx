@@ -17,8 +17,7 @@ import {
 } from "@mui/icons-material";
 import React, { memo, useState, lazy, Suspense } from "react";
 import { lightBlue } from "../../constants/color";
-import moment from "moment";
-import { fileFormat } from "../../lib/feature";
+import { fileFormat, formatTimeAgo } from "../../lib/feature";
 import RenderAttachment from "./RenderAttachment";
 import LinkPreview from "./LinkPreview";
 import { motion } from "framer-motion";
@@ -37,7 +36,7 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, chatId,
 
   const { _id, sender, content, attachments = [], createdAt, isDeleted, isEdited, replyTo, readBy = [] } = message;
   const sameSender = sender?._id === user?._id;
-  const timeAgo = createdAt ? moment(createdAt).fromNow() : "Just now";
+  const timeAgo = createdAt ? formatTimeAgo(createdAt) : "Just now";
 
   const [contextMenu, setContextMenu] = useState(null);
   const [editMode, setEditMode] = useState(false);

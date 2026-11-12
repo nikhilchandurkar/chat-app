@@ -2,19 +2,41 @@ import jwt
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
+from rest_framework_simplejwt.authentication import JWTAuthentication
+from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.tokens import AccessToken
+
+from apps.authentication.services.session_service import SessionService
 
 User = get_user_model()
 
+
+class SessionValidatedJWTAuthentication(JWTAuthentication):
+    """DRF JWT authenticator that also enforces immediate session revocation via `sid`."""
+
+    def authenticate(self, request):
+        result = super().authenticate(request)
+        if result is None:
+            return None
+        user, validated_token = result
+        sid = validated_token.get("sid")
+        if sid and SessionService.is_session_revoked(str(sid)):
+            raise InvalidToken("Session has been revoked.")
+        if sid:
+            request.current_session_id = str(sid)
+        return user, validated_token
+
+
 class JWTAuthenticationFromCookieMiddleware:
     """
-    Extracts the JWT token from the 'chitChat-Token' cookie and attaches the user
-    to request.user so standard Django/DRF views automatically recognize the session.
+    Extracts the JWT token from the 'chitChat-Token' cookie or Bearer header,
+    enforces immediate session revocation via `sid`, and attaches `request.user`.
     """
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
+        request.current_session_id = None
         token = request.COOKIES.get("chitChat-Token")
 
         # Support Authorization: Bearer <token> for React Native mobile clients
@@ -26,9 +48,14 @@ class JWTAuthenticationFromCookieMiddleware:
         if token:
             try:
                 validated_token = AccessToken(token)
+                sid = validated_token.get("sid")
+                if sid and SessionService.is_session_revoked(str(sid)):
+                    request.user = AnonymousUser()
+                    return self.get_response(request)
+                request.current_session_id = str(sid) if sid else None
                 user_id = validated_token.get("user_id") or validated_token.get("_id")
                 if user_id:
-                    request.user = User.objects.filter(id=user_id).first() or AnonymousUser()
+                    request.user = User.objects.filter(id=user_id, is_active=True).first() or AnonymousUser()
             except Exception:
                 # If SimpleJWT fails, try decoding with raw JWT_SECRET (for backward compatibility with Node JWTs)
                 try:
@@ -36,7 +63,7 @@ class JWTAuthenticationFromCookieMiddleware:
                     decoded = jwt.decode(token, raw_secret, algorithms=["HS256"])
                     user_id = decoded.get("_id") or decoded.get("user_id")
                     if user_id:
-                        request.user = User.objects.filter(id=user_id).first() or AnonymousUser()
+                        request.user = User.objects.filter(id=user_id, is_active=True).first() or AnonymousUser()
                 except Exception:
                     pass
 

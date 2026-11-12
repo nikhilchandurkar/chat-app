@@ -127,3 +127,7 @@ class ChatMessagesTestCase(TestCase):
         list_after = self.client.get(f"/api/v1/chat/{group.id}/pins")
         self.assertEqual(len(list_after.data["pinnedMessages"]), 0)
 
+    def test_asgi_application_loads(self):
+        import core.asgi
+        self.assertIsNotNone(core.asgi.application)
+

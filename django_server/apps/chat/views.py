@@ -4,6 +4,7 @@ import hashlib
 from datetime import timedelta
 from django.utils import timezone
 from django.db import transaction
+from django.db.models import OuterRef, Subquery
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -153,31 +154,62 @@ class MyChatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        memberships = ConversationMember.objects.filter(
-            user=request.user
-        ).select_related("conversation").prefetch_related("conversation__member_records__user")
+        memberships = list(
+            ConversationMember.objects.filter(user=request.user).select_related("conversation")
+        )
+        if not memberships:
+            return Response({"success": True, "chats": []})
+
+        conv_ids = [m.conversation_id for m in memberships]
+
+        # 1. Batch-fetch all co-members + profiles across user's conversations (eliminates N+1 queries)
+        members_by_conv = {}
+        other_user_ids = set()
+        for cm in (
+            ConversationMember.objects.filter(conversation_id__in=conv_ids)
+            .exclude(user=request.user)
+            .select_related("user", "user__profile")
+        ):
+            members_by_conv.setdefault(cm.conversation_id, []).append(cm.user)
+            other_user_ids.add(cm.user_id)
+
+        # 2. Batch-fetch contact privacy checks in one query
+        contact_owner_ids = set(
+            Contact.objects.filter(user_id__in=other_user_ids, contact_user=request.user).values_list("user_id", flat=True)
+        ) if other_user_ids else set()
+
+        # 3. Batch-fetch latest non-deleted message per conversation via indexed subquery
+        last_msg_subq = Subquery(
+            Message.objects.filter(conversation_id=OuterRef("pk"), is_deleted=False)
+            .order_by("-created_at")
+            .values("id")[:1]
+        )
+        last_msg_ids = [
+            row["last_msg_id"]
+            for row in Conversation.objects.filter(id__in=conv_ids).annotate(last_msg_id=last_msg_subq).values("last_msg_id")
+            if row["last_msg_id"]
+        ]
+        last_msg_by_conv = {}
+        if last_msg_ids:
+            for msg in Message.objects.filter(id__in=last_msg_ids):
+                last_msg_by_conv[msg.conversation_id] = msg
 
         results = []
         for mem in memberships:
             c = mem.conversation
-            # Fetch latest non-deleted, non-expired message
-            last_msg = Message.objects.filter(
-                conversation=c,
-                is_deleted=False
-            ).order_by("-created_at").first()
+            last_msg = last_msg_by_conv.get(c.id)
+            co_members = members_by_conv.get(c.id, [])
 
             if not c.group_chat:
-                other_member = c.member_records.exclude(user=request.user).select_related("user").first()
-                if not other_member:
+                if not co_members:
                     continue
-                other = other_member.user
-                # Check profile avatar privacy
+                other = co_members[0]
                 other_profile = getattr(other, "profile", None)
                 can_see_avatar = True
                 if other_profile and other_profile.privacy_avatar == "nobody":
                     can_see_avatar = False
                 elif other_profile and other_profile.privacy_avatar == "contacts":
-                    can_see_avatar = Contact.objects.filter(user=other, contact_user=request.user).exists()
+                    can_see_avatar = other.id in contact_owner_ids
 
                 avatar_url = other.avatar.get("url") if (can_see_avatar and isinstance(other.avatar, dict)) else None
 
@@ -199,7 +231,7 @@ class MyChatsView(APIView):
                     "lastMessageTime": last_msg.created_at.isoformat() if last_msg else c.updated_at.isoformat(),
                 })
             else:
-                members_list = [m.user for m in c.member_records.all()]
+                members_list = [request.user] + co_members
                 avatars = []
                 if isinstance(c.avatar, dict) and c.avatar.get("url"):
                     avatars.append(c.avatar.get("url"))
@@ -226,7 +258,7 @@ class MyChatsView(APIView):
                 })
 
         # Sort pinned chats first, then latest activity
-        results.sort(key=lambda x: (not x.get("isPinned", False), x.get("lastMessageTime", "")), reverse=True)
+        results.sort(key=lambda x: (1 if x.get("isPinned") else 0, x.get("lastMessageTime", "")), reverse=True)
         return Response({"success": True, "chats": results})
 
 
@@ -234,10 +266,11 @@ class MyGroupsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        memberships = ConversationMember.objects.filter(
-            user=request.user,
-            conversation__group_chat=True
-        ).select_related("conversation")
+        memberships = (
+            ConversationMember.objects.filter(user=request.user, conversation__group_chat=True)
+            .select_related("conversation")
+            .prefetch_related("conversation__members", "conversation__admins")
+        )
 
         groups = [m.conversation for m in memberships]
         return Response({
@@ -250,7 +283,10 @@ class ChatDetailsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, id):
-        chat = get_object_or_404(Conversation, id=id)
+        chat = get_object_or_404(
+            Conversation.objects.prefetch_related("members", "admins"),
+            id=id,
+        )
         if not chat.member_records.filter(user=request.user).exists():
             return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
         return Response({"success": True, "chat": ChatDetailsSerializer(chat).data})

@@ -51,7 +51,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(unique=True, db_index=True)
     username = models.CharField(max_length=50, unique=True, db_index=True)
-    name = models.CharField(max_length=100, blank=True, default="")
+    name = models.CharField(max_length=100, blank=True, default="", db_index=True)
     bio = models.CharField(max_length=255, blank=True, default="")
     avatar = models.JSONField(default=dict, blank=True)
     status = models.CharField(max_length=15, choices=STATUS_CHOICES, default="offline")
@@ -74,6 +74,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         indexes = [
             models.Index(fields=["created_at", "username"]),
             models.Index(fields=["email"]),
+            models.Index(fields=["name"]),
         ]
 
     def __str__(self):
@@ -96,7 +97,7 @@ class UserProfile(models.Model):
     privacy_avatar = models.CharField(max_length=20, choices=PRIVACY_CHOICES, default="everyone")
     privacy_online = models.CharField(max_length=20, choices=PRIVACY_CHOICES, default="everyone")
     privacy_last_seen = models.CharField(max_length=20, choices=PRIVACY_CHOICES, default="everyone")
-    hide_from_search = models.BooleanField(default=False)
+    hide_from_search = models.BooleanField(default=False, db_index=True)
     privacy_read_receipts = models.BooleanField(default=True)
     privacy_typing_indicator = models.BooleanField(default=True)
     who_can_add_to_groups = models.CharField(max_length=20, choices=PRIVACY_CHOICES, default="everyone")
@@ -188,6 +189,7 @@ class Device(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="devices")
     device_id = models.CharField(max_length=128, db_index=True)
+    device_name = models.CharField(max_length=120, blank=True, default="")
     platform = models.CharField(max_length=20, choices=PLATFORM_CHOICES, default="web")
     app_version = models.CharField(max_length=32, blank=True, default="1.0.0")
     native_fcm_token = models.TextField(blank=True, default="")
@@ -211,6 +213,10 @@ class UserSession(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="sessions")
     device = models.ForeignKey(Device, on_delete=models.SET_NULL, null=True, blank=True, related_name="sessions")
     session_token = models.CharField(max_length=128, unique=True, db_index=True)
+    auth_method = models.CharField(max_length=32, default="password")
+    linked_by_session = models.ForeignKey(
+        "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="linked_companion_sessions"
+    )
     ip_address = models.GenericIPAddressField(null=True, blank=True)
     user_agent = models.TextField(blank=True, default="")
     expires_at = models.DateTimeField()
@@ -225,6 +231,67 @@ class UserSession(models.Model):
 
     def __str__(self):
         return f"Session {self.session_token[:8]} for {self.user.email}"
+
+
+class UserMFA(models.Model):
+    """Stores TOTP authenticator secret and one-time recovery backup codes for 2FA."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="mfa")
+    is_enabled = models.BooleanField(default=False, db_index=True)
+    totp_secret = models.TextField(blank=True, default="")
+    pending_secret = models.TextField(blank=True, default="")
+    backup_code_hashes = models.JSONField(default=list, blank=True)
+    enabled_at = models.DateTimeField(null=True, blank=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "user_mfa"
+
+    def __str__(self):
+        return f"MFA({self.user.email}, enabled={self.is_enabled})"
+
+
+class QRLoginSession(models.Model):
+    """Short-lived QR challenge enabling an authenticated phone/device to authorize a companion login."""
+
+    STATUS_CHOICES = [
+        ("pending", "Pending"),
+        ("approved", "Approved"),
+        ("claimed", "Claimed"),
+        ("rejected", "Rejected"),
+        ("expired", "Expired"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    qr_token = models.CharField(max_length=96, unique=True, db_index=True)
+    claim_secret_hash = models.CharField(max_length=64)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default="pending", db_index=True)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, null=True, blank=True, related_name="qr_sessions")
+    approved_by_session = models.ForeignKey(
+        UserSession, on_delete=models.SET_NULL, null=True, blank=True, related_name="approved_qr_sessions"
+    )
+    target_device_id = models.CharField(max_length=128, default="web-qr")
+    target_device_name = models.CharField(max_length=120, blank=True, default="Web Browser")
+    target_platform = models.CharField(max_length=20, default="web")
+    target_ip = models.GenericIPAddressField(null=True, blank=True)
+    target_user_agent = models.TextField(blank=True, default="")
+    expires_at = models.DateTimeField(db_index=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "qr_login_sessions"
+        indexes = [
+            models.Index(fields=["qr_token", "status"]),
+            models.Index(fields=["expires_at", "status"]),
+        ]
+
+    def __str__(self):
+        return f"QR({self.qr_token[:8]}:{self.status})"
 
 
 class RefreshToken(models.Model):

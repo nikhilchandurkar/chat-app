@@ -15,9 +15,21 @@ STREAMS = [
 DEFAULT_CONSUMER_GROUP = "chat_workers"
 
 
+_redis_pool = None
+
+
 def get_redis_client():
+    global _redis_pool
     try:
-        return redis.from_url(settings.REDIS_URL, decode_responses=True, socket_connect_timeout=2)
+        if _redis_pool is None:
+            _redis_pool = redis.ConnectionPool.from_url(
+                settings.REDIS_URL,
+                decode_responses=True,
+                max_connections=64,
+                socket_connect_timeout=2,
+                socket_timeout=2,
+            )
+        return redis.Redis(connection_pool=_redis_pool)
     except Exception as e:
         logger.warning("Failed to connect to Redis at %s: %s", settings.REDIS_URL, str(e))
         return None

@@ -34,6 +34,7 @@ const Home = lazy(() => import("./pages/Home"));
 const Login = lazy(() => import("./pages/Login"));
 const Chat = lazy(() => import("./pages/Chat"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const AdminDashboard = lazy(() => import("./pages/AdminDashboard"));
 const Groups = lazy(() => import("./pages/Groups"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
@@ -49,6 +50,25 @@ axios.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// Immediately sign out locally if active session is revoked from another device
+axios.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    const reqUrl = error?.config?.url || "";
+    const statusCode = error?.response?.status;
+    const isAuthAttempt = /\/api\/v1\/(auth|user)\/(login|register|otp|qr|mfa\/login-verify|sessions\/resolve-limit|refresh)/.test(reqUrl);
+    if (statusCode === 401 && !isAuthAttempt) {
+      const hadToken = Boolean(localStorage.getItem("chitChat-Token") || localStorage.getItem("access_token"));
+      if (hadToken) {
+        localStorage.removeItem("chitChat-Token");
+        localStorage.removeItem("access_token");
+        window.dispatchEvent(new Event("chitchat:session-revoked"));
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 const App = () => {
   const { user, loader } = useSelector((state) => state.auth);
@@ -119,6 +139,12 @@ const App = () => {
       });
   }, [dispatch]);
 
+  useEffect(() => {
+    const onSessionRevoked = () => dispatch(userNotExists());
+    window.addEventListener("chitchat:session-revoked", onSessionRevoked);
+    return () => window.removeEventListener("chitchat:session-revoked", onSessionRevoked);
+  }, [dispatch]);
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
@@ -132,6 +158,8 @@ const App = () => {
                 <Route element={<ProtectRoute user={user} />}>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/groups" element={<Groups />} />
+                  <Route path="/admin-panel" element={<AdminDashboard />} />
+                  <Route path="/admin-dashboard" element={<AdminDashboard />} />
                 </Route>
                 <Route
                   path="/login"

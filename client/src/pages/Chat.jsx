@@ -6,7 +6,7 @@ import {
   Info as InfoIcon,
 } from "@mui/icons-material";
 import { IconButton, Skeleton, Stack, Tooltip, Box, ClickAwayListener, Typography } from "@mui/material";
-import React, { useCallback, useRef, useState, useEffect, lazy, Suspense } from "react";
+import React, { useCallback, useMemo, useRef, useState, useEffect, lazy, Suspense } from "react";
 import FileMenu from "../components/dialogs/FileMenu";
 import TypingIndicator from "../components/specific/TypingIndicator";
 import VoiceRecorder from "../components/specific/VoiceRecorder";
@@ -48,6 +48,149 @@ const setLastSeen = (chatId) => {
   } catch { }
 };
 
+const ChatComposer = React.memo(({
+  chatId,
+  members,
+  socket,
+  isDark,
+  dispatch,
+  replyingTo,
+  onClearReply,
+  setFileMenuAnchor,
+}) => {
+  const [message, setMessage] = useState("");
+  const [showEmoji, setShowEmoji] = useState(false);
+  const typingTimeout = useRef(null);
+  const lastTypingEmit = useRef(0);
+
+  useEffect(() => {
+    setMessage("");
+    setShowEmoji(false);
+    lastTypingEmit.current = 0;
+  }, [chatId]);
+
+  const submitHandler = (e) => {
+    e.preventDefault();
+    if (!message.trim()) return;
+    socket.emit(NEW_MESSAGE, { chatId, members, message, replyTo: replyingTo });
+    setMessage("");
+    setShowEmoji(false);
+    onClearReply();
+    lastTypingEmit.current = 0;
+    if (typingTimeout.current) clearTimeout(typingTimeout.current);
+    socket.emit(STOP_TYPING, { members, chatId });
+  };
+
+  const onEmojiClick = useCallback((emojiData) => {
+    setMessage((prev) => prev + emojiData.emoji);
+  }, []);
+
+  const messageOnChange = (e) => {
+    setMessage(e.target.value);
+    const now = Date.now();
+    // Throttle typing.start events to once per 2s to eliminate per-keystroke Redis/WS storms
+    if (now - lastTypingEmit.current > 2000) {
+      socket.emit(START_TYPING, { members, chatId });
+      lastTypingEmit.current = now;
+    }
+    if (typingTimeout.current) clearTimeout(typingTimeout.current);
+    typingTimeout.current = setTimeout(() => {
+      socket.emit(STOP_TYPING, { members, chatId });
+      lastTypingEmit.current = 0;
+    }, 2000);
+  };
+
+  const handleFileOpen = (e) => {
+    dispatch(setIsFileMenu(true));
+    setFileMenuAnchor(e.currentTarget);
+  };
+
+  return (
+    <>
+      {showEmoji && (
+        <ClickAwayListener onClickAway={() => setShowEmoji(false)}>
+          <Box sx={{ position: "absolute", bottom: "75px", left: "16px", zIndex: 200 }}>
+            <Suspense fallback={null}>
+              <EmojiPicker onEmojiClick={onEmojiClick} height={380} width={320} previewConfig={{ showPreview: false }} />
+            </Suspense>
+          </Box>
+        </ClickAwayListener>
+      )}
+      <Box
+        sx={{
+          flexShrink: 0,
+          width: "100%",
+          display: "flex",
+          flexDirection: "column",
+          borderTop: "1px solid",
+          borderColor: isDark ? "#343B36" : "#E3E6E1",
+          bgcolor: isDark ? "#1E2320" : "#FFFFFF",
+          zIndex: 5,
+        }}
+      >
+        {replyingTo && (
+          <Box sx={{ px: 2, py: 1, bgcolor: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)", borderBottom: "1px solid", borderColor: "divider", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Box sx={{ overflow: "hidden" }}>
+              <Typography variant="caption" color="primary" fontWeight="bold">Replying to {replyingTo.sender?.name || "User"}</Typography>
+              <Typography variant="body2" sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{replyingTo.content}</Typography>
+            </Box>
+            <IconButton size="small" onClick={onClearReply}>
+              <AttachFileIcon sx={{ transform: "rotate(45deg)" }} />
+            </IconButton>
+          </Box>
+        )}
+        <form onSubmit={submitHandler} style={{ display: "flex", alignItems: "center", width: "100%" }}>
+          <Stack direction="row" width="100%" px={2} py={1.5} alignItems="center" position="relative" flex={1} gap={1}>
+            <Tooltip title="Emoji">
+              <IconButton onClick={() => setShowEmoji((s) => !s)} sx={{ color: showEmoji ? "primary.main" : "text.secondary" }}>
+                <EmojiIcon />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Attach File">
+              <IconButton onClick={handleFileOpen} sx={{ color: "secondary.main", rotate: "-30deg" }}>
+                <AttachFileIcon />
+              </IconButton>
+            </Tooltip>
+            <input
+              value={message}
+              onChange={messageOnChange}
+              placeholder="Type a message..."
+              style={{
+                flex: 1,
+                height: "44px",
+                border: isDark ? "1px solid #343B36" : "1px solid #E3E6E1",
+                outline: "none",
+                padding: "0 1rem",
+                borderRadius: "8px",
+                backgroundColor: isDark ? "#202522" : "#FFFFFF",
+                fontSize: "0.95rem",
+                color: isDark ? "#F1F3F0" : "#202421",
+                minWidth: "0",
+              }}
+            />
+            <VoiceRecorder chatId={chatId} />
+            <IconButton
+              type="submit"
+              aria-label="Send message"
+              sx={{
+                bgcolor: "#236B4A",
+                color: "#FFFFFF",
+                borderRadius: "8px",
+                width: "44px",
+                height: "44px",
+                flexShrink: 0,
+                "&:hover": { bgcolor: "#1B573C" },
+              }}
+            >
+              <SendIcon sx={{ fontSize: "1.2rem" }} />
+            </IconButton>
+          </Stack>
+        </form>
+      </Box>
+    </>
+  );
+});
+
 const Chat = ({ chatId, user }) => {
   const dispatch = useDispatch();
   const socket = getSocket();
@@ -57,16 +200,13 @@ const Chat = ({ chatId, user }) => {
   const containerRef = useRef(null);
   const bottomRef = useRef(null);
   const messageRefs = useRef({});
-  const typingTimeout = useRef(null);
 
-  const [message, setMessage] = useState("");
   const [oldMessages, setOldMessages] = useState([]);
   const [messages, setMessages] = useState([]);
   const [page, setPage] = useState(1);
   const [fileMenuAnchor, setFileMenuAnchor] = useState(null);
   const [userTyping, setUserTyping] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
-  const [showEmoji, setShowEmoji] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [unreadIndex, setUnreadIndex] = useState(null);
   const [replyingTo, setReplyingTo] = useState(null);
@@ -76,12 +216,10 @@ const Chat = ({ chatId, user }) => {
 
   const members = chatDetails?.data?.chat?.members;
 
-  // Reset all local message and draft states whenever chatId changes
   useEffect(() => {
     setOldMessages([]);
     setMessages([]);
     setPage(1);
-    setMessage("");
     setUserTyping(false);
     setReplyingTo(null);
   }, [chatId]);
@@ -150,33 +288,6 @@ const Chat = ({ chatId, user }) => {
   useEffect(() => {
     return () => { if (chatId) setLastSeen(chatId); };
   }, [chatId]);
-
-  const submitHandler = (e) => {
-    e.preventDefault();
-    if (!message.trim()) return;
-    socket.emit(NEW_MESSAGE, { chatId, members, message, replyTo: replyingTo });
-    setMessage("");
-    setShowEmoji(false);
-    setReplyingTo(null);
-  };
-
-  const onEmojiClick = useCallback((emojiData) => {
-    setMessage((prev) => prev + emojiData.emoji);
-  }, []);
-
-  const messageOnChange = (e) => {
-    setMessage(e.target.value);
-    socket.emit(START_TYPING, { members, chatId });
-    if (typingTimeout.current) clearTimeout(typingTimeout.current);
-    typingTimeout.current = setTimeout(() => {
-      socket.emit(STOP_TYPING, { members, chatId });
-    }, 2000);
-  };
-
-  const handleFileOpen = (e) => {
-    dispatch(setIsFileMenu(true));
-    setFileMenuAnchor(e.currentTarget);
-  };
 
   const newMessagesHandler = useCallback((data) => {
     if (!data) return;
@@ -282,9 +393,14 @@ const Chat = ({ chatId, user }) => {
     [MESSAGE_READ_UPDATE]: messageReadUpdateHandler,
   });
 
-  const oldIds = new Set(oldMessages.map((m) => String(m._id || m.id)));
-  const uniqueRealtime = messages.filter((m) => !oldIds.has(String(m._id || m.id)));
-  const allMessages = [...oldMessages, ...uniqueRealtime];
+  const allMessages = useMemo(() => {
+    const oldIds = new Set(oldMessages.map((m) => String(m._id || m.id)));
+    const uniqueRealtime = messages.filter((m) => !oldIds.has(String(m._id || m.id)));
+    return [...oldMessages, ...uniqueRealtime];
+  }, [oldMessages, messages]);
+
+  const handleSetReply = useCallback((msg) => setReplyingTo(msg), []);
+  const handleClearReply = useCallback(() => setReplyingTo(null), []);
   
   // Mark messages as read when they appear
   useEffect(() => {
@@ -395,10 +511,10 @@ const Chat = ({ chatId, user }) => {
                   message={value}
                   user={user}
                   chatId={chatId}
-                  isGroupAdmin={chatDetails?.data?.chat?.creator?.toString() === user?._id?.toString()}
+                  isGroupAdmin={isAdmin}
                   onEdit={handleLocalEdit}
                   onDelete={handleLocalDelete}
-                  onReply={() => setReplyingTo(value)}
+                  onReply={handleSetReply}
                   onReact={handleLocalReact}
                 />
               </div>
@@ -410,102 +526,18 @@ const Chat = ({ chatId, user }) => {
         </Stack>
       </Box>
 
-      {/* Emoji Picker Popup */}
-      {showEmoji && canSendMessages && (
-        <ClickAwayListener onClickAway={() => setShowEmoji(false)}>
-          <Box sx={{ position: "absolute", bottom: "75px", left: "16px", zIndex: 200 }}>
-            <Suspense fallback={null}>
-              <EmojiPicker onEmojiClick={onEmojiClick} height={380} width={320} previewConfig={{ showPreview: false }} />
-            </Suspense>
-          </Box>
-        </ClickAwayListener>
-      )}
-
-      {/* Input bar - Always pinned at bottom */}
+      {/* Isolated Composer - prevents message list re-renders on every keystroke */}
       {canSendMessages ? (
-        <Box
-          sx={{
-            flexShrink: 0,
-            width: "100%",
-            display: "flex",
-            flexDirection: "column",
-            borderTop: "1px solid",
-            borderColor: isDark ? "#343B36" : "#E3E6E1",
-            bgcolor: isDark ? "#1E2320" : "#FFFFFF",
-            zIndex: 5,
-          }}
-        >
-          {replyingTo && (
-            <Box sx={{ px: 2, py: 1, bgcolor: isDark ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)", borderBottom: "1px solid", borderColor: "divider", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <Box sx={{ overflow: "hidden" }}>
-                <Typography variant="caption" color="primary" fontWeight="bold">Replying to {replyingTo.sender?.name || "User"}</Typography>
-                <Typography variant="body2" sx={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{replyingTo.content}</Typography>
-              </Box>
-              <IconButton size="small" onClick={() => setReplyingTo(null)}>
-                <AttachFileIcon sx={{ transform: "rotate(45deg)" }} />
-              </IconButton>
-            </Box>
-          )}
-          <form
-            onSubmit={submitHandler}
-            style={{ display: "flex", alignItems: "center", width: "100%" }}
-          >
-            <Stack direction="row" width="100%" px={2} py={1.5} alignItems="center" position="relative" flex={1} gap={1}>
-              {/* Emoji button */}
-              <Tooltip title="Emoji">
-                <IconButton onClick={() => setShowEmoji((s) => !s)} sx={{ color: showEmoji ? "primary.main" : "text.secondary" }}>
-                  <EmojiIcon />
-                </IconButton>
-              </Tooltip>
-
-              {/* Attach file */}
-              <Tooltip title="Attach File">
-                <IconButton onClick={handleFileOpen} sx={{ color: "secondary.main", rotate: "-30deg" }}>
-                  <AttachFileIcon />
-                </IconButton>
-              </Tooltip>
-
-              {/* Text input */}
-              <input
-                value={message}
-                onChange={messageOnChange}
-                placeholder="Type a message..."
-                style={{
-                  flex: 1,
-                  height: "44px",
-                  border: isDark ? "1px solid #343B36" : "1px solid #E3E6E1",
-                  outline: "none",
-                  padding: "0 1rem",
-                  borderRadius: "8px",
-                  backgroundColor: isDark ? "#202522" : "#FFFFFF",
-                  fontSize: "0.95rem",
-                  color: isDark ? "#F1F3F0" : "#202421",
-                  minWidth: "0",
-                }}
-              />
-
-              {/* Voice recorder */}
-              <VoiceRecorder chatId={chatId} />
-
-              {/* Send */}
-              <IconButton
-                type="submit"
-                aria-label="Send message"
-                sx={{
-                  bgcolor: "#236B4A",
-                  color: "#FFFFFF",
-                  borderRadius: "8px",
-                  width: "44px",
-                  height: "44px",
-                  flexShrink: 0,
-                  "&:hover": { bgcolor: "#1B573C" },
-                }}
-              >
-                <SendIcon sx={{ fontSize: "1.2rem" }} />
-              </IconButton>
-            </Stack>
-          </form>
-        </Box>
+        <ChatComposer
+          chatId={chatId}
+          members={members}
+          socket={socket}
+          isDark={isDark}
+          dispatch={dispatch}
+          replyingTo={replyingTo}
+          onClearReply={handleClearReply}
+          setFileMenuAnchor={setFileMenuAnchor}
+        />
       ) : (
         <Box sx={{ flexShrink: 0, py: 2, px: 3, display: "flex", alignItems: "center", justifyContent: "center", bgcolor: "action.hover", borderTop: "1px solid", borderColor: "divider" }}>
           <Typography variant="body2" color="text.secondary">

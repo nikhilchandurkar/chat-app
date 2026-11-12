@@ -1,5 +1,6 @@
 import { Drawer, Grid, Skeleton, Box } from '@mui/material';
-import React, { useCallback, useState, useEffect, useRef } from 'react';
+import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
+import toast from 'react-hot-toast';
 import { useDispatch, useSelector } from 'react-redux';
 import { useErrors, useSocketEvents } from '../../hooks/hook';
 import { useMyChatsQuery, useGetNotificationsQuery } from '../../redux/api/api';
@@ -103,7 +104,7 @@ const AppLayout = () => (WrappedComponent) => {
       });
     }, []);
 
-    const eventHandlers = {
+    const eventHandlers = useMemo(() => ({
       [NEW_REQUEST]: newRequestHandler,
       [ONLINE_USERS]: onlineUsersListener,
       "user.online": onlineUsersListener,
@@ -112,7 +113,7 @@ const AppLayout = () => (WrappedComponent) => {
       [START_TYPING]: startTypingListener,
       [STOP_TYPING]: stopTypingListener,
       [REFETCH_CHATS]: refetch,
-    };
+    }), [newRequestHandler, onlineUsersListener, newMessageAlertListener, startTypingListener, stopTypingListener, refetch]);
 
     useSocketEvents(socket, eventHandlers);
     const deleteMenuAnchor = useRef(null);

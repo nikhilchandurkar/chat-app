@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import toast from "react-hot-toast";
 
 
@@ -49,25 +49,30 @@ const useAsyncMutation = (mutatationHook) => {
   };
 
   const useSocketEvents = (socket, handlers) => {
+    const handlersRef = useRef(handlers);
+    handlersRef.current = handlers;
+
+    const eventKeys = Object.keys(handlers).join("|");
+
     useEffect(() => {
       if (!socket || typeof socket.on !== "function") return;
 
-      Object.entries(handlers).forEach(([event, handler]) => {
-        if (typeof handler === "function") {
-          socket.on(event, handler);
-        }
+      const bound = {};
+      Object.keys(handlersRef.current).forEach((event) => {
+        bound[event] = (...args) => {
+          const fn = handlersRef.current[event];
+          if (typeof fn === "function") fn(...args);
+        };
+        socket.on(event, bound[event]);
       });
-  
+
       return () => {
         if (!socket || typeof socket.off !== "function") return;
-
-        Object.entries(handlers).forEach(([event, handler]) => {
-          if (typeof handler === "function") {
-            socket.off(event, handler);
-          }
+        Object.entries(bound).forEach(([event, wrapper]) => {
+          socket.off(event, wrapper);
         });
       };
-    }, [socket, handlers]);
+    }, [socket, eventKeys]);
   };
   
 

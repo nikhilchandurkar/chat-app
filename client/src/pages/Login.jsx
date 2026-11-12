@@ -14,6 +14,15 @@ import {
   Tab,
   InputAdornment,
   Link,
+  Alert,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  List,
+  ListItemButton,
+  ListItemText,
+  Chip,
 } from "@mui/material";
 import {
   ArrowBack,
@@ -23,13 +32,18 @@ import {
   Visibility,
   VisibilityOff,
   CheckCircleOutline,
+  QrCode2,
+  Security,
+  ContentCopy,
 } from "@mui/icons-material";
 import axios from "axios";
+import QRCode from "qrcode";
 import toast from "react-hot-toast";
 import { useDispatch } from "react-redux";
 import { useNavigate, useLocation } from "react-router-dom";
 import { server } from "../constants/config.js";
 import { userExists } from "../redux/reducers/auth.js";
+import { getDeviceMetadata } from "../utils/device.js";
 
 const GoogleIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24">
@@ -90,8 +104,12 @@ const Login = () => {
   const [countdown, setCountdown] = useState(60);
   const [canResend, setCanResend] = useState(false);
 
-  // Loading state
+  // Loading & MFA / QR / Device Limit state
   const [isLoading, setIsLoading] = useState(false);
+  const [mfaToken, setMfaToken] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+  const [deviceLimitState, setDeviceLimitState] = useState(null); // { token, maxDevices, activeSessions }
+  const [qrSession, setQrSession] = useState(null); // { qrToken, claimSecret, qrPayload, qrDataUrl, secondsLeft }
   const [authConfig, setAuthConfig] = useState({
     google_client_id:
       import.meta.env.VITE_GOOGLE_CLIENT_ID || DEFAULT_GOOGLE_CLIENT_ID,
@@ -144,6 +162,164 @@ const Login = () => {
     return () => clearInterval(timer);
   }, [mode, registerStep, countdown]);
 
+  // Poll QR Login status every 2 seconds while QR login screen is active
+  useEffect(() => {
+    if (mode !== "qr_login" || !qrSession?.qrToken || !qrSession?.claimSecret) return undefined;
+
+    let cancelled = false;
+    const poll = setInterval(async () => {
+      try {
+        const { data } = await axios.get(`${server}/api/v1/auth/qr/status`, {
+          params: { token: qrSession.qrToken, claim_secret: qrSession.claimSecret },
+        });
+        if (cancelled) return;
+        if (data.status === "approved") {
+          clearInterval(poll);
+          const toastId = toast.loading("Device authorized! Signing you in...");
+          try {
+            const claimRes = await axios.post(
+              `${server}/api/v1/auth/qr/claim`,
+              { qr_token: qrSession.qrToken, claim_secret: qrSession.claimSecret },
+              { withCredentials: true }
+            );
+            completeAuthSession(claimRes.data, toastId);
+          } catch (claimErr) {
+            handleAuthError(claimErr, toastId, "Failed to claim QR login session");
+          }
+        } else if (data.status === "expired") {
+          clearInterval(poll);
+          setQrSession((prev) => (prev ? { ...prev, secondsLeft: 0, expired: true } : null));
+        }
+      } catch {
+        // Ignore transient poll errors
+      }
+    }, 2000);
+
+    const ticker = setInterval(() => {
+      setQrSession((prev) => (prev && prev.secondsLeft > 0 ? { ...prev, secondsLeft: prev.secondsLeft - 1 } : prev));
+    }, 1000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(poll);
+      clearInterval(ticker);
+    };
+  }, [mode, qrSession?.qrToken, qrSession?.claimSecret]);
+
+  const completeAuthSession = (data, toastId, cleanupQuery = false) => {
+    if (data?.mfaRequired) {
+      toast.dismiss(toastId);
+      setMfaToken(data.mfaToken);
+      setMfaCode("");
+      setMode("mfa_challenge");
+      if (cleanupQuery) {
+        window.history.replaceState({}, document.title, window.location.pathname);
+      }
+      return;
+    }
+    if (data?.token) {
+      localStorage.setItem("chitChat-Token", data.token);
+    }
+    dispatch(userExists(data.user));
+    toast.success(
+      data?.message || `Welcome back, ${data?.user?.name || data?.user?.username}!`,
+      { id: toastId }
+    );
+    if (cleanupQuery) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+    navigate("/", { replace: true });
+  };
+
+  const handleAuthError = (error, toastId, fallbackMessage, cleanupQuery = false) => {
+    const respData = error?.response?.data;
+    if (error?.response?.status === 409 && respData?.code === "DEVICE_LIMIT_REACHED") {
+      toast.dismiss(toastId);
+      setDeviceLimitState({
+        token: respData.deviceLimitToken,
+        maxDevices: respData.max_devices || 3,
+        activeSessions: respData.active_sessions || [],
+      });
+    } else {
+      toast.error(respData?.message || fallbackMessage, { id: toastId });
+    }
+    if (cleanupQuery) {
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  };
+
+  // Start / refresh QR Code login session
+  const startQrLogin = async () => {
+    setMode("qr_login");
+    setIsLoading(true);
+    try {
+      const dev = getDeviceMetadata();
+      const { data } = await axios.post(`${server}/api/v1/auth/qr/create`, {
+        device_id: dev.device_id,
+        device_name: dev.device_name,
+        platform: dev.platform,
+      });
+      const dataUrl = await QRCode.toDataURL(data.qr_payload, { width: 220, margin: 2 });
+      setQrSession({
+        qrToken: data.qr_token,
+        claimSecret: data.claim_secret,
+        qrPayload: data.qr_payload,
+        qrDataUrl: dataUrl,
+        secondsLeft: data.expires_in || 120,
+        expired: false,
+      });
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to generate QR login code");
+      setMode("password");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Complete MFA 2FA Challenge
+  const handleMfaLoginVerify = async (e) => {
+    if (e) e.preventDefault();
+    if (!mfaCode.trim()) {
+      toast.error("Please enter your 6-digit authenticator code or backup code");
+      return;
+    }
+    setIsLoading(true);
+    const toastId = toast.loading("Verifying 2FA code...");
+    try {
+      const { data } = await axios.post(
+        `${server}/api/v1/auth/mfa/login-verify`,
+        { mfa_token: mfaToken, code: mfaCode.trim() },
+        { withCredentials: true }
+      );
+      completeAuthSession(data, toastId);
+    } catch (err) {
+      handleAuthError(err, toastId, "Invalid authenticator code");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Resolve 409 Device Limit by replacing selected old device session
+  const handleResolveDeviceLimit = async (replaceSessionId) => {
+    if (!deviceLimitState?.token) return;
+    setIsLoading(true);
+    const toastId = toast.loading("Switching active device...");
+    try {
+      const { data } = await axios.post(
+        `${server}/api/v1/auth/sessions/resolve-limit`,
+        { device_limit_token: deviceLimitState.token, replace_session_id: replaceSessionId },
+        { withCredentials: true }
+      );
+      setDeviceLimitState(null);
+      completeAuthSession(data, toastId);
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Failed to replace device session", { id: toastId });
+      setDeviceLimitState(null);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   // OAuth Code Exchange
   const handleOAuthCodeExchange = async (provider, code) => {
     setIsLoading(true);
@@ -160,28 +336,13 @@ const Login = () => {
         {
           code,
           redirect_uri: redirectUri,
-          device_id: `web-${navigator.userAgent.slice(0, 30)}`,
-          platform: "web",
+          ...getDeviceMetadata(),
         },
         { withCredentials: true }
       );
-
-      if (data.token) {
-        localStorage.setItem("chitChat-Token", data.token);
-      }
-      dispatch(userExists(data.user));
-      toast.success(data.message || `Welcome, ${data.user?.name || data.user?.username}!`, {
-        id: toastId,
-      });
-      // Clean query string
-      window.history.replaceState({}, document.title, window.location.pathname);
-      navigate("/", { replace: true });
+      completeAuthSession(data, toastId, true);
     } catch (error) {
-      toast.error(
-        error?.response?.data?.message || `${provider} sign in failed. Please try again.`,
-        { id: toastId }
-      );
-      window.history.replaceState({}, document.title, window.location.pathname);
+      handleAuthError(error, toastId, `${provider} sign in failed. Please try again.`, true);
     } finally {
       setIsLoading(false);
     }
@@ -208,25 +369,13 @@ const Login = () => {
         {
           username: identifier,
           password: loginPassword,
-          device_id: `web-${navigator.userAgent.slice(0, 30)}`,
-          platform: "web",
+          ...getDeviceMetadata(),
         },
         { withCredentials: true }
       );
-
-      if (data.token) {
-        localStorage.setItem("chitChat-Token", data.token);
-      }
-      dispatch(userExists(data.user));
-      toast.success(data.message || `Welcome back, ${data.user?.name || data.user?.username}!`, {
-        id: toastId,
-      });
-      navigate("/", { replace: true });
+      completeAuthSession(data, toastId);
     } catch (error) {
-      toast.error(
-        error?.response?.data?.message || "Invalid username or password",
-        { id: toastId }
-      );
+      handleAuthError(error, toastId, "Invalid username or password");
     } finally {
       setIsLoading(false);
     }
@@ -309,23 +458,13 @@ const Login = () => {
           email: otpEmail.trim().toLowerCase(),
           password: regPassword,
           otp: otpCode,
-          device_id: `web-${navigator.userAgent.slice(0, 30)}`,
-          platform: "web",
+          ...getDeviceMetadata(),
         },
         { withCredentials: true }
       );
-
-      if (data.token) {
-        localStorage.setItem("chitChat-Token", data.token);
-      }
-      dispatch(userExists(data.user));
-      toast.success(data.message || "Welcome to ChitChat!", { id: toastId });
-      navigate("/", { replace: true });
+      completeAuthSession(data, toastId);
     } catch (error) {
-      toast.error(
-        error?.response?.data?.message || "Invalid or expired verification code",
-        { id: toastId }
-      );
+      handleAuthError(error, toastId, "Invalid or expired verification code");
     } finally {
       setIsLoading(false);
     }
@@ -380,22 +519,13 @@ const Login = () => {
         {
           email: otpEmail.trim().toLowerCase(),
           otp: otpCode,
-          device_id: `web-${navigator.userAgent.slice(0, 30)}`,
-          platform: "web",
+          ...getDeviceMetadata(),
         },
         { withCredentials: true }
       );
-
-      if (data.token) {
-        localStorage.setItem("chitChat-Token", data.token);
-      }
-      dispatch(userExists(data.user));
-      toast.success(data.message || "Welcome to ChitChat!", { id: toastId });
-      navigate("/", { replace: true });
+      completeAuthSession(data, toastId);
     } catch (error) {
-      toast.error(error?.response?.data?.message || "Invalid code", {
-        id: toastId,
-      });
+      handleAuthError(error, toastId, "Invalid code");
     } finally {
       setIsLoading(false);
     }
@@ -708,21 +838,35 @@ const Login = () => {
                   </Link>
                 </Typography>
 
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setMode("otp_email");
-                    setOtpEmail("");
-                  }}
-                  sx={{
-                    mt: 1.5,
-                    textTransform: "none",
-                    color: "#737A75",
-                    fontSize: "12px",
-                  }}
-                >
-                  Sign in with Email OTP code instead
-                </Button>
+                <Stack direction="row" spacing={1} justifyContent="center" mt={1.5} flexWrap="wrap">
+                  <Button
+                    size="small"
+                    onClick={() => {
+                      setMode("otp_email");
+                      setOtpEmail("");
+                    }}
+                    sx={{
+                      textTransform: "none",
+                      color: "#737A75",
+                      fontSize: "12px",
+                    }}
+                  >
+                    Sign in with Email OTP
+                  </Button>
+                  <Button
+                    size="small"
+                    startIcon={<QrCode2 fontSize="small" />}
+                    onClick={startQrLogin}
+                    sx={{
+                      textTransform: "none",
+                      color: "#236B4A",
+                      fontWeight: 600,
+                      fontSize: "12px",
+                    }}
+                  >
+                    Link via QR Code
+                  </Button>
+                </Stack>
               </Box>
             </Box>
           )}
@@ -1252,8 +1396,141 @@ const Login = () => {
               </Box>
             </Box>
           )}
+
+          {/* TWO-FACTOR AUTHENTICATION CHALLENGE */}
+          {mode === "mfa_challenge" && (
+            <Box>
+              <Box display="flex" alignItems="center" mb={2}>
+                <IconButton onClick={() => setMode("password")} size="small" sx={{ mr: 1, color: "#202421" }}>
+                  <ArrowBack fontSize="small" />
+                </IconButton>
+                <Typography variant="h6" fontWeight={700} color="#202421">
+                  Two-Factor Authentication
+                </Typography>
+              </Box>
+              <Alert icon={<Security fontSize="small" />} severity="info" sx={{ mb: 2.5 }}>
+                Enter the 6-digit code from your Authenticator app or one of your 8-character backup codes.
+              </Alert>
+              <form onSubmit={handleMfaLoginVerify}>
+                <TextField
+                  fullWidth
+                  required
+                  autoFocus
+                  label="Authenticator or Backup Code"
+                  placeholder="123456 or XXXX-XXXX"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  disabled={isLoading}
+                  sx={{ mb: 2 }}
+                />
+                <Button
+                  fullWidth
+                  type="submit"
+                  variant="contained"
+                  disabled={isLoading}
+                  sx={{
+                    backgroundColor: "#236B4A",
+                    color: "#FFFFFF",
+                    py: 1.3,
+                    fontWeight: 600,
+                    textTransform: "none",
+                    borderRadius: 1.5,
+                  }}
+                >
+                  {isLoading ? <CircularProgress size={22} color="inherit" /> : "Verify & Sign In"}
+                </Button>
+              </form>
+            </Box>
+          )}
+
+          {/* QR CODE COMPANION LOGIN */}
+          {mode === "qr_login" && (
+            <Box textAlign="center">
+              <Box display="flex" alignItems="center" mb={1.5}>
+                <IconButton onClick={() => setMode("password")} size="small" sx={{ mr: 1, color: "#202421" }}>
+                  <ArrowBack fontSize="small" />
+                </IconButton>
+                <Typography variant="h6" fontWeight={700} color="#202421">
+                  Link with Phone (QR Login)
+                </Typography>
+              </Box>
+              <Typography variant="body2" color="#737A75" mb={2}>
+                Open ChitChat on your signed-in phone → Security &amp; Linked Devices → <b>Link QR</b> and scan this code.
+              </Typography>
+
+              {isLoading && !qrSession?.qrDataUrl ? (
+                <Box py={5}><CircularProgress size={32} /></Box>
+              ) : qrSession?.expired ? (
+                <Stack spacing={2} py={3} alignItems="center">
+                  <Alert severity="warning" sx={{ width: "100%" }}>QR code expired after 2 minutes.</Alert>
+                  <Button variant="contained" onClick={startQrLogin} sx={{ backgroundColor: "#236B4A" }}>
+                    Refresh QR Code
+                  </Button>
+                </Stack>
+              ) : (
+                qrSession?.qrDataUrl && (
+                  <Stack spacing={1.5} alignItems="center">
+                    <Box sx={{ p: 1.5, borderRadius: 2, border: "1px solid #E3E6E1", bgcolor: "#FFFFFF" }}>
+                      <img src={qrSession.qrDataUrl} alt="ChitChat QR Login" width={200} height={200} />
+                    </Box>
+                    <Chip
+                      label={`Expires in ${qrSession.secondsLeft}s`}
+                      size="small"
+                      color={qrSession.secondsLeft < 20 ? "warning" : "default"}
+                    />
+                    <Button
+                      size="small"
+                      startIcon={<ContentCopy fontSize="small" />}
+                      onClick={() => {
+                        navigator.clipboard?.writeText(qrSession.qrPayload);
+                        toast.success("QR login link copied");
+                      }}
+                      sx={{ textTransform: "none", color: "#236B4A" }}
+                    >
+                      Copy QR Token Link
+                    </Button>
+                  </Stack>
+                )
+              )}
+            </Box>
+          )}
         </Paper>
       </Container>
+
+      {/* Device Limit Conflict Resolution Dialog */}
+      <Dialog
+        open={Boolean(deviceLimitState)}
+        onClose={() => setDeviceLimitState(null)}
+        fullWidth
+        maxWidth="xs"
+        PaperProps={{ sx: { borderRadius: 2 } }}
+      >
+        <DialogTitle fontWeight={700}>Active Device Limit Reached</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            Your account is already active on {deviceLimitState?.maxDevices || 3} devices. Select one old device below to sign it out and log in here:
+          </Typography>
+          <List disablePadding>
+            {(deviceLimitState?.activeSessions || []).map((s) => (
+              <ListItemButton
+                key={s.id}
+                onClick={() => handleResolveDeviceLimit(s.id)}
+                disabled={isLoading}
+                sx={{ border: "1px solid #E3E6E1", borderRadius: 1.5, mb: 1 }}
+              >
+                <ListItemText
+                  primary={s.device_name || s.platform}
+                  secondary={`IP: ${s.ip_address || "Unknown"} · ${new Date(s.last_active || s.created_at).toLocaleDateString()}`}
+                />
+                <Chip label="Replace" size="small" color="warning" />
+              </ListItemButton>
+            ))}
+          </List>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDeviceLimitState(null)}>Cancel</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

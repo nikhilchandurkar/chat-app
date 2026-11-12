@@ -41,17 +41,19 @@ class SyncDeltaView(APIView):
         # Find all conversations user is a member of
         user_conv_ids = ConversationMember.objects.filter(user=user).values_list("conversation_id", flat=True)
 
-        # 1. Delta Messages
-        msg_query = Message.objects.filter(conversation_id__in=user_conv_ids)
+        # 1. Delta Messages (filter before slicing to prevent AssertionError on unordered slices)
+        deleted_for_user_ids = DeletedMessageForUser.objects.filter(user=user).values_list("message_id", flat=True)
+        msg_query = (
+            Message.objects.filter(conversation_id__in=user_conv_ids)
+            .exclude(id__in=deleted_for_user_ids)
+            .select_related("sender")
+        )
         if cursor_dt:
             msg_query = msg_query.filter(Q(created_at__gt=cursor_dt) | Q(updated_at__gt=cursor_dt))
         else:
-            # Default to latest 50 messages if no cursor
             msg_query = msg_query.order_by("-created_at")[:50]
 
-        # Filter out "delete for me" messages
-        deleted_for_user_ids = DeletedMessageForUser.objects.filter(user=user).values_list("message_id", flat=True)
-        messages = msg_query.exclude(id__in=deleted_for_user_ids).select_related("sender", "conversation")
+        messages = msg_query
 
         # 2. Delta Receipts
         receipt_query = MessageReceipt.objects.filter(message__conversation_id__in=user_conv_ids)

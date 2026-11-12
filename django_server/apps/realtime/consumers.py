@@ -1,16 +1,18 @@
+import asyncio
 import json
 import logging
 import time
 from datetime import timedelta
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
-from channels.db import database_sync_to_async
+from channels.db import DatabaseSyncToAsync
+from django.db.models import Q
 from django.utils import timezone
-from django.core.cache import cache
 
 from apps.authentication.models import User, UserProfile, BlockedUser
 from apps.chat.models import Conversation, ConversationMember
 from apps.messages_app.models import Message, MessageReceipt, MessageReaction, encrypt_message
 from apps.outbox.services.outbox_service import OutboxService
+from apps.outbox.services.redis_streams import get_redis_client
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +20,14 @@ MAX_PAYLOAD_BYTES = 65536  # 64 KB limit
 MAX_EVENTS_PER_MINUTE = 60
 
 
-@database_sync_to_async
-def get_user_privacy_profile(user):
+def db_async(func):
+    """Runs DB operations on the threadpool with connection cleanup and thread_sensitive=False."""
+    return DatabaseSyncToAsync(func, thread_sensitive=False)
+
+
+def _extract_privacy_dict(user):
     try:
-        profile, _ = UserProfile.objects.get_or_create(user=user)
+        profile = user.profile
         return {
             "privacy_online": profile.privacy_online,
             "privacy_last_seen": profile.privacy_last_seen,
@@ -37,68 +43,91 @@ def get_user_privacy_profile(user):
         }
 
 
-@database_sync_to_async
+@db_async
+def get_user_privacy_profile(user):
+    if hasattr(user, "_state"):
+        return _extract_privacy_dict(user)
+    return _extract_privacy_dict(user)
+
+
+@db_async
 def set_user_online_status(user, is_online: bool):
+    """Updates presence via pooled Redis multi-device connection counter and avoids redundant DB writes."""
     try:
-        user_record = User.objects.filter(id=user.id).first()
-        if user_record:
-            user_record.status = "online" if is_online else "offline"
-            user_record.save(update_fields=["status"])
-            profile, _ = UserProfile.objects.get_or_create(user=user_record)
-            profile.online_status = user_record.status
+        r = get_redis_client()
+        should_update_db = True
+        if r:
+            key = f"ws:online_conns:{user.id}"
+            if is_online:
+                cnt = r.incr(key)
+                r.expire(key, 3600)
+                should_update_db = (cnt == 1)
+            else:
+                cnt = r.decr(key)
+                if cnt <= 0:
+                    r.delete(key)
+                    should_update_db = True
+                else:
+                    should_update_db = False
+
+        if should_update_db:
+            next_status = "online" if is_online else "offline"
+            User.objects.filter(id=user.id).update(status=next_status)
             if not is_online:
-                profile.last_seen = timezone.now()
-            profile.save(update_fields=["online_status", "last_seen"])
+                UserProfile.objects.filter(user_id=user.id).update(online_status="offline", last_seen=timezone.now())
     except Exception as e:
         logger.error("Error setting presence: %s", str(e))
 
 
-@database_sync_to_async
+@db_async
 def get_user_conversation_ids(user):
     return list(ConversationMember.objects.filter(user=user).values_list("conversation_id", flat=True))
 
 
-@database_sync_to_async
+@db_async
 def verify_conversation_membership(user, conversation_id):
     if not conversation_id:
         return False
     return ConversationMember.objects.filter(user=user, conversation_id=conversation_id).exists()
 
 
-@database_sync_to_async
+@db_async
 def check_user_blocked(user, conversation_id):
     """Verifies that in a direct conversation, neither party blocked the other."""
     try:
         conv = Conversation.objects.filter(id=conversation_id).first()
         if not conv or conv.group_chat:
             return False
-        other_mem = conv.member_records.exclude(user=user).first()
-        if not other_mem:
+        other_id = conv.member_records.exclude(user=user).values_list("user_id", flat=True).first()
+        if not other_id:
             return False
-        other = other_mem.user
-        return BlockedUser.objects.filter(user=user, blocked_user=other).exists() or BlockedUser.objects.filter(user=other, blocked_user=user).exists()
+        return BlockedUser.objects.filter(
+            Q(user=user, blocked_user_id=other_id) | Q(user_id=other_id, blocked_user=user)
+        ).exists()
     except Exception:
         return False
 
 
-@database_sync_to_async
-def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=None, attachments=None, msg_type="text"):
+@db_async
+def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=None, attachments=None, msg_type="text", membership_verified=False):
     try:
         conv = Conversation.objects.filter(id=chat_id).first()
         if not conv:
-            return None, "Conversation not found"
-        if not conv.member_records.filter(user=sender).exists():
-            return None, "Not a member of this conversation"
+            return None, "Conversation not found", None
+        if not membership_verified and not conv.member_records.filter(user=sender).exists():
+            return None, "Not a member of this conversation", None
 
         if conv.restricted_messages and not (conv.admins.filter(id=sender.id).exists() or conv.creator_id == sender.id):
-            return None, "Only admins may post messages in this restricted group."
+            return None, "Only admins may post messages in this restricted group.", None
 
         # User blocking check
         if not conv.group_chat:
-            other_mem = conv.member_records.exclude(user=sender).first()
-            if other_mem:
-                if BlockedUser.objects.filter(user=other_mem.user, blocked_user=sender).exists() or BlockedUser.objects.filter(user=sender, blocked_user=other_mem.user).exists():
-                    return None, "Unable to send message due to block status."
+            other_id = conv.member_records.exclude(user=sender).values_list("user_id", flat=True).first()
+            if other_id:
+                if BlockedUser.objects.filter(
+                    Q(user=sender, blocked_user_id=other_id) | Q(user_id=other_id, blocked_user=sender)
+                ).exists():
+                    return None, "Unable to send message due to block status.", None
 
         # Idempotency check
         if client_msg_id:
@@ -125,7 +154,7 @@ def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=N
                     "readBy": existing.read_by,
                     "createdAt": existing.created_at.isoformat(),
                     "expiresAt": existing.expires_at.isoformat() if existing.expires_at else None,
-                }, None
+                }, None, None
 
         # Ephemeral TTL
         expires_at = None
@@ -152,7 +181,7 @@ def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=N
             conversation=conv
         ).exclude(user=sender).update(unread_count=dj_models.F("unread_count") + 1)
 
-        recipient_ids = [str(m.user_id) for m in conv.member_records.all()]
+        recipient_ids = [str(uid) for uid in conv.member_records.values_list("user_id", flat=True)]
 
         serialized_msg = {
             "_id": str(msg.id),
@@ -180,8 +209,7 @@ def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=N
             "recipient_ids": recipient_ids,
         }
 
-        # Record in transactional outbox (includes full message payload for both web & mobile clients)
-        OutboxService.create_outbox_event(
+        outbox_entry = OutboxService.create_outbox_event(
             event_type="message.created",
             conversation_id=str(conv.id),
             payload={
@@ -202,28 +230,36 @@ def save_incoming_message(sender, chat_id, content, client_msg_id="", reply_to=N
                 "message": serialized_msg,
             }
         )
-        OutboxService.publish_pending()
 
-        return serialized_msg, None
+        return serialized_msg, None, outbox_entry
     except Exception as e:
         logger.error("Error saving incoming message: %s", str(e))
-        return None, str(e)
+        return None, str(e), None
 
 
-@database_sync_to_async
+@db_async
 def record_read_receipt(user, message_ids, chat_id):
     try:
         user_id_str = str(user.id)
-        messages = Message.objects.filter(id__in=message_ids, conversation_id=chat_id)
+        messages = list(Message.objects.filter(id__in=message_ids, conversation_id=chat_id))
+        to_update = []
+        receipt_objs = []
         for m in messages:
             read_list = list(m.read_by or [])
             if user_id_str not in read_list:
                 read_list.append(user_id_str)
                 m.read_by = read_list
-                m.save(update_fields=["read_by"])
-            MessageReceipt.objects.get_or_create(message=m, user=user, status="read")
+                to_update.append(m)
+            receipt_objs.append(MessageReceipt(message=m, user=user, status="read"))
 
-        ConversationMember.objects.filter(conversation_id=chat_id, user=user).update(unread_count=0)
+        if to_update:
+            Message.objects.bulk_update(to_update, ["read_by"])
+        if receipt_objs:
+            MessageReceipt.objects.bulk_create(receipt_objs, ignore_conflicts=True)
+
+        ConversationMember.objects.filter(
+            conversation_id=chat_id, user=user, unread_count__gt=0
+        ).update(unread_count=0)
         return True
     except Exception as e:
         logger.error("Error marking messages read: %s", str(e))
@@ -231,6 +267,20 @@ def record_read_receipt(user, message_ids, chat_id):
 
 
 class ChatConsumer(AsyncJsonWebsocketConsumer):
+    async def _is_member_cached(self, chat_id) -> bool:
+        if not chat_id:
+            return False
+        cid_str = str(chat_id)
+        if hasattr(self, "conv_id_set") and cid_str in self.conv_id_set:
+            return True
+        is_member = await verify_conversation_membership(self.user, cid_str)
+        if is_member:
+            if not hasattr(self, "conv_id_set"):
+                self.conv_id_set = set()
+            self.conv_id_set.add(cid_str)
+            await self.channel_layer.group_add(f"chat_{cid_str}", self.channel_name)
+        return is_member
+
     async def connect(self):
         self.user = self.scope.get("user")
         if not self.user or not self.user.is_authenticated:
@@ -240,63 +290,55 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         self.event_timestamps = []
         self.user_group = f"user_{self.user.id}"
 
-        await self.channel_layer.group_add(self.user_group, self.channel_name)
-
-        # Join conversation-specific groups for member's conversations only
         self.conv_ids = await get_user_conversation_ids(self.user)
-        for cid in self.conv_ids:
-            await self.channel_layer.group_add(f"chat_{cid}", self.channel_name)
+        self.conv_id_set = {str(cid) for cid in self.conv_ids}
 
-        # Update presence in database
+        group_adds = [self.channel_layer.group_add(self.user_group, self.channel_name)]
+        group_adds.extend(
+            self.channel_layer.group_add(f"chat_{cid}", self.channel_name) for cid in self.conv_ids
+        )
+        await asyncio.gather(*group_adds)
+
         await set_user_online_status(self.user, True)
-
-        # Fetch privacy preferences
         privacy = await get_user_privacy_profile(self.user)
         self.privacy = privacy
 
         await self.accept()
 
-        # Send connection established ack
         await self.send_json({
             "event": "connection.ready",
             "user_id": str(self.user.id),
             "timestamp": timezone.now().isoformat(),
         })
 
-        # Broadcast online presence ONLY if user's privacy setting allows it
-        if privacy.get("privacy_online") != "nobody":
-            for cid in self.conv_ids:
-                await self.channel_layer.group_send(
-                    f"chat_{cid}",
-                    {
-                        "type": "chat.event",
-                        "event": "user.online",
-                        "event_legacy": "ONLINE_USERS",
-                        "data": {"user_id": str(self.user.id), "status": "online"},
-                    }
-                )
+        if privacy.get("privacy_online") != "nobody" and self.conv_ids:
+            packet = {
+                "type": "chat.event",
+                "event": "user.online",
+                "event_legacy": "ONLINE_USERS",
+                "data": {"user_id": str(self.user.id), "status": "online"},
+            }
+            await asyncio.gather(*(self.channel_layer.group_send(f"chat_{cid}", packet) for cid in self.conv_ids[:50]))
 
     async def disconnect(self, close_code):
         if hasattr(self, "user") and self.user.is_authenticated:
-            await self.channel_layer.group_discard(self.user_group, self.channel_name)
+            discards = [self.channel_layer.group_discard(self.user_group, self.channel_name)]
             if hasattr(self, "conv_ids"):
-                for cid in self.conv_ids:
-                    await self.channel_layer.group_discard(f"chat_{cid}", self.channel_name)
+                discards.extend(
+                    self.channel_layer.group_discard(f"chat_{cid}", self.channel_name) for cid in self.conv_ids
+                )
+            await asyncio.gather(*discards, return_exceptions=True)
 
             await set_user_online_status(self.user, False)
 
-            # Broadcast offline presence to user's conversation rooms if permitted
-            if getattr(self, "privacy", {}).get("privacy_online") != "nobody" and hasattr(self, "conv_ids"):
-                for cid in self.conv_ids:
-                    await self.channel_layer.group_send(
-                        f"chat_{cid}",
-                        {
-                            "type": "chat.event",
-                            "event": "user.offline",
-                            "event_legacy": "ONLINE_USERS",
-                            "data": {"user_id": str(self.user.id), "status": "offline"},
-                        }
-                    )
+            if getattr(self, "privacy", {}).get("privacy_online") != "nobody" and hasattr(self, "conv_ids") and self.conv_ids:
+                packet = {
+                    "type": "chat.event",
+                    "event": "user.offline",
+                    "event_legacy": "ONLINE_USERS",
+                    "data": {"user_id": str(self.user.id), "status": "offline"},
+                }
+                await asyncio.gather(*(self.channel_layer.group_send(f"chat_{cid}", packet) for cid in self.conv_ids[:50]), return_exceptions=True)
 
     async def receive_json(self, content):
         # 1. Rate Limiting per WebSocket connection
@@ -324,18 +366,18 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             attachments = data.get("attachments", [])
             msg_type = data.get("message_type", "text")
 
-            # Authorization Check
-            is_member = await verify_conversation_membership(self.user, chat_id)
+            is_member = await self._is_member_cached(chat_id)
             if not is_member:
                 await self.send_json({"event": "error", "message": "Access denied. You are not a member of this conversation."})
                 return
 
-            saved_data, err = await save_incoming_message(
+            saved_data, err, outbox_entry = await save_incoming_message(
                 self.user, chat_id, message_text,
                 client_msg_id=client_msg_id,
                 reply_to=reply_to,
                 attachments=attachments,
-                msg_type=msg_type
+                msg_type=msg_type,
+                membership_verified=True,
             )
 
             if saved_data:
@@ -345,6 +387,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     "message_id": saved_data["_id"],
                     "timestamp": saved_data["createdAt"],
                 })
+                if outbox_entry:
+                    await OutboxService.publish_item_async(outbox_entry)
             else:
                 await self.send_json({
                     "event": "error",
@@ -352,12 +396,10 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     "message": err or "Failed to send message.",
                 })
 
-        # 4. Typing Indicators
+        # 4. Typing Indicators (zero DB hits via membership cache)
         elif event in ("typing.start", "START_TYPING"):
             chat_id = data.get("chatId") or data.get("conversation_id")
-            # Strict Authorization: User MUST be a conversation member
-            is_member = await verify_conversation_membership(self.user, chat_id)
-            if is_member and getattr(self, "privacy", {}).get("privacy_typing_indicator", True):
+            if await self._is_member_cached(chat_id) and getattr(self, "privacy", {}).get("privacy_typing_indicator", True):
                 await self.channel_layer.group_send(
                     f"chat_{chat_id}",
                     {
@@ -374,9 +416,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
 
         elif event in ("typing.stop", "STOP_TYPING"):
             chat_id = data.get("chatId") or data.get("conversation_id")
-            # Strict Authorization: User MUST be a conversation member
-            is_member = await verify_conversation_membership(self.user, chat_id)
-            if is_member:
+            if await self._is_member_cached(chat_id):
                 await self.channel_layer.group_send(
                     f"chat_{chat_id}",
                     {
@@ -389,16 +429,13 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
 
         # 5. Read Receipts
         elif event in ("message.read", "MESSAGE_READ"):
-            chat_id = data.get("chatId") or data.get("conversation_id")
-            # Strict Authorization: User MUST be a conversation member
-            is_member = await verify_conversation_membership(self.user, chat_id)
-            if not is_member:
+            chat_id = data.get("chatId") or content.get("conversation_id") or data.get("conversation_id")
+            if not await self._is_member_cached(chat_id):
                 return
 
             message_ids = data.get("messageIds") or [data.get("message_id")]
             message_ids = [m for m in message_ids if m]
 
-            # Privacy setting check: Only emit if privacy_read_receipts is enabled
             if getattr(self, "privacy", {}).get("privacy_read_receipts", True):
                 await record_read_receipt(self.user, message_ids, chat_id)
                 await self.channel_layer.group_send(

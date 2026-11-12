@@ -770,6 +770,7 @@ jobs:
             docker run -d \
               --name chat_mysql \
               --restart unless-stopped \
+              --memory=512m \
               -e MYSQL_DATABASE=chat_db \
               -e MYSQL_USER=chat_user \
               -e MYSQL_PASSWORD=${{ secrets.MYSQL_PASSWORD || 'chat_password' }} \
@@ -779,7 +780,14 @@ jobs:
               mysql:8.0 \
               --character-set-server=utf8mb4 \
               --collation-server=utf8mb4_unicode_ci \
-              --default-authentication-plugin=mysql_native_password
+              --default-authentication-plugin=mysql_native_password \
+              --innodb-buffer-pool-size=160M \
+              --max-connections=250 \
+              --innodb-flush-log-at-trx-commit=2 \
+              --wait-timeout=120 \
+              --thread-cache-size=32 \
+              --table-open-cache=400 \
+              --performance-schema=OFF
             echo "⏳ Waiting for MySQL to initialize (20s)..."
             sleep 20
           else
@@ -831,6 +839,7 @@ jobs:
             --name chat_django_daphne \
             --restart unless-stopped \
             --network host \
+            --ulimit nofile=65535:65535 \
             -e PORT=3000 \
             -e DEBUG=False \
             -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-change-me-321' }}' \
@@ -841,7 +850,7 @@ jobs:
             -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD || 'chat_password' }}' \
             -e MYSQL_HOST=127.0.0.1 \
             -e MYSQL_PORT=3306 \
-            -e DB_CONN_MAX_AGE=600 \
+            -e DB_CONN_MAX_AGE=30 \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS=True \
             -e CLIENT_URL='${{ env.CLIENT_URL }}' \
@@ -856,7 +865,9 @@ jobs:
             -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -v /opt/chat-app/media:/app/media \
             -v /opt/chat-app/logs:/app/logs \
-            ${{ env.DOCKER_IMAGE_DJANGO }}:latest
+            -v /opt/chat-app/staticfiles:/app/staticfiles \
+            ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
+            sh -c "WSGI_PORT=3010 WSGI_THREADS=12 python -m core.run_wsgi & WSGI_PORT=3011 WSGI_THREADS=12 python -m core.run_wsgi & daphne -v 0 -e tcp:port=3000:interface=127.0.0.1:backlog=2048 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application & daphne -v 0 -e tcp:port=3001:interface=127.0.0.1:backlog=2048 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application & exec daphne -v 0 -e tcp:port=3002:interface=127.0.0.1:backlog=2048 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application"
           echo "⏳ Waiting for container to start..."
           sleep 8
 
@@ -866,7 +877,14 @@ jobs:
           docker exec chat_django_daphne python manage.py migrate --noinput || \
             docker exec chat_django_daphne python manage.py migrate --noinput --fake-initial || \
             echo "⚠️ Migration completed with warnings"
+          sudo mkdir -p /opt/chat-app/staticfiles
+          UID_CTR=$(docker exec chat_django_daphne id -u)
+          GID_CTR=$(docker exec chat_django_daphne id -g)
+          sudo chown -R "${UID_CTR}:${GID_CTR}" /opt/chat-app/staticfiles || true
           docker exec chat_django_daphne python manage.py collectstatic --noinput 2>/dev/null || true
+          sudo chmod -R a+rX /opt/chat-app/staticfiles || true
+          docker exec chat_django_daphne python manage.py promote_superadmin --email nikhilchandurkar24@gmail.com 2>/dev/null || true
+          docker exec chat_django_daphne python manage.py promote_superadmin --email nik@gmail.com 2>/dev/null || true
         continue-on-error: true
 
       # ── Deploy Celery Worker ───────────────────────────────────────────────
@@ -886,10 +904,10 @@ jobs:
             -e MYSQL_PASSWORD='${{ secrets.MYSQL_PASSWORD || 'chat_password' }}' \
             -e MYSQL_HOST=127.0.0.1 \
             -e MYSQL_PORT=3306 \
-            -e DB_CONN_MAX_AGE=600 \
+            -e DB_CONN_MAX_AGE=30 \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS=True \
-            -e CELERY_CONCURRENCY=2 \
+            -e CELERY_CONCURRENCY=1 \
             -e EMAIL_USER='${{ secrets.EMAIL_USER }}' \
             -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
             -e GOOGLE_CLIENT_ID='${{ secrets.GOOGLE_CLIENT_ID }}' \
@@ -897,7 +915,7 @@ jobs:
             -e MESSAGE_ENCRYPTION_KEY='${{ secrets.MESSAGE_ENCRYPTION_KEY || '12345678901234567890123456789012' }}' \
             -v /opt/chat-app/media:/app/media \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
-            celery -A core worker -l info --concurrency=2 --max-memory-per-child=150000
+            celery -A core worker -l info --concurrency=1 --max-memory-per-child=120000
           echo "✅ Celery worker started"
 
       # ── Health check ───────────────────────────────────────────────────────
@@ -906,11 +924,11 @@ jobs:
           echo "⏳ Waiting for backend to be ready..."
           sleep 10
           for i in $(seq 1 20); do
-            if curl -sf http://127.0.0.1:3000/hello > /dev/null 2>&1; then
-              echo "✅ Backend healthy at /hello (attempt $i)"
-              curl -s http://127.0.0.1:3000/hello | head -c 200
+            if curl -sf http://127.0.0.1:3010/hello > /dev/null 2>&1 && curl -sf http://127.0.0.1:3000/hello > /dev/null 2>&1; then
+              echo "✅ Backend WSGI (3010) & ASGI WS (3000) healthy at /hello (attempt $i)"
+              curl -s http://127.0.0.1:3010/hello | head -c 200
               break
-            elif curl -sf http://127.0.0.1:3000/health > /dev/null 2>&1; then
+            elif curl -sf http://127.0.0.1:3010/health > /dev/null 2>&1; then
               echo "✅ Backend healthy at /health (attempt $i)"
               break
             elif curl -sf http://127.0.0.1:3000/ > /dev/null 2>&1; then
@@ -920,8 +938,8 @@ jobs:
             echo "⏳ Waiting for backend ($i/20)..."
             sleep 4
           done
+          curl -sf http://127.0.0.1:3010/hello || \
           curl -sf http://127.0.0.1:3000/hello || \
-          curl -sf http://127.0.0.1:3000/health || \
           curl -sf http://127.0.0.1:3000/ || \
           (
             echo "❌ Backend not responding. Logs:"

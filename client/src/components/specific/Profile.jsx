@@ -7,17 +7,18 @@ import {
   Email as EmailIcon,
   Visibility,
   VisibilityOff,
+  Security as SecurityIcon,
+  AdminPanelSettings as AdminIcon,
 } from "@mui/icons-material";
 import {
-  Avatar, Box, Button, Collapse, Dialog, DialogActions, DialogContent,
+  Avatar, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent,
   DialogContentText, DialogTitle, Divider, IconButton, InputAdornment,
   Stack, TextField, Typography
 } from "@mui/material";
-import moment from "moment";
-import React, { useState } from "react";
+import React, { useState, lazy, Suspense } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { setFontFamily } from "../../redux/reducers/misc";
-import { transformImage } from "../../lib/feature";
+import { formatTimeAgo, transformImage } from "../../lib/feature";
 import {
   useUpdateProfileMutation,
   useDeleteProfileMutation,
@@ -30,6 +31,8 @@ import toast from "react-hot-toast";
 import { VisuallyHiddenInput } from "../styles/StyledComponents";
 import StatusSelector from "./StatusSelector";
 
+const SecurityDevicesDialog = lazy(() => import("../dialogs/SecurityDevicesDialog"));
+
 const Profile = () => {
   const { user } = useSelector((state) => state.auth);
   const { fontFamily } = useSelector((state) => state.misc);
@@ -41,6 +44,7 @@ const Profile = () => {
   const [avatar, setAvatar] = useState(null);
   const [avatarPreview, setAvatarPreview] = useState(user?.avatar?.url ? transformImage(user.avatar.url) : "");
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isSecurityOpen, setIsSecurityOpen] = useState(false);
 
   // Change password state
   const [showPasswordForm, setShowPasswordForm] = useState(false);
@@ -209,7 +213,7 @@ const Profile = () => {
           <ProfileCard heading="Username" text={`@${user?.username}`} Icon={UsernameIcon} />
           <ProfileCard heading="Name" text={user?.name || user?.username} Icon={FaceIcon} />
           <ProfileCard heading="Email" text={user?.email || "Not set"} Icon={EmailIcon} />
-          <ProfileCard heading="Joined" text={moment(user?.created_at || user?.createdAt).fromNow()} Icon={CalendarIcon} />
+          <ProfileCard heading="Joined" text={formatTimeAgo(user?.created_at || user?.createdAt)} Icon={CalendarIcon} />
           
           <Divider sx={{ my: 2, width: "100%", maxWidth: "350px" }} />
           
@@ -243,7 +247,40 @@ const Profile = () => {
             <option value="Roboto">Roboto (Classic Material)</option>
           </TextField>
 
-          <Stack direction="row" spacing={2} mt={2} width="100%" maxWidth="350px">
+          <Stack direction="row" spacing={1} justifyContent="center" flexWrap="wrap">
+            {(user?.role === "admin" || user?.is_superuser) && (
+              <Chip
+                icon={<AdminIcon />}
+                label="Superadmin Dashboard"
+                size="small"
+                color="secondary"
+                variant="outlined"
+                component="a"
+                href="/admin-panel"
+                clickable
+              />
+            )}
+            <Chip
+              icon={<SecurityIcon />}
+              label={user?.mfa_enabled ? "2FA Active" : "2FA Off"}
+              size="small"
+              color={user?.mfa_enabled ? "success" : "default"}
+              onClick={() => setIsSecurityOpen(true)}
+            />
+          </Stack>
+
+          <Button
+            variant="outlined"
+            color="primary"
+            fullWidth
+            startIcon={<SecurityIcon />}
+            onClick={() => setIsSecurityOpen(true)}
+            sx={{ maxWidth: "350px", borderRadius: "2rem", py: 1 }}
+          >
+            2FA, QR Link & Linked Devices
+          </Button>
+
+          <Stack direction="row" spacing={2} mt={1} width="100%" maxWidth="350px">
             <Button variant="contained" color="primary" fullWidth onClick={() => setIsEditing(true)} sx={{ borderRadius: "2rem", py: 1 }}>
               Edit Profile
             </Button>
@@ -253,6 +290,10 @@ const Profile = () => {
           </Stack>
         </Stack>
       )}
+
+      <Suspense fallback={null}>
+        <SecurityDevicesDialog open={isSecurityOpen} onClose={() => setIsSecurityOpen(false)} />
+      </Suspense>
 
       {/* Delete confirmation */}
       <Dialog open={isDeleteDialogOpen} onClose={() => setIsDeleteDialogOpen(false)} PaperProps={{ sx: { borderRadius: "1rem" } }}>

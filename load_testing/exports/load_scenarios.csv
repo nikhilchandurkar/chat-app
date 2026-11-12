@@ -1,0 +1,8 @@
+id,test_run_id,scenario_name,target_users,actual_users,ramp_up_seconds,duration_seconds,protocol
+1,1,stage_10_users,10,10,2.0,18.99,HTTP+WS
+2,1,stage_100_users,100,100,2.0,19.74,HTTP+WS
+3,2,stage_10_users,10,10,2.0,17.3,HTTP+WS
+4,2,stage_100_users,100,100,2.0,17.34,HTTP+WS
+5,3,stage_10_users,10,10,3.0,22.5,HTTP+WS
+6,3,stage_100_users,100,100,3.0,24.92,HTTP+WS
+7,3,stage_500_users,500,500,10.0,42.37,HTTP+WS

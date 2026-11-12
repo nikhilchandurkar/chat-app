@@ -19,7 +19,7 @@ class ChatDetailsSerializer(serializers.ModelSerializer):
     groupChat = serializers.BooleanField(source="group_chat", read_only=True)
     restrictedMessages = serializers.BooleanField(source="restricted_messages", read_only=True)
     pinnedMessages = serializers.ListField(source="pinned_messages", read_only=True)
-    creator = serializers.CharField(source="creator.id", read_only=True, default=None)
+    creator = serializers.CharField(source="creator_id", read_only=True, default=None)
     members = MemberSimpleSerializer(many=True, read_only=True)
     admins = serializers.SerializerMethodField()
 

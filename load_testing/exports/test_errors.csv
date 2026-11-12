@@ -1,0 +1,20 @@
+id,scenario_id,error_type,endpoint,error_count,error_description
+1,1,HTTP_500,GET /api/v1/user/me,1,Observed 1 error(s) on GET /api/v1/user/me
+2,1,HTTP_500,GET /api/v1/user/search,1,Observed 1 error(s) on GET /api/v1/user/search
+3,1,HTTP_500,GET /api/v1/chat/my/groups,1,Observed 1 error(s) on GET /api/v1/chat/my/groups
+4,2,TimeoutError,GET /api/v1/chat/my,79,Observed 79 error(s) on GET /api/v1/chat/my
+5,2,TimeoutError,POST /api/v1/auth/login,10,Observed 10 error(s) on POST /api/v1/auth/login
+6,2,ws_connect:InvalidStatus,/ws/chat/,109,WebSocket error ws_connect:InvalidStatus
+7,2,SAFEGUARD_STOP,cluster,1,Excessive WS connection failures (77/110)
+8,2,SAFEGUARD_STOP,cluster,1,Sustained CPU saturation >= 97.0% for 4 samples
+9,4,HTTP_502,POST /api/v1/auth/refresh,6,Observed 6 error(s) on POST /api/v1/auth/refresh
+10,4,ws_connect:InvalidStatus,/ws/chat/,57,WebSocket error ws_connect:InvalidStatus
+11,4,ws_connect:TimeoutError,/ws/chat/,48,WebSocket error ws_connect:TimeoutError
+12,4,SAFEGUARD_STOP,cluster,1,Excessive WS connection failures (57/110)
+13,7,TimeoutError,GET /api/v1/chat/my,141,Observed 141 error(s) on GET /api/v1/chat/my
+14,7,TimeoutError,POST /api/v1/auth/refresh,8,Observed 8 error(s) on POST /api/v1/auth/refresh
+15,7,TimeoutError,GET /api/v1/chat/message/:id,358,Observed 358 error(s) on GET /api/v1/chat/message/:id
+16,7,TimeoutError,POST /api/v1/message/send,47,Observed 47 error(s) on POST /api/v1/message/send
+17,7,ws_connect:InvalidStatus,/ws/chat/,97,WebSocket error ws_connect:InvalidStatus
+18,7,SAFEGUARD_STOP,cluster,1,"High HTTP failure rate (5xx=0, timeouts=203 / 621)"
+19,7,SAFEGUARD_STOP,cluster,1,Sustained CPU saturation >= 97.0% for 6 samples

@@ -4,7 +4,7 @@ import {
 } from "@mui/material";
 import { Search as SearchIcon, Close as CloseIcon } from "@mui/icons-material";
 import { useLazySearchMessagesQuery } from "../../redux/api/api";
-import moment from "moment";
+import { formatMessageTime } from "../../lib/feature";
 
 const DEBOUNCE_MS = 350;
 
@@ -106,7 +106,7 @@ const ChatSearch = ({ chatId, onScrollToMessage, onClose }) => {
                 {msg.sender?.name || "Unknown"}
               </Typography>
               <Typography variant="caption" color="text.disabled">
-                {moment(msg.createdAt).format("MMM D, h:mm a")}
+                {formatMessageTime(msg.createdAt)}
               </Typography>
             </Box>
             <Typography variant="body2" color="text.secondary" sx={{

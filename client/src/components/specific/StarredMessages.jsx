@@ -5,7 +5,7 @@ import {
 } from "@mui/material";
 import { Star as StarIcon, Close as CloseIcon } from "@mui/icons-material";
 import { useGetStarredMessagesQuery } from "../../redux/api/api";
-import moment from "moment";
+import { formatMessageTime } from "../../lib/feature";
 
 const StarredMessages = ({ open, onClose }) => {
   const { data, isLoading } = useGetStarredMessagesQuery(undefined, { skip: !open });
@@ -60,7 +60,7 @@ const StarredMessages = ({ open, onClose }) => {
                         {msg.sender?.name || "Unknown"}
                       </Typography>
                       <Typography variant="caption" color="text.disabled">
-                        {moment(msg.createdAt).format("MMM D, h:mm a")}
+                        {formatMessageTime(msg.createdAt)}
                       </Typography>
                     </Box>
                   }

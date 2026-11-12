@@ -1,34 +1,48 @@
-from django.db.models import Sum, Count
+from django.db.models import Count, Q
 from django.utils import timezone
-from rest_framework.views import APIView
-from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from apps.authentication.models import User, UserSession, Report, AuditLog
+from apps.authentication.models import AuditLog, Report, User, UserSession
+from apps.authentication.services.admin_analytics_service import AdminAnalyticsService
+from apps.authentication.services.session_service import SessionService
 from apps.chat.models import Conversation
 from apps.messages_app.models import Message
-from apps.storage_app.models import UserStorageUsage
-from apps.outbox.models import MessageOutbox
-from apps.outbox.services.redis_streams import get_redis_client
+
+
+def _is_admin(user) -> bool:
+    return bool(
+        user
+        and user.is_authenticated
+        and (getattr(user, "role", "user") == "admin" or user.is_staff or user.is_superuser)
+    )
 
 
 class IsAdminUserPermission:
     def has_permission(self, request, view):
-        return bool(request.user and request.user.is_authenticated and (request.user.role == "admin" or request.user.is_staff))
+        return _is_admin(request.user)
 
 
 class AdminVerifyView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        is_admin = request.user.role == "admin" or request.user.is_staff or request.user.is_superuser
-        return Response({"admin": is_admin, "user": {"id": str(request.user.id), "email": request.user.email, "role": request.user.role}})
+        is_admin = _is_admin(request.user)
+        return Response({
+            "admin": is_admin,
+            "user": {
+                "id": str(request.user.id),
+                "email": request.user.email,
+                "role": request.user.role,
+                "is_staff": request.user.is_staff,
+                "is_superuser": request.user.is_superuser,
+            },
+        })
 
     def post(self, request):
-        secret_key = request.data.get("secretKey")
-        # Support admin secret key fallback or user role
-        if request.user.is_authenticated and (request.user.role == "admin" or request.user.is_staff):
+        if _is_admin(request.user):
             return Response({"success": True, "message": "Admin verified."})
         return Response({"success": False, "message": "Unauthorized."}, status=status.HTTP_403_FORBIDDEN)
 
@@ -44,64 +58,39 @@ class AdminStatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not (request.user.role == "admin" or request.user.is_staff or request.user.is_superuser):
+        if not _is_admin(request.user):
             return Response({"success": False, "message": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
-        total_users = User.objects.count()
-        active_users = User.objects.filter(is_active=True).count()
-        active_sessions = UserSession.objects.filter(is_revoked=False, expires_at__gt=timezone.now()).count()
-        total_chats = Conversation.objects.count()
-        total_messages = Message.objects.count()
-        storage_sum = UserStorageUsage.objects.aggregate(total=Sum("bytes_used"))["total"] or 0
-
-        # Outbox & Redis Stream status
-        pending_outbox = MessageOutbox.objects.filter(status="pending").count()
-        failed_outbox = MessageOutbox.objects.filter(status="failed").count()
-
-        redis_client = get_redis_client()
-        redis_ok = False
-        redis_memory = "N/A"
-        if redis_client:
-            try:
-                info = redis_client.info("memory")
-                redis_ok = True
-                redis_memory = info.get("used_memory_human", "N/A")
-            except Exception:
-                pass
-
-        return Response({
-            "success": True,
-            "stats": {
-                "usersCount": total_users,
-                "activeUsersCount": active_users,
-                "activeSessions": active_sessions,
-                "totalChatsCount": total_chats,
-                "messagesCount": total_messages,
-                "storageUsedBytes": storage_sum,
-                "storageUsedMB": round(storage_sum / (1024 * 1024), 2),
-                "pendingOutboxEvents": pending_outbox,
-                "failedOutboxEvents": failed_outbox,
-                "redisStatus": "connected" if redis_ok else "disconnected",
-                "redisMemory": redis_memory,
-                "serverTime": timezone.now().isoformat(),
-            }
-        })
+        stats = AdminAnalyticsService.get_dashboard_analytics()
+        return Response({"success": True, "stats": stats})
 
 
 class AdminUsersView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not (request.user.role == "admin" or request.user.is_staff):
+        if not _is_admin(request.user):
             return Response({"success": False, "message": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
-        users = User.objects.all().order_by("-created_at")[:100]
+        q = (request.query_params.get("q") or "").strip()
+        include_loadtest = request.query_params.get("include_loadtest", "0") == "1"
+
+        qs = User.objects.select_related("mfa").all()
+        if not include_loadtest and not q:
+            qs = qs.exclude(email__endswith="@loadtest.local")
+        if q:
+            qs = qs.filter(Q(email__icontains=q) | Q(username__icontains=q) | Q(name__icontains=q))
+
+        users = qs.order_by("-created_at")[:100]
         data = [{
             "_id": str(u.id),
             "name": u.name,
             "username": u.username,
             "email": u.email,
             "role": u.role,
+            "isStaff": u.is_staff,
+            "isSuperuser": u.is_superuser,
+            "mfaEnabled": bool(getattr(getattr(u, "mfa", None), "is_enabled", False)),
             "status": u.status,
             "isActive": u.is_active,
             "avatar": u.avatar.get("url") if isinstance(u.avatar, dict) else None,
@@ -114,7 +103,7 @@ class AdminUserSuspendView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, user_id):
-        if not (request.user.role == "admin" or request.user.is_staff):
+        if not _is_admin(request.user):
             return Response({"success": False, "message": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
         target = User.objects.filter(id=user_id).first()
@@ -124,29 +113,75 @@ class AdminUserSuspendView(APIView):
         target.is_active = not target.is_active
         target.save(update_fields=["is_active"])
 
-        # Revoke active sessions if suspended
         if not target.is_active:
-            UserSession.objects.filter(user=target).update(is_revoked=True)
+            SessionService.mark_user_sessions_revoked(target)
 
         AuditLog.objects.create(
             user=request.user,
             action=f"USER_{'SUSPENDED' if not target.is_active else 'RESTORED'}",
-            details={"target_user_id": str(target.id), "target_email": target.email}
+            details={"target_user_id": str(target.id), "target_email": target.email},
         )
 
         return Response({"success": True, "isActive": target.is_active, "message": f"User {'suspended' if not target.is_active else 'activated'}."})
+
+
+class AdminSessionsView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        if not _is_admin(request.user):
+            return Response({"success": False, "message": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        now = timezone.now()
+        sessions = (
+            UserSession.objects.filter(is_revoked=False, expires_at__gt=now)
+            .select_related("user", "device")
+            .order_by("-created_at")[:100]
+        )
+        data = [{
+            "id": str(s.id),
+            "userEmail": s.user.email,
+            "username": s.user.username,
+            "deviceName": (s.device.device_name or s.device.platform) if s.device else "Unknown",
+            "platform": s.device.platform if s.device else "web",
+            "authMethod": s.auth_method,
+            "ipAddress": s.ip_address,
+            "createdAt": s.created_at.isoformat(),
+            "expiresAt": s.expires_at.isoformat(),
+        } for s in sessions]
+        return Response({"success": True, "sessions": data})
+
+
+class AdminRevokeSessionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, session_id):
+        if not _is_admin(request.user):
+            return Response({"success": False, "message": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
+
+        session = UserSession.objects.select_related("user").filter(id=session_id).first()
+        if not session:
+            return Response({"success": False, "message": "Session not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        SessionService.revoke_session(session.user, str(session.id))
+        AuditLog.objects.create(
+            user=request.user,
+            action="ADMIN_SESSION_REVOKED",
+            details={"target_user": session.user.email, "session_id": str(session.id)},
+        )
+        return Response({"success": True, "message": "Session revoked immediately."})
 
 
 class AdminChatsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not (request.user.role == "admin" or request.user.is_staff):
+        if not _is_admin(request.user):
             return Response({"success": False, "message": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
         chats = Conversation.objects.annotate(
             total_members=Count("member_records"),
-            total_messages=Count("messages")
+            total_messages=Count("messages"),
         ).order_by("-updated_at")[:100]
 
         data = [{
@@ -164,10 +199,9 @@ class AdminMessagesView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not (request.user.role == "admin" or request.user.is_staff):
+        if not _is_admin(request.user):
             return Response({"success": False, "message": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
-        # High-level privacy-preserving message metadata (does not expose private message content)
         messages = Message.objects.select_related("sender", "conversation").order_by("-created_at")[:100]
         data = [{
             "_id": str(m.id),
@@ -185,7 +219,7 @@ class AdminReportsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not (request.user.role == "admin" or request.user.is_staff):
+        if not _is_admin(request.user):
             return Response({"success": False, "message": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
         reports = Report.objects.select_related("reporter", "reported_user").order_by("-created_at")[:50]
@@ -204,7 +238,7 @@ class AdminAuditLogsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        if not (request.user.role == "admin" or request.user.is_staff):
+        if not _is_admin(request.user):
             return Response({"success": False, "message": "Admin access required."}, status=status.HTTP_403_FORBIDDEN)
 
         logs = AuditLog.objects.select_related("user").order_by("-created_at")[:100]
@@ -217,4 +251,3 @@ class AdminAuditLogsView(APIView):
             "createdAt": l.created_at.isoformat(),
         } for l in logs]
         return Response({"success": True, "auditLogs": data})
-
