@@ -7,9 +7,32 @@ django.setup()
 
 from django.core.asgi import get_asgi_application
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.security.websocket import AllowedHostsOriginValidator
+from channels.security.websocket import OriginValidator
 from apps.realtime.routing import websocket_urlpatterns
 from apps.realtime.middleware import WebSocketJWTAuthMiddleware
+
+
+class NativeAwareAllowedHostsOriginValidator(OriginValidator):
+    """Enforces strict Origin checks for browser WebSockets while permitting native clients without Origin."""
+
+    def __init__(self, application):
+        super().__init__(application, [])
+
+    def valid_origin(self, parsed_origin):
+        if parsed_origin is None:
+            return True
+        from django.conf import settings
+        self.allowed_origins = list(
+            dict.fromkeys(
+                [
+                    *getattr(settings, "ALLOWED_HOSTS", []),
+                    *getattr(settings, "CSRF_TRUSTED_ORIGINS", []),
+                    *getattr(settings, "CORS_ALLOWED_ORIGINS", []),
+                ]
+            )
+        )
+        return self.validate_origin(parsed_origin)
+
 
 _CPU_COUNT = os.cpu_count() or 2
 _ASGI_POOL_WORKERS = int(
@@ -25,7 +48,7 @@ django_http_app = get_asgi_application()
 
 _base_application = ProtocolTypeRouter({
     "http": django_http_app,
-    "websocket": AllowedHostsOriginValidator(
+    "websocket": NativeAwareAllowedHostsOriginValidator(
         WebSocketJWTAuthMiddleware(
             URLRouter(websocket_urlpatterns)
         )
