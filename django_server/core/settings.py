@@ -30,12 +30,49 @@ if sys.version_info >= (3, 14):
 # Load environment variables
 load_dotenv(BASE_DIR / ".env")
 
+def _split_csv_env(*names: str) -> list[str]:
+    values: list[str] = []
+    for name in names:
+        raw = os.environ.get(name, "")
+        for item in raw.split(","):
+            item = item.strip()
+            if item and item not in values:
+                values.append(item)
+    return values
+
+
+def _extract_hostname(value: str) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    parsed = urlparse.urlparse(raw if "://" in raw else f"https://{raw}")
+    return (parsed.hostname or "").strip()
+
+
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY") or os.environ.get("SECRET_KEY") or "django-insecure-chat-app-production-secret-key-replace-in-env"
 DEBUG = (os.environ.get("DJANGO_DEBUG") or os.environ.get("DEBUG") or "True").lower() in ("true", "1", "yes")
 
-# Allowed Hosts
-raw_allowed_hosts = os.environ.get("DJANGO_ALLOWED_HOSTS") or os.environ.get("ALLOWED_HOSTS") or "*"
-ALLOWED_HOSTS = [h.strip() for h in raw_allowed_hosts.split(",") if h.strip()]
+# Deployment Domain & Server IP (loaded from environment / GitHub Actions secrets)
+PUBLIC_DOMAIN = os.environ.get("PUBLIC_DOMAIN", "").strip()
+SERVER_IP = os.environ.get("SERVER_IP", "").strip()
+CLIENT_URL = os.environ.get("CLIENT_URL", "").strip().rstrip("/")
+API_BASE_URL = (os.environ.get("API_BASE_URL") or CLIENT_URL or "http://localhost:8000").strip().rstrip("/")
+WEBSOCKET_URL = os.environ.get("WEBSOCKET_URL", "ws://localhost:8000/ws/chat/")
+MEDIA_BASE_URL = os.environ.get("MEDIA_BASE_URL", "http://localhost:8000/api/v1/media/")
+
+# Allowed Hosts (strictly scoped to configured hosts/IP; never wildcard '*' in production)
+ALLOWED_HOSTS = _split_csv_env("DJANGO_ALLOWED_HOSTS", "ALLOWED_HOSTS")
+if not ALLOWED_HOSTS:
+    ALLOWED_HOSTS = ["127.0.0.1", "localhost", "[::1]", "testserver"] if DEBUG else ["127.0.0.1", "localhost"]
+
+for _host_candidate in (
+    _extract_hostname(PUBLIC_DOMAIN),
+    _extract_hostname(SERVER_IP),
+    _extract_hostname(CLIENT_URL),
+    _extract_hostname(API_BASE_URL),
+):
+    if _host_candidate and _host_candidate not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_host_candidate)
 
 # Application definition
 INSTALLED_APPS = [
@@ -104,6 +141,14 @@ try:
 except Exception:
     pass
 
+_MYSQL_OPTIONS = {
+    "charset": "utf8mb4",
+    "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
+    "connect_timeout": int(os.environ.get("DB_CONNECT_TIMEOUT", "5")),
+    "read_timeout": int(os.environ.get("DB_READ_TIMEOUT", "15")),
+    "write_timeout": int(os.environ.get("DB_WRITE_TIMEOUT", "15")),
+}
+
 db_url = os.environ.get("DATABASE_URL", "")
 if db_url.startswith("mysql://"):
     parsed = urlparse.urlparse(db_url)
@@ -115,11 +160,8 @@ if db_url.startswith("mysql://"):
             "PASSWORD": parsed.password or "chat_password",
             "HOST": parsed.hostname or "127.0.0.1",
             "PORT": parsed.port or 3306,
-            "OPTIONS": {
-                "charset": "utf8mb4",
-                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-            },
-            "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", 60)),
+            "OPTIONS": dict(_MYSQL_OPTIONS),
+            "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", 120)),
             "CONN_HEALTH_CHECKS": True,
         }
     }
@@ -132,11 +174,8 @@ else:
             "PASSWORD": os.environ.get("DATABASE_PASSWORD") or os.environ.get("MYSQL_PASSWORD", "chat_password"),
             "HOST": os.environ.get("DATABASE_HOST") or os.environ.get("MYSQL_HOST", "127.0.0.1"),
             "PORT": int(os.environ.get("DATABASE_PORT") or os.environ.get("MYSQL_PORT", 3306)),
-            "OPTIONS": {
-                "charset": "utf8mb4",
-                "init_command": "SET sql_mode='STRICT_TRANS_TABLES'",
-            },
-            "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", 60)),
+            "OPTIONS": dict(_MYSQL_OPTIONS),
+            "CONN_MAX_AGE": int(os.environ.get("DB_CONN_MAX_AGE", 120)),
             "CONN_HEALTH_CHECKS": True,
         }
     }
@@ -174,52 +213,72 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ─── CORS & Security Configuration ──────────────────────────────────────────
 CORS_ALLOW_ALL_ORIGINS = DEBUG
 CORS_ALLOW_CREDENTIALS = True
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https?://localhost(:[0-9]+)?$",
-    r"^https?://127\.0\.0\.1(:[0-9]+)?$",
-    r"^capacitor://localhost$",
-    r"^ionic://localhost$",
-    r"^https?://.*\.chickenkiller\.com$",
-    r"^https?://.*\.duckdns\.org$",
-    r"^https?://.*\.vercel\.app$",
-]
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
+# Capacitor / Ionic native app WebView origins (always local shell schemes)
+_BASE_TRUSTED_ORIGINS = [
     "https://localhost",
     "capacitor://localhost",
+    "ionic://localhost",
 ]
+if DEBUG:
+    _BASE_TRUSTED_ORIGINS = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        *_BASE_TRUSTED_ORIGINS,
+    ]
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^https?://localhost(:[0-9]+)?$",
+        r"^https?://127\.0\.0\.1(:[0-9]+)?$",
+        r"^capacitor://localhost$",
+        r"^ionic://localhost$",
+    ]
+else:
+    CORS_ALLOWED_ORIGIN_REGEXES = [
+        r"^capacitor://localhost$",
+        r"^ionic://localhost$",
+    ]
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-    "https://localhost",
-    "capacitor://localhost",
-    "https://*.duckdns.org",
-    "https://chat-nikkiii.duckdns.org",
-]
 
-client_url = os.environ.get("CLIENT_URL", "").strip().rstrip("/")
-if client_url:
-    if client_url not in CSRF_TRUSTED_ORIGINS:
-        CSRF_TRUSTED_ORIGINS.append(client_url)
-    if client_url not in CORS_ALLOWED_ORIGINS:
-        CORS_ALLOWED_ORIGINS.append(client_url)
+def _append_unique_origin(origin_list: list[str], origin: str) -> None:
+    cleaned = (origin or "").strip().rstrip("/")
+    if not cleaned:
+        return
+    if cleaned not in origin_list:
+        origin_list.append(cleaned)
 
-public_domain = os.environ.get("PUBLIC_DOMAIN", "").strip()
-if public_domain:
-    for scheme in ("http://", "https://"):
-        origin = f"{scheme}{public_domain}"
-        if origin not in CSRF_TRUSTED_ORIGINS:
-            CSRF_TRUSTED_ORIGINS.append(origin)
-        if origin not in CORS_ALLOWED_ORIGINS:
-            CORS_ALLOWED_ORIGINS.append(origin)
-    CORS_ALLOWED_ORIGIN_REGEXES.append(rf"^https?://.*{re.escape(public_domain)}$")
+
+CORS_ALLOWED_ORIGINS = list(_BASE_TRUSTED_ORIGINS)
+CSRF_TRUSTED_ORIGINS = list(_BASE_TRUSTED_ORIGINS)
+
+for _extra_cors in _split_csv_env("CORS_ALLOWED_ORIGINS"):
+    _append_unique_origin(CORS_ALLOWED_ORIGINS, _extra_cors)
+
+for _extra_csrf in _split_csv_env("CSRF_TRUSTED_ORIGINS"):
+    _append_unique_origin(CSRF_TRUSTED_ORIGINS, _extra_csrf)
+
+for _explicit_url in (CLIENT_URL, os.environ.get("API_BASE_URL", "")):
+    _parsed_explicit = urlparse.urlparse(_explicit_url.strip()) if _explicit_url.strip() else None
+    if _parsed_explicit and _parsed_explicit.scheme in ("http", "https") and _parsed_explicit.netloc:
+        _norm_origin = f"{_parsed_explicit.scheme}://{_parsed_explicit.netloc}"
+        _append_unique_origin(CORS_ALLOWED_ORIGINS, _norm_origin)
+        _append_unique_origin(CSRF_TRUSTED_ORIGINS, _norm_origin)
+
+if PUBLIC_DOMAIN:
+    _domain_schemes = ("http://", "https://") if DEBUG else ("https://",)
+    for _scheme in _domain_schemes:
+        _origin = f"{_scheme}{PUBLIC_DOMAIN}" if "://" not in PUBLIC_DOMAIN else PUBLIC_DOMAIN
+        _append_unique_origin(CORS_ALLOWED_ORIGINS, _origin)
+        _append_unique_origin(CSRF_TRUSTED_ORIGINS, _origin)
+
+if SERVER_IP:
+    for _scheme in ("http://", "https://"):
+        _ip_origin = f"{_scheme}{SERVER_IP}"
+        _append_unique_origin(CORS_ALLOWED_ORIGINS, _ip_origin)
+        _append_unique_origin(CSRF_TRUSTED_ORIGINS, _ip_origin)
 
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
@@ -284,6 +343,15 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 
 if os.environ.get("USE_REDIS", "False").lower() in ("true", "1"):
+    _CPU_COUNT = os.cpu_count() or 2
+    _REDIS_CACHE_MAX_CONNS = int(
+        os.environ.get("REDIS_CACHE_MAX_CONNS", str(min(256, max(64, _CPU_COUNT * 32))))
+    )
+    _CHANNEL_REDIS_MAX_CONNS = int(
+        os.environ.get("CHANNEL_REDIS_MAX_CONNS", str(min(512, max(128, _CPU_COUNT * 64))))
+    )
+    _CHANNEL_CAPACITY = int(os.environ.get("CHANNEL_CAPACITY", "10000"))
+    _CHANNEL_EXPIRY = int(os.environ.get("CHANNEL_EXPIRY", "20"))
     CACHES = {
         "default": {
             "BACKEND": "django_redis.cache.RedisCache",
@@ -291,11 +359,11 @@ if os.environ.get("USE_REDIS", "False").lower() in ("true", "1"):
             "OPTIONS": {
                 "CLIENT_CLASS": "django_redis.client.DefaultClient",
                 "CONNECTION_POOL_KWARGS": {
-                    "max_connections": 40,
+                    "max_connections": _REDIS_CACHE_MAX_CONNS,
                     "retry_on_timeout": True,
                 },
-                "SOCKET_CONNECT_TIMEOUT": 5,
-                "SOCKET_TIMEOUT": 5,
+                "SOCKET_CONNECT_TIMEOUT": 2,
+                "SOCKET_TIMEOUT": 2,
             },
         }
     }
@@ -306,12 +374,12 @@ if os.environ.get("USE_REDIS", "False").lower() in ("true", "1"):
                 "hosts": [
                     {
                         "address": REDIS_URL,
-                        "socket_timeout": 15,
-                        "max_connections": 128,
+                        "socket_timeout": 10,
+                        "max_connections": _CHANNEL_REDIS_MAX_CONNS,
                     }
                 ],
-                "capacity": 5000,
-                "expiry": 30,
+                "capacity": _CHANNEL_CAPACITY,
+                "expiry": _CHANNEL_EXPIRY,
             },
         },
     }
@@ -374,9 +442,3 @@ VAPID_CLAIM_EMAIL = os.environ.get("VAPID_CLAIM_EMAIL", DEFAULT_FROM_EMAIL)
 # ─── FCM Direct HTTP v1 ─────────────────────────────────────────────────────
 FCM_PROJECT_ID = os.environ.get("FCM_PROJECT_ID", "")
 FCM_SERVICE_ACCOUNT_PATH = os.environ.get("FCM_SERVICE_ACCOUNT_PATH", "")
-
-# ─── Public Domain & URLs ───────────────────────────────────────────────────
-PUBLIC_DOMAIN = os.environ.get("PUBLIC_DOMAIN", "localhost")
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
-WEBSOCKET_URL = os.environ.get("WEBSOCKET_URL", "ws://localhost:8000/ws/chat/")
-MEDIA_BASE_URL = os.environ.get("MEDIA_BASE_URL", "http://localhost:8000/api/v1/media/")

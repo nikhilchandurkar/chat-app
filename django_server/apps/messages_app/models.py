@@ -64,8 +64,11 @@ def decrypt_message(text: str) -> str:
         return "[Encrypted Message - Unable to Decrypt]"
 
 
+_CRYPTO_WORKERS = int(
+    os.environ.get("CRYPTO_THREADPOOL_WORKERS", str(min(64, max(16, (os.cpu_count() or 2) * 8))))
+)
 CRYPTO_EXECUTOR = ThreadPoolExecutor(
-    max_workers=min(32, (os.cpu_count() or 1) * 2 + 4),
+    max_workers=_CRYPTO_WORKERS,
     thread_name_prefix="crypto_worker"
 )
 

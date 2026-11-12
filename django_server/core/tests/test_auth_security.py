@@ -239,7 +239,12 @@ class AuthSecurityFeaturesTestCase(APITestCase):
             res_cl = self.client.get(admin_path)
             self.assertEqual(res_cl.status_code, status.HTTP_200_OK, f"Admin changelist failed on {admin_path}")
 
-    @override_settings(GOOGLE_CLIENT_ID="google-id-secret-value", GITHUB_CLIENT_ID="github-id-secret-value")
+    @override_settings(
+        GOOGLE_CLIENT_ID="google-id-secret-value",
+        GITHUB_CLIENT_ID="github-id-secret-value",
+        PUBLIC_DOMAIN="app.example.com",
+        CSRF_TRUSTED_ORIGINS=["https://app.example.com"],
+    )
     def test_auth_config_hides_client_ids_and_oauth_start_redirects_safely(self):
         cfg = self.client.get("/api/v1/auth/config")
         self.assertEqual(cfg.status_code, status.HTTP_200_OK)
@@ -252,18 +257,19 @@ class AuthSecurityFeaturesTestCase(APITestCase):
         # Valid server-side redirect keeps client ID out of frontend code
         redir = self.client.get(
             "/api/v1/auth/oauth/google/start",
-            {"redirect_uri": "https://chat-nikkiii.duckdns.org/login", "platform": "android"},
+            {"redirect_uri": "https://app.example.com/login", "platform": "android"},
         )
         self.assertEqual(redir.status_code, status.HTTP_302_FOUND)
         self.assertIn("https://accounts.google.com/o/oauth2/v2/auth", redir["Location"])
         self.assertIn("state=google_android", redir["Location"])
 
-        # Untrusted open redirect is rejected
-        bad_redir = self.client.get(
-            "/api/v1/auth/oauth/google/start",
-            {"redirect_uri": "https://evil.example.com/login", "platform": "web"},
-        )
-        self.assertEqual(bad_redir.status_code, status.HTTP_400_BAD_REQUEST)
+        # Untrusted open redirects (including arbitrary *.duckdns.org subdomains) are rejected
+        for bad_uri in ("https://evil.example.com/login", "https://attacker.duckdns.org/login"):
+            bad_redir = self.client.get(
+                "/api/v1/auth/oauth/google/start",
+                {"redirect_uri": bad_uri, "platform": "web"},
+            )
+            self.assertEqual(bad_redir.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_forgot_password_otp_reset_revokes_prior_sessions_and_signs_in(self):
         old_login = self._login("old-laptop", "web")

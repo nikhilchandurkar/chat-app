@@ -26,11 +26,15 @@ def get_recipient_ids(conversation, sender_id):
 
 
 def invalidate_user_chats_cache(user_ids):
-    """Invalidates cached MyChatsView responses for the affected users."""
+    """Invalidates cached MyChatsView and MyGroupsView responses for the affected users."""
     if not user_ids:
         return
     try:
-        cache.delete_many([f"my_chats_v2:{uid}" for uid in set(str(u) for u in user_ids if u)])
+        keys = []
+        for uid in set(str(u) for u in user_ids if u):
+            keys.append(f"my_chats_v2:{uid}")
+            keys.append(f"my_groups_v1:{uid}")
+        cache.delete_many(keys)
     except Exception:
         pass
 
@@ -356,6 +360,16 @@ class MyGroupsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        use_redis = str(getattr(settings, "CACHES", {}).get("default", {}).get("BACKEND", "")).endswith("RedisCache")
+        cache_key = f"my_groups_v1:{request.user.id}"
+        if use_redis:
+            try:
+                cached = cache.get(cache_key)
+                if cached is not None:
+                    return Response({"success": True, "groups": cached})
+            except Exception:
+                pass
+
         memberships = (
             ConversationMember.objects.filter(user=request.user, conversation__group_chat=True)
             .select_related("conversation")
@@ -363,9 +377,15 @@ class MyGroupsView(APIView):
         )
 
         groups = [m.conversation for m in memberships]
+        serialized = ChatDetailsSerializer(groups, many=True).data
+        if use_redis:
+            try:
+                cache.set(cache_key, serialized, timeout=8)
+            except Exception:
+                pass
         return Response({
             "success": True,
-            "groups": ChatDetailsSerializer(groups, many=True).data
+            "groups": serialized
         })
 
 

@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import redis
 from django.conf import settings
 
@@ -22,12 +23,19 @@ def get_redis_client():
     global _redis_pool
     try:
         if _redis_pool is None:
+            pool_size = int(
+                os.environ.get(
+                    "REDIS_STREAM_MAX_CONNS",
+                    str(min(256, max(128, (os.cpu_count() or 2) * 32))),
+                )
+            )
             _redis_pool = redis.ConnectionPool.from_url(
                 settings.REDIS_URL,
                 decode_responses=True,
-                max_connections=64,
+                max_connections=pool_size,
                 socket_connect_timeout=2,
                 socket_timeout=2,
+                retry_on_timeout=True,
             )
         return redis.Redis(connection_pool=_redis_pool)
     except Exception as e:

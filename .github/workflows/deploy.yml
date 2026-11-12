@@ -21,7 +21,7 @@ concurrency:
 env:
   DOCKER_IMAGE_DJANGO: nikhil2523/chat-app-django
   DOCKER_USERNAME: ${{ vars.DOCKER_USERNAME || 'nikhil2523' }}
-  CLIENT_URL: ${{ vars.CLIENT_URL || 'https://chat-nikkiii.duckdns.org' }}
+  CLIENT_URL: ${{ vars.CLIENT_URL || '' }}
   VITE_SERVER: ${{ vars.VITE_SERVER || '' }}
   PYTHON_VERSION: "3.12"
   NODE_VERSION: "22"
@@ -656,7 +656,6 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment:
       name: production
-      url: https://chat-nikkiii.duckdns.org
     steps:
       - name: Checkout repository on server
         uses: actions/checkout@v4
@@ -715,14 +714,22 @@ jobs:
       - name: Update Nginx configuration
         run: |
           sudo mkdir -p /var/www/certbot
-          CERT_PATH=$(sudo find /etc/letsencrypt/live -name "fullchain.pem" 2>/dev/null | head -n 1)
+          sudo sysctl -w net.core.somaxconn=8192 net.ipv4.tcp_max_syn_backlog=8192 >/dev/null 2>&1 || true
+          sudo sed -i 's/worker_connections [0-9]\+;/worker_connections 8192;/g' /etc/nginx/nginx.conf 2>/dev/null || true
+          DOMAIN="${{ secrets.PUBLIC_DOMAIN }}"
+          SERVER_IP="${{ secrets.SERVER_IP }}"
+          if [ -n "$DOMAIN" ] && sudo test -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem"; then
+            CERT_PATH="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+          else
+            CERT_PATH=$(sudo find /etc/letsencrypt/live -name "fullchain.pem" 2>/dev/null | head -n 1)
+          fi
           if [ -n "$CERT_PATH" ] && [ -f "nginx_ssl.conf" ]; then
-            DOMAIN=$(echo "$CERT_PATH" | awk -F'/' '{print $(NF-1)}')
-            echo "🔒 Found active SSL certificate for domain: $DOMAIN — deploying HTTPS Nginx configuration"
-            sed -e "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" -e "s/chat-nikkiii.duckdns.org/$DOMAIN/g" nginx_ssl.conf | sudo tee /etc/nginx/sites-available/chatapp > /dev/null
+            [ -z "$DOMAIN" ] && DOMAIN=$(echo "$CERT_PATH" | awk -F'/' '{print $(NF-1)}')
+            echo "🔒 Found active SSL certificate for configured domain — deploying HTTPS Nginx configuration"
+            sed -e "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" -e "s/SERVER_IP_PLACEHOLDER/$SERVER_IP/g" nginx_ssl.conf | sudo tee /etc/nginx/sites-available/chatapp > /dev/null
           elif [ -f "nginx.conf" ]; then
             echo "🌐 No SSL certificate detected — deploying HTTP Nginx configuration"
-            sudo cp nginx.conf /etc/nginx/sites-available/chatapp
+            sed -e "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" -e "s/SERVER_IP_PLACEHOLDER/$SERVER_IP/g" nginx.conf | sudo tee /etc/nginx/sites-available/chatapp > /dev/null
           fi
           sudo ln -sf /etc/nginx/sites-available/chatapp /etc/nginx/sites-enabled/chatapp
           sudo rm -f /etc/nginx/sites-enabled/default
@@ -730,7 +737,7 @@ jobs:
             sudo systemctl reload nginx && echo "✅ Nginx reloaded" || (sudo systemctl restart nginx && echo "✅ Nginx restarted")
           else
             echo "❌ Tested configuration failed, rolling back to base nginx.conf"
-            sudo cp nginx.conf /etc/nginx/sites-available/chatapp
+            sed -e "s/DOMAIN_PLACEHOLDER/$DOMAIN/g" -e "s/SERVER_IP_PLACEHOLDER/$SERVER_IP/g" nginx.conf | sudo tee /etc/nginx/sites-available/chatapp > /dev/null
             sudo nginx -t && sudo systemctl reload nginx
           fi
 
@@ -833,10 +840,38 @@ jobs:
             FLUSH PRIVILEGES;
           " 2>/dev/null && echo "✅ MySQL privileges granted" || echo "⚠️ MySQL grant completed with warnings"
 
-      # ── Deploy Daphne ASGI ─────────────────────────────────────────────────
-      - name: Deploy Django Daphne server (port 3000)
+      # ── Deploy Daphne ASGI & Multi-Thread WSGI ───────────────────────────────
+      - name: Deploy Django Daphne + WSGI server (ports 3000-3001, 3010-3011)
         run: |
           echo "🚀 Deploying chat_django_daphne..."
+          CORES=$(nproc 2>/dev/null || echo 2)
+          [ "$CORES" -lt 2 ] && CORES=2
+          DYN_WSGI_MIN=$((CORES * 8))
+          DYN_WSGI_MAX=$((CORES * 24))
+          [ "$DYN_WSGI_MAX" -gt 128 ] && DYN_WSGI_MAX=128
+          DYN_ASGI_POOL=$((CORES * 24))
+          [ "$DYN_ASGI_POOL" -gt 128 ] && DYN_ASGI_POOL=128
+          DYN_CRYPTO_POOL=$((CORES * 12))
+          [ "$DYN_CRYPTO_POOL" -gt 64 ] && DYN_CRYPTO_POOL=64
+          DYN_REDIS_CACHE=$((CORES * 48))
+          DYN_CHANNEL_CONNS=$((CORES * 64))
+
+          PUBLIC_DOMAIN_VAL="${{ secrets.PUBLIC_DOMAIN }}"
+          if [ -z "$PUBLIC_DOMAIN_VAL" ]; then
+            CERT_FOUND=$(sudo find /etc/letsencrypt/live -name "fullchain.pem" 2>/dev/null | head -n 1)
+            [ -n "$CERT_FOUND" ] && PUBLIC_DOMAIN_VAL=$(echo "$CERT_FOUND" | awk -F'/' '{print $(NF-1)}')
+          fi
+          SERVER_IP_VAL="${{ secrets.SERVER_IP }}"
+          CLIENT_URL_VAL="${{ secrets.CLIENT_URL || vars.CLIENT_URL }}"
+          if [ -z "$CLIENT_URL_VAL" ] && [ -n "$PUBLIC_DOMAIN_VAL" ]; then
+            CLIENT_URL_VAL="https://${PUBLIC_DOMAIN_VAL}"
+          fi
+          ALLOWED_HOSTS_VAL="${{ secrets.DJANGO_ALLOWED_HOSTS }}"
+          if [ -z "$ALLOWED_HOSTS_VAL" ]; then
+            ALLOWED_HOSTS_VAL="127.0.0.1,localhost"
+            [ -n "$PUBLIC_DOMAIN_VAL" ] && ALLOWED_HOSTS_VAL="${ALLOWED_HOSTS_VAL},${PUBLIC_DOMAIN_VAL}"
+            [ -n "$SERVER_IP_VAL" ] && ALLOWED_HOSTS_VAL="${ALLOWED_HOSTS_VAL},${SERVER_IP_VAL}"
+          fi
           docker stop chat_django_daphne 2>/dev/null || true
           docker rm chat_django_daphne 2>/dev/null || true
           docker run -d \
@@ -856,11 +891,28 @@ jobs:
             -e MYSQL_HOST=127.0.0.1 \
             -e MYSQL_PORT=3306 \
             -e DB_CONN_MAX_AGE=120 \
+            -e DB_CONNECT_TIMEOUT=5 \
+            -e DB_READ_TIMEOUT=15 \
+            -e DB_WRITE_TIMEOUT=15 \
             -e PYTHONOPTIMIZE=1 \
+            -e WSGI_MIN_THREADS="$DYN_WSGI_MIN" \
+            -e WSGI_THREADS="$DYN_WSGI_MAX" \
+            -e WSGI_BACKLOG=8192 \
+            -e ASGI_THREADPOOL_WORKERS="$DYN_ASGI_POOL" \
+            -e CRYPTO_THREADPOOL_WORKERS="$DYN_CRYPTO_POOL" \
+            -e REDIS_CACHE_MAX_CONNS="$DYN_REDIS_CACHE" \
+            -e CHANNEL_REDIS_MAX_CONNS="$DYN_CHANNEL_CONNS" \
+            -e REDIS_STREAM_MAX_CONNS="$DYN_REDIS_CACHE" \
+            -e CHANNEL_CAPACITY=10000 \
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS=True \
-            -e CLIENT_URL='${{ env.CLIENT_URL }}' \
-            -e ALLOWED_HOSTS='*' \
+            -e PUBLIC_DOMAIN="$PUBLIC_DOMAIN_VAL" \
+            -e SERVER_IP="$SERVER_IP_VAL" \
+            -e CLIENT_URL="$CLIENT_URL_VAL" \
+            -e API_BASE_URL="$CLIENT_URL_VAL" \
+            -e DJANGO_ALLOWED_HOSTS="$ALLOWED_HOSTS_VAL" \
+            -e CORS_ALLOWED_ORIGINS='${{ secrets.CORS_ALLOWED_ORIGINS }}' \
+            -e CSRF_TRUSTED_ORIGINS='${{ secrets.CSRF_TRUSTED_ORIGINS }}' \
             -e EMAIL_HOST=smtp.gmail.com \
             -e EMAIL_PORT=587 \
             -e EMAIL_SECURE=false \
@@ -873,7 +925,7 @@ jobs:
             -v /opt/chat-app/logs:/app/logs \
             -v /opt/chat-app/staticfiles:/app/staticfiles \
             ${{ env.DOCKER_IMAGE_DJANGO }}:latest \
-            sh -c "WSGI_PORT=3010 WSGI_MIN_THREADS=12 WSGI_THREADS=24 WSGI_BACKLOG=4096 python -m core.run_wsgi & WSGI_PORT=3011 WSGI_MIN_THREADS=12 WSGI_THREADS=24 WSGI_BACKLOG=4096 python -m core.run_wsgi & daphne -v 0 -e tcp:port=3000:interface=127.0.0.1:backlog=4096 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application & exec daphne -v 0 -e tcp:port=3001:interface=127.0.0.1:backlog=4096 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application"
+            sh -c "WSGI_PORT=3010 python -m core.run_wsgi & WSGI_PORT=3011 python -m core.run_wsgi & daphne -v 0 -e tcp:port=3000:interface=127.0.0.1:backlog=8192 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application & exec daphne -v 0 -e tcp:port=3001:interface=127.0.0.1:backlog=8192 --websocket_connect_timeout 25 --ping-interval 30 --ping-timeout 30 core.asgi:application"
           echo "⏳ Waiting for container to start..."
           sleep 8
 
@@ -896,6 +948,18 @@ jobs:
       # ── Deploy Celery Worker ───────────────────────────────────────────────
       - name: Deploy Celery worker
         run: |
+          PUBLIC_DOMAIN_VAL="${{ secrets.PUBLIC_DOMAIN }}"
+          SERVER_IP_VAL="${{ secrets.SERVER_IP }}"
+          CLIENT_URL_VAL="${{ secrets.CLIENT_URL || vars.CLIENT_URL }}"
+          if [ -z "$CLIENT_URL_VAL" ] && [ -n "$PUBLIC_DOMAIN_VAL" ]; then
+            CLIENT_URL_VAL="https://${PUBLIC_DOMAIN_VAL}"
+          fi
+          ALLOWED_HOSTS_VAL="${{ secrets.DJANGO_ALLOWED_HOSTS }}"
+          if [ -z "$ALLOWED_HOSTS_VAL" ]; then
+            ALLOWED_HOSTS_VAL="127.0.0.1,localhost"
+            [ -n "$PUBLIC_DOMAIN_VAL" ] && ALLOWED_HOSTS_VAL="${ALLOWED_HOSTS_VAL},${PUBLIC_DOMAIN_VAL}"
+            [ -n "$SERVER_IP_VAL" ] && ALLOWED_HOSTS_VAL="${ALLOWED_HOSTS_VAL},${SERVER_IP_VAL}"
+          fi
           docker stop chat_celery_worker 2>/dev/null || true
           docker rm chat_celery_worker 2>/dev/null || true
           docker run -d \
@@ -920,6 +984,11 @@ jobs:
             -e REDIS_URL='redis://127.0.0.1:6379/0' \
             -e USE_REDIS=True \
             -e CELERY_CONCURRENCY=1 \
+            -e PUBLIC_DOMAIN="$PUBLIC_DOMAIN_VAL" \
+            -e SERVER_IP="$SERVER_IP_VAL" \
+            -e CLIENT_URL="$CLIENT_URL_VAL" \
+            -e API_BASE_URL="$CLIENT_URL_VAL" \
+            -e DJANGO_ALLOWED_HOSTS="$ALLOWED_HOSTS_VAL" \
             -e EMAIL_USER='${{ secrets.EMAIL_USER }}' \
             -e EMAIL_PASS='${{ secrets.EMAIL_PASS }}' \
             -e GOOGLE_CLIENT_ID='${{ secrets.GOOGLE_CLIENT_ID }}' \
@@ -976,7 +1045,7 @@ jobs:
           echo "💾 Disk usage after deploy:"
           df -h /
           echo ""
-          echo "🏁 Deploy complete — https://chat-nikkiii.duckdns.org"
+          echo "🏁 Deploy complete"
 
       - name: Final Docker image prune
         run: docker image prune -f || true

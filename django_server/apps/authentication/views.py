@@ -1,5 +1,7 @@
+import hashlib
 import os
 from urllib.parse import quote, urlencode, urlparse
+from django.core.cache import cache
 from django.http import HttpResponseRedirect
 from django.utils import timezone
 from django.db import transaction
@@ -122,9 +124,9 @@ def _is_allowed_oauth_redirect_uri(redirect_uri: str, request) -> bool:
         return True
 
     hostname = (parsed.hostname or "").lower()
-    if parsed.scheme == "https" and (
-        hostname.endswith(".duckdns.org") or hostname == getattr(settings, "PUBLIC_DOMAIN", "").lower()
-    ):
+    raw_public = (getattr(settings, "PUBLIC_DOMAIN", "") or "").strip()
+    public_host = (urlparse(raw_public if "://" in raw_public else f"https://{raw_public}").hostname or "").lower() if raw_public else ""
+    if parsed.scheme == "https" and public_host and hostname == public_host:
         return True
     return False
 
@@ -1144,7 +1146,11 @@ class ForgotPasswordView(APIView):
         if user:
             uidb64 = urlsafe_base64_encode(force_bytes(user.pk))
             token = f"{uidb64}:{default_token_generator.make_token(user)}"
-            client_base = getattr(settings, "API_BASE_URL", "https://chat-nikkiii.duckdns.org").rstrip("/")
+            client_base = (
+                getattr(settings, "CLIENT_URL", "")
+                or getattr(settings, "API_BASE_URL", "")
+                or f"{request.scheme}://{request.get_host()}"
+            ).rstrip("/")
             reset_url = f"{client_base}/reset-password?token={quote(token)}&email={quote(user.email)}"
             try:
                 from .tasks import send_reset_password_email_task
@@ -1368,6 +1374,18 @@ class SearchUserView(APIView):
         if not query:
             return Response({"success": True, "users": []})
 
+        use_redis = str(getattr(settings, "CACHES", {}).get("default", {}).get("BACKEND", "")).endswith("RedisCache")
+        search_cache_key = None
+        if use_redis:
+            q_hash = hashlib.md5(query.lower().encode("utf-8")).hexdigest()[:16]
+            search_cache_key = f"usr_search_v1:{request.user.id}:{q_hash}"
+            try:
+                cached = cache.get(search_cache_key)
+                if cached is not None:
+                    return Response({"success": True, "users": cached})
+            except Exception:
+                pass
+
         base_qs = (
             User.objects.select_related("profile")
             .filter(is_active=True)
@@ -1414,6 +1432,12 @@ class SearchUserView(APIView):
             rel_info = rel_map.get(str(item.get("_id") or item.get("id")), {})
             item["relationship"] = rel_info.get("relationship", "none")
             item["pendingRequestId"] = rel_info.get("pendingRequestId")
+
+        if use_redis and search_cache_key:
+            try:
+                cache.set(search_cache_key, serialized_users, timeout=8)
+            except Exception:
+                pass
 
         return Response({
             "success": True,
@@ -1502,7 +1526,7 @@ class GetNotificationsView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        pending_requests = Request.objects.filter(receiver=request.user, status="pending").select_related("sender")
+        pending_requests = Request.objects.filter(receiver=request.user, status="pending").select_related("sender", "sender__profile")
         return Response({
             "success": True,
             "allRequests": FriendRequestSerializer(pending_requests, many=True).data
