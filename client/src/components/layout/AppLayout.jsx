@@ -6,7 +6,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useErrors, useSocketEvents } from '../../hooks/hook';
 import { useMyChatsQuery, useGetNotificationsQuery } from '../../redux/api/api';
 import { getSocket } from '../../socket.jsx';
-import { NEW_REQUEST, ONLINE_USERS, NEW_MESSAGE, NEW_MESSAGE_ALERT, START_TYPING, STOP_TYPING, REFETCH_CHATS, ALERT } from '../../constants/events';
+import { NEW_REQUEST, ONLINE_USERS, NEW_MESSAGE, NEW_MESSAGE_ALERT, START_TYPING, STOP_TYPING, REFETCH_CHATS, ALERT, MESSAGE_READ_UPDATE } from '../../constants/events';
 import ChatList from '../specific/ChatList';
 import Profile from '../specific/Profile';
 import Header from './Header';
@@ -19,6 +19,7 @@ import {
   isAppInBackground,
   notifyDeviceForMessage,
   requestDeviceNotificationPermission,
+  updateNativeActiveState,
 } from '../../utils/deviceNotifications';
 
 
@@ -48,6 +49,7 @@ const AppLayout = () => (WrappedComponent) => {
     const [onlineUsers, setOnlineUsers] = useState([]);
     const [newMessagesAlert, setNewMessagesAlert] = useState([]);
     const [clearedUnreadChats, setClearedUnreadChats] = useState(() => new Set());
+    const [chatSnippets, setChatSnippets] = useState({});
     const [typingChats, setTypingChats] = useState([]);
     const alertCountsRef = useRef({});
 
@@ -58,10 +60,38 @@ const AppLayout = () => (WrappedComponent) => {
       requestDeviceNotificationPermission();
     }, []);
 
+    useEffect(() => {
+      const syncAll = () => {
+        refetch();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("chitchat:sync-active-chat"));
+        }
+      };
+      const onVis = () => {
+        updateNativeActiveState({
+          inForeground: !isAppInBackground(),
+          activeChatId: chatId ? String(chatId) : "",
+        });
+        if (!document.hidden) syncAll();
+      };
+      window.addEventListener("chitchat:app-resume", syncAll);
+      window.addEventListener("online", syncAll);
+      document.addEventListener("visibilitychange", onVis);
+      return () => {
+        window.removeEventListener("chitchat:app-resume", syncAll);
+        window.removeEventListener("online", syncAll);
+        document.removeEventListener("visibilitychange", onVis);
+      };
+    }, [chatId, refetch]);
+
     // Clear unread badge & dismiss device notification immediately when entering a conversation
     useEffect(() => {
-      if (!chatId) return;
-      const cid = String(chatId);
+      const cid = chatId ? String(chatId) : "";
+      updateNativeActiveState({
+        inForeground: !isAppInBackground(),
+        activeChatId: cid,
+      });
+      if (!cid) return;
       delete alertCountsRef.current[cid];
       setNewMessagesAlert((prev) => prev.filter((a) => String(a.chatId) !== cid));
       setClearedUnreadChats((prev) => {
@@ -107,16 +137,35 @@ const AppLayout = () => (WrappedComponent) => {
 
       const myId = String(user?._id || user?.id || "");
       const senderId = String(payload.message?.sender?._id || payload.message?.sender?.id || payload.sender_id || "");
-      if (myId && senderId === myId) return;
+      const snippet = payload.message?.content || (payload.message?.attachments?.length ? "📎 Attachment" : "Sent a message");
+      const ts = payload.message?.createdAt || payload.timestamp || new Date().toISOString();
+
+      const targetChat = (data?.chats || []).find((c) => String(c._id || c.id) === targetChatId);
+      setChatSnippets((prev) => ({ ...prev, [targetChatId]: { text: snippet, updatedAt: ts } }));
+      if (!targetChat) {
+        refetch();
+      }
+
+      // Own message sent from another device (e.g. PC -> Android): update preview, clear unread badge, cancel notification
+      if (myId && senderId === myId) {
+        delete alertCountsRef.current[targetChatId];
+        setNewMessagesAlert((prev) => prev.filter((a) => String(a.chatId) !== targetChatId));
+        setClearedUnreadChats((prev) => {
+          if (prev.has(targetChatId)) return prev;
+          const next = new Set(prev);
+          next.add(targetChatId);
+          return next;
+        });
+        clearChatDeviceNotification(targetChatId);
+        return;
+      }
 
       const inBackground = isAppInBackground();
       const isViewingThisChatInForeground = !inBackground && String(chatId || "") === targetChatId;
       if (isViewingThisChatInForeground) return;
 
-      const targetChat = (data?.chats || []).find((c) => String(c._id || c.id) === targetChatId);
       const baseServerUnread = clearedUnreadChats.has(targetChatId) ? 0 : Number(targetChat?.unreadCount || 0);
       const senderName = payload.message?.sender?.name || payload.sender_name || targetChat?.name || "New message";
-      const snippet = payload.message?.content || (payload.message?.attachments?.length ? "📎 Attachment" : "Sent a message");
 
       setClearedUnreadChats((prev) => {
         if (!prev.has(targetChatId)) return prev;
@@ -151,7 +200,32 @@ const AppLayout = () => (WrappedComponent) => {
         count: nextCount,
         isMuted: Boolean(targetChat?.isMuted),
       });
-    }, [chatId, clearedUnreadChats, data?.chats, user]);
+    }, [chatId, clearedUnreadChats, data?.chats, refetch, user]);
+
+    const syncReadFromOtherDeviceListener = useCallback((payload) => {
+      if (!payload) return;
+      const cid = String(payload.chatId || payload.conversation_id || "");
+      const readBy = String(payload.readBy || "");
+      const myId = String(user?._id || user?.id || "");
+      if (!cid || !myId || readBy !== myId) return;
+
+      delete alertCountsRef.current[cid];
+      setNewMessagesAlert((prev) => prev.filter((a) => String(a.chatId) !== cid));
+      setClearedUnreadChats((prev) => {
+        if (prev.has(cid)) return prev;
+        const next = new Set(prev);
+        next.add(cid);
+        return next;
+      });
+      clearChatDeviceNotification(cid);
+    }, [user]);
+
+    const reconnectSyncHandler = useCallback(() => {
+      refetch();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("chitchat:sync-active-chat"));
+      }
+    }, [refetch]);
 
     const startTypingListener = useCallback((data) => {
       if (!data?.chatId) return;
@@ -176,10 +250,16 @@ const AppLayout = () => (WrappedComponent) => {
       "user.online": onlineUsersListener,
       "user.offline": onlineUsersListener,
       [NEW_MESSAGE]: newMessageAlertListener,
+      "message.created": newMessageAlertListener,
+      [MESSAGE_READ_UPDATE]: syncReadFromOtherDeviceListener,
+      "message.read": syncReadFromOtherDeviceListener,
       [START_TYPING]: startTypingListener,
       [STOP_TYPING]: stopTypingListener,
       [REFETCH_CHATS]: refetch,
-    }), [newRequestHandler, onlineUsersListener, newMessageAlertListener, startTypingListener, stopTypingListener, refetch]);
+      "chat.created": refetch,
+      "chat.member_updated": refetch,
+      "connect": reconnectSyncHandler,
+    }), [newRequestHandler, onlineUsersListener, newMessageAlertListener, syncReadFromOtherDeviceListener, startTypingListener, stopTypingListener, refetch, reconnectSyncHandler]);
 
     useSocketEvents(socket, eventHandlers);
     const deleteMenuAnchor = useRef(null);
@@ -203,9 +283,10 @@ const AppLayout = () => (WrappedComponent) => {
 
     const chatsWithUnread = useMemo(() => {
       const alertMap = new Map(newMessagesAlert.map((a) => [String(a.chatId), a]));
-      return (data?.chats || []).map((c) => {
+      const mapped = (data?.chats || []).map((c) => {
         const cid = String(c._id || c.id);
         const liveAlert = alertMap.get(cid);
+        const snippetPatch = chatSnippets[cid];
         const effectiveUnread =
           chatId && String(chatId) === cid
             ? 0
@@ -217,10 +298,15 @@ const AppLayout = () => (WrappedComponent) => {
         return {
           ...c,
           unreadCount: effectiveUnread,
-          lastMessage: liveAlert?.message?.content || c.lastMessage,
+          lastMessage: snippetPatch?.text || liveAlert?.message?.content || c.lastMessage,
+          updatedAt: snippetPatch?.updatedAt || c.updatedAt,
         };
       });
-    }, [chatId, clearedUnreadChats, data?.chats, newMessagesAlert]);
+      return mapped.sort((a, b) => {
+        if (Boolean(a.isPinned) !== Boolean(b.isPinned)) return a.isPinned ? -1 : 1;
+        return new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime();
+      });
+    }, [chatId, chatSnippets, clearedUnreadChats, data?.chats, newMessagesAlert]);
 
     const totalUnreadCount = useMemo(
       () => chatsWithUnread.reduce((sum, c) => sum + (c.isArchived ? 0 : Number(c.unreadCount || 0)), 0),

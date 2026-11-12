@@ -24,8 +24,10 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import axios from "axios";
 import React, { useCallback, useMemo, useRef, useState, useEffect, lazy, Suspense } from "react";
 import toast from "react-hot-toast";
+import { server } from "../constants/config";
 import FileMenu from "../components/dialogs/FileMenu";
 import TypingIndicator from "../components/specific/TypingIndicator";
 import VoiceRecorder from "../components/specific/VoiceRecorder";
@@ -795,16 +797,82 @@ const Chat = ({ chatId, user }) => {
   );
 
   const messageEditedHandler = useCallback((data) => {
-    const patch = (m) => (m._id === data.messageId ? { ...m, content: data.content, isEdited: true } : m);
+    const targetChatId = data?.chatId || data?.conversation_id;
+    if (targetChatId && String(targetChatId) !== String(chatId)) return;
+    const targetId = String(data?.messageId || data?.message_id || "");
+    if (!targetId) return;
+    const patch = (m) => (String(m._id) === targetId ? { ...m, content: data.content, isEdited: true } : m);
     setMessages((prev) => prev.map(patch));
     setOldMessages((prev) => prev.map(patch));
-  }, []);
+  }, [chatId]);
 
   const messageDeletedHandler = useCallback((data) => {
-    const patch = (m) => (m._id === data.messageId ? { ...m, isDeleted: true, content: "" } : m);
+    const targetChatId = data?.chatId || data?.conversation_id;
+    if (targetChatId && String(targetChatId) !== String(chatId)) return;
+    const targetId = String(data?.messageId || data?.message_id || "");
+    if (!targetId) return;
+    const patch = (m) => (String(m._id) === targetId ? { ...m, isDeleted: true, content: "" } : m);
     setMessages((prev) => prev.map(patch));
     setOldMessages((prev) => prev.map(patch));
-  }, []);
+  }, [chatId]);
+
+  const messageDeletedForMeHandler = useCallback((data) => {
+    const targetChatId = data?.chatId || data?.conversation_id;
+    if (targetChatId && String(targetChatId) !== String(chatId)) return;
+    const targetId = String(data?.messageId || data?.message_id || "");
+    if (!targetId) return;
+    setMessages((prev) => prev.filter((m) => String(m._id) !== targetId));
+    setOldMessages((prev) => prev.filter((m) => String(m._id) !== targetId));
+  }, [chatId]);
+
+  const syncActiveConversation = useCallback(async () => {
+    if (!chatId) return;
+    chatDetails.refetch();
+    try {
+      const base = server || (typeof window !== "undefined" ? window.location.origin : "");
+      const { data } = await axios.get(`${base}/api/v1/chat/message/${chatId}?page=1`, {
+        withCredentials: true,
+      });
+      const latest = Array.isArray(data?.messages) ? data.messages : null;
+      if (!latest) return;
+
+      if (page === 1) {
+        setOldMessages(latest);
+        const latestIds = new Set(latest.map((m) => String(m._id || m.id)));
+        setMessages((prev) => prev.filter((m) => !latestIds.has(String(m._id || m.id))));
+      } else {
+        const latestMap = new Map(latest.map((m) => [String(m._id || m.id), m]));
+        setOldMessages((prev) => {
+          const oldIds = new Set(prev.map((m) => String(m._id || m.id)));
+          const updatedOld = prev.map((m) => latestMap.get(String(m._id || m.id)) || m);
+          setMessages((curMsgs) => {
+            const msgIds = new Set(curMsgs.map((m) => String(m._id || m.id)));
+            const merged = curMsgs.map((m) => latestMap.get(String(m._id || m.id)) || m);
+            const additions = latest
+              .filter((m) => {
+                const id = String(m._id || m.id);
+                return !oldIds.has(id) && !msgIds.has(id);
+              })
+              .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+            return additions.length ? [...merged, ...additions] : merged;
+          });
+          return updatedOld;
+        });
+      }
+    } catch {
+      oldMessageChunk.refetch();
+    }
+  }, [chatId, chatDetails, oldMessageChunk, page]);
+
+  useEffect(() => {
+    const onSync = () => syncActiveConversation();
+    window.addEventListener("chitchat:sync-active-chat", onSync);
+    window.addEventListener("online", onSync);
+    return () => {
+      window.removeEventListener("chitchat:sync-active-chat", onSync);
+      window.removeEventListener("online", onSync);
+    };
+  }, [syncActiveConversation]);
 
   const handleLocalEdit = useCallback((messageId, newContent) => {
     const patch = (m) => (m._id === messageId ? { ...m, content: newContent, isEdited: true } : m);
@@ -896,15 +964,21 @@ const Chat = ({ chatId, user }) => {
 
   useSocketEvents(socket, {
     [NEW_MESSAGE]: newMessagesHandler,
+    "message.created": newMessagesHandler,
     [START_TYPING]: startTypingListener,
     [STOP_TYPING]: stopTypingListener,
     [MESSAGE_EDITED]: messageEditedHandler,
+    "message.updated": messageEditedHandler,
     [MESSAGE_DELETED]: messageDeletedHandler,
+    "message.deleted": messageDeletedHandler,
+    "message.deleted_for_me": messageDeletedForMeHandler,
     MESSAGE_REACTED: messageReactedHandler,
     "message.reaction": messageReactedHandler,
     MESSAGE_POLL_UPDATED: pollUpdatedHandler,
     "message.poll_updated": pollUpdatedHandler,
     [MESSAGE_READ_UPDATE]: messageReadUpdateHandler,
+    "message.read": messageReadUpdateHandler,
+    "connect": syncActiveConversation,
   });
 
   const allMessages = useMemo(() => {

@@ -137,11 +137,24 @@ class CreateDirectChatView(APIView):
             member_records__user=request.user
         ).filter(member_records__user=other_user).first()
 
+        created_new = False
         if not conv:
+            created_new = True
             with transaction.atomic():
                 conv = Conversation.objects.create(type="direct", creator=request.user)
                 ConversationMember.objects.create(conversation=conv, user=request.user, role="member")
                 ConversationMember.objects.create(conversation=conv, user=other_user, role="member")
+                outbox_entry = OutboxService.create_outbox_event(
+                    event_type="chat.created",
+                    conversation_id="",
+                    payload={
+                        "event": "chat.created",
+                        "legacy_event": "REFETCH_CHATS",
+                        "chatId": str(conv.id),
+                        "recipient_ids": [str(request.user.id), str(other_user.id)],
+                    },
+                )
+            OutboxService.publish_item(outbox_entry)
 
         return Response({
             "success": True,
@@ -394,6 +407,20 @@ class LeaveGroupView(APIView):
         return Response({"success": True, "message": "Left group."})
 
 
+def _emit_member_sync(user_id, chat_id):
+    entry = OutboxService.create_outbox_event(
+        event_type="chat.member_updated",
+        conversation_id="",
+        payload={
+            "event": "chat.member_updated",
+            "legacy_event": "REFETCH_CHATS",
+            "chatId": str(chat_id),
+            "recipient_ids": [str(user_id)],
+        },
+    )
+    OutboxService.publish_item(entry)
+
+
 class TogglePinConversationView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -401,6 +428,7 @@ class TogglePinConversationView(APIView):
         mem = get_object_or_404(ConversationMember, conversation_id=id, user=request.user)
         mem.is_pinned = not mem.is_pinned
         mem.save(update_fields=["is_pinned"])
+        _emit_member_sync(request.user.id, id)
         return Response({"success": True, "isPinned": mem.is_pinned})
 
 
@@ -411,6 +439,7 @@ class ToggleMuteConversationView(APIView):
         mem = get_object_or_404(ConversationMember, conversation_id=id, user=request.user)
         mem.is_muted = not mem.is_muted
         mem.save(update_fields=["is_muted"])
+        _emit_member_sync(request.user.id, id)
         return Response({"success": True, "isMuted": mem.is_muted})
 
 
@@ -421,6 +450,7 @@ class ToggleArchiveConversationView(APIView):
         mem = get_object_or_404(ConversationMember, conversation_id=id, user=request.user)
         mem.is_archived = not mem.is_archived
         mem.save(update_fields=["is_archived"])
+        _emit_member_sync(request.user.id, id)
         return Response({"success": True, "isArchived": mem.is_archived})
 
 

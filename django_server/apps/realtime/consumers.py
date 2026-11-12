@@ -85,6 +85,16 @@ def get_user_conversation_ids(user):
 
 
 @db_async
+def clear_member_unread_count(user, chat_id):
+    try:
+        ConversationMember.objects.filter(
+            conversation_id=chat_id, user=user, unread_count__gt=0
+        ).update(unread_count=0)
+    except Exception:
+        pass
+
+
+@db_async
 def verify_conversation_membership(user, conversation_id):
     if not conversation_id:
         return False
@@ -440,6 +450,21 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 await record_read_receipt(self.user, message_ids, chat_id)
                 await self.channel_layer.group_send(
                     f"chat_{chat_id}",
+                    {
+                        "type": "chat.event",
+                        "event": "message.read",
+                        "event_legacy": "MESSAGE_READ_UPDATE",
+                        "data": {
+                            "chatId": chat_id,
+                            "messageIds": message_ids,
+                            "readBy": str(self.user.id),
+                        }
+                    }
+                )
+            else:
+                await clear_member_unread_count(self.user, chat_id)
+                await self.channel_layer.group_send(
+                    self.user_group,
                     {
                         "type": "chat.event",
                         "event": "message.read",

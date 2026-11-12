@@ -127,3 +127,24 @@ class RichFeaturesTestCase(APITestCase):
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
         self.assertTrue(res.data["status"]["media_url"].startswith("/api/v1/media/statuses/"))
 
+    def test_cross_device_sync_outbox_events(self):
+        from apps.outbox.models import MessageOutbox
+
+        msg = Message.objects.create(conversation=self.conv, sender=self.alice, content="Initial")
+        edit_res = self.client.patch(f"/api/v1/message/{msg.id}", {"content": "Updated"}, format="json")
+        self.assertEqual(edit_res.status_code, status.HTTP_200_OK)
+        edited_evt = MessageOutbox.objects.filter(event_type="message.updated").latest("created_at")
+        self.assertEqual(edited_evt.payload.get("legacy_event"), "MESSAGE_EDITED")
+        self.assertEqual(edited_evt.payload.get("messageId"), str(msg.id))
+
+        del_me_res = self.client.post(f"/api/v1/message/{msg.id}/delete-for-me")
+        self.assertEqual(del_me_res.status_code, status.HTTP_200_OK)
+        del_me_evt = MessageOutbox.objects.filter(event_type="message.deleted_for_me").latest("created_at")
+        self.assertEqual(del_me_evt.payload.get("recipient_ids"), [str(self.alice.id)])
+
+        pin_res = self.client.post(f"/api/v1/chat/pin/{self.conv.id}")
+        self.assertEqual(pin_res.status_code, status.HTTP_200_OK)
+        pin_evt = MessageOutbox.objects.filter(event_type="chat.member_updated").latest("created_at")
+        self.assertEqual(pin_evt.payload.get("legacy_event"), "REFETCH_CHATS")
+
+

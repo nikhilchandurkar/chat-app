@@ -224,9 +224,24 @@ class GetMessagesView(APIView):
             total_pages = max(1, (total_count + limit - 1) // limit)
 
         # Only issue write UPDATE if unread_count is actually > 0
-        ConversationMember.objects.filter(
+        updated_unread = ConversationMember.objects.filter(
             conversation=conversation, user=request.user, unread_count__gt=0
         ).update(unread_count=0)
+        if updated_unread:
+            outbox_entry = OutboxService.create_outbox_event(
+                event_type="message.read",
+                conversation_id="",
+                payload={
+                    "event": "message.read",
+                    "legacy_event": "MESSAGE_READ_UPDATE",
+                    "chatId": str(conversation.id),
+                    "conversation_id": str(conversation.id),
+                    "messageIds": [],
+                    "readBy": str(request.user.id),
+                    "recipient_ids": [str(request.user.id)],
+                },
+            )
+            OutboxService.publish_item(outbox_entry)
 
         return Response({
             "success": True,
@@ -268,8 +283,11 @@ class EditMessageView(APIView):
                 conversation_id=str(message.conversation_id),
                 payload={
                     "event": "message.updated",
+                    "legacy_event": "MESSAGE_EDITED",
                     "conversation_id": str(message.conversation_id),
+                    "chatId": str(message.conversation_id),
                     "message_id": str(message.id),
+                    "messageId": str(message.id),
                     "content": new_content,
                     "isEdited": True,
                     "recipient_ids": recipient_ids,
@@ -303,8 +321,11 @@ class DeleteMessageView(APIView):
                 conversation_id=str(message.conversation_id),
                 payload={
                     "event": "message.deleted",
+                    "legacy_event": "MESSAGE_DELETED",
                     "conversation_id": str(message.conversation_id),
+                    "chatId": str(message.conversation_id),
                     "message_id": str(message.id),
+                    "messageId": str(message.id),
                     "recipient_ids": recipient_ids,
                 }
             )
@@ -324,6 +345,20 @@ class DeleteMessageForMeView(APIView):
             return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
         DeletedMessageForUser.objects.get_or_create(user=request.user, message=message)
+        # Sync "Delete for me" across all active devices logged in as this user
+        outbox_entry = OutboxService.create_outbox_event(
+            event_type="message.deleted_for_me",
+            conversation_id="",
+            payload={
+                "event": "message.deleted_for_me",
+                "conversation_id": str(message.conversation_id),
+                "chatId": str(message.conversation_id),
+                "message_id": str(message.id),
+                "messageId": str(message.id),
+                "recipient_ids": [str(request.user.id)],
+            },
+        )
+        OutboxService.publish_item(outbox_entry)
         return Response({"success": True, "message": "Message deleted for you."})
 
     def delete(self, request, id):

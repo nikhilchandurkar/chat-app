@@ -1,11 +1,13 @@
 package com.nikhil.chatapp;
 
 import android.Manifest;
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Build;
 
 import androidx.core.app.NotificationCompat;
@@ -28,6 +30,22 @@ import com.getcapacitor.annotation.PermissionCallback;
 public class DeviceNotifyPlugin extends Plugin {
 
     private static final String CHANNEL_ID = "chitchat_messages";
+    private static volatile DeviceNotifyPlugin activeInstance = null;
+    private static volatile String pendingLaunchChatId = "";
+
+    public static void handleNotificationIntent(Intent intent) {
+        if (intent == null) return;
+        String chatId = intent.getStringExtra("chatId");
+        if (chatId != null && !chatId.isEmpty()) {
+            pendingLaunchChatId = chatId;
+            DeviceNotifyPlugin inst = activeInstance;
+            if (inst != null) {
+                JSObject payload = new JSObject();
+                payload.put("chatId", chatId);
+                inst.notifyListeners("notificationOpen", payload);
+            }
+        }
+    }
 
     private void ensureChannel(NotificationManager nm) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && nm != null) {
@@ -40,6 +58,7 @@ public class DeviceNotifyPlugin extends Plugin {
                 );
                 channel.setDescription("Incoming message alerts");
                 channel.enableVibration(true);
+                channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
                 nm.createNotificationChannel(channel);
             }
         }
@@ -47,8 +66,17 @@ public class DeviceNotifyPlugin extends Plugin {
 
     @Override
     public void load() {
+        activeInstance = this;
         NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
         ensureChannel(nm);
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (activeInstance == this) {
+            activeInstance = null;
+        }
+        super.handleOnDestroy();
     }
 
     @PluginMethod
@@ -66,6 +94,69 @@ public class DeviceNotifyPlugin extends Plugin {
     private void notificationsPermsCallback(PluginCall call) {
         JSObject ret = new JSObject();
         ret.put("granted", getPermissionState("notifications") == PermissionState.GRANTED);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void startBackgroundSync(PluginCall call) {
+        String serverUrl = call.getString("serverUrl", "");
+        String token = call.getString("token", "");
+        String userId = call.getString("userId", "");
+        if (serverUrl == null || serverUrl.isEmpty() || token == null || token.isEmpty()) {
+            JSObject ret = new JSObject();
+            ret.put("started", false);
+            call.resolve(ret);
+            return;
+        }
+
+        Context ctx = getContext();
+        SharedPreferences prefs = ctx.getSharedPreferences(ChatPushService.PREFS_NAME, Context.MODE_PRIVATE);
+        prefs.edit()
+            .putString(ChatPushService.KEY_SERVER_URL, serverUrl)
+            .putString(ChatPushService.KEY_TOKEN, token)
+            .putString(ChatPushService.KEY_USER_ID, userId != null ? userId : "")
+            .apply();
+
+        Intent serviceIntent = new Intent(ctx, ChatPushService.class);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            ctx.startForegroundService(serviceIntent);
+        } else {
+            ctx.startService(serviceIntent);
+        }
+
+        JSObject ret = new JSObject();
+        ret.put("started", true);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void stopBackgroundSync(PluginCall call) {
+        Context ctx = getContext();
+        SharedPreferences prefs = ctx.getSharedPreferences(ChatPushService.PREFS_NAME, Context.MODE_PRIVATE);
+        prefs.edit().clear().apply();
+        ctx.stopService(new Intent(ctx, ChatPushService.class));
+        ChatPushService.clearAll(ctx);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void setActiveState(PluginCall call) {
+        boolean inForeground = Boolean.TRUE.equals(call.getBoolean("inForeground", true));
+        String activeChatId = call.getString("activeChatId", "");
+        ChatPushService.isUiInForeground = inForeground;
+        ChatPushService.activeUiChatId = activeChatId != null ? activeChatId : "";
+        if (inForeground && activeChatId != null && !activeChatId.isEmpty()) {
+            ChatPushService.clearChat(getContext(), activeChatId);
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getLaunchChatId(PluginCall call) {
+        String cid = pendingLaunchChatId != null ? pendingLaunchChatId : "";
+        pendingLaunchChatId = "";
+        JSObject ret = new JSObject();
+        ret.put("chatId", cid);
         call.resolve(ret);
     }
 
@@ -100,7 +191,7 @@ public class DeviceNotifyPlugin extends Plugin {
             openIntent.putExtra("chatId", chatId);
         }
 
-        int notifId = (chatId != null ? chatId.hashCode() : 1001) & 0x7fffffff;
+        int notifId = ChatPushService.notifIdForChat(chatId);
         PendingIntent pendingIntent = PendingIntent.getActivity(
             ctx,
             notifId,
@@ -115,6 +206,8 @@ public class DeviceNotifyPlugin extends Plugin {
             .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
             .setNumber(Math.max(1, count))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setOnlyAlertOnce(count > 1)
             .setContentIntent(pendingIntent);
@@ -129,12 +222,7 @@ public class DeviceNotifyPlugin extends Plugin {
     @PluginMethod
     public void cancelChatNotification(PluginCall call) {
         String chatId = call.getString("chatId", "");
-        NotificationManager nm = (NotificationManager) getContext().getSystemService(Context.NOTIFICATION_SERVICE);
-        if (nm != null && chatId != null && !chatId.isEmpty()) {
-            int notifId = chatId.hashCode() & 0x7fffffff;
-            nm.cancel(notifId);
-        }
+        ChatPushService.clearChat(getContext(), chatId);
         call.resolve();
     }
 }
-

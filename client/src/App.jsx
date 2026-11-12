@@ -27,6 +27,12 @@ import {
 } from "./utils/feedback";
 import { syncScreenPrivacy } from "./utils/screenPrivacy";
 import {
+  addNotificationOpenListener,
+  configureNativePushSync,
+  getLaunchNotificationChatId,
+  stopNativePushSync,
+} from "./utils/deviceNotifications";
+import {
   APP_LOCK_EVENT,
   canUseNativeBiometricUnlock,
   isAppLockEnabled,
@@ -198,10 +204,23 @@ const CapacitorDeepLinkHandler = () => {
       })
       .catch(() => {});
 
+    const openChatFromNotification = (cid) => {
+      if (!cid || cancelled) return;
+      dispatch(setActiveChatId(cid));
+      dispatch(setIsMobile(false));
+      if (backStateRef.current.pathname !== "/") {
+        navigate("/", { replace: true });
+      }
+    };
+
+    getLaunchNotificationChatId().then(openChatFromNotification).catch(() => {});
+    const removeNotifOpenListener = addNotificationOpenListener(openChatFromNotification);
+
     return () => {
       cancelled = true;
       if (urlHandle) urlHandle.remove();
       if (backHandle) backHandle.remove();
+      removeNotifOpenListener();
     };
   }, [dispatch, navigate]);
 
@@ -266,6 +285,22 @@ const App = () => {
 
   // Privacy Shield: blur app switcher / hidden tab & deter Web PrintScreen captures
   useEffect(() => {
+    const uid = user?._id || user?.id;
+    if (uid) {
+      const token =
+        localStorage.getItem("chitChat-Token") ||
+        localStorage.getItem("access_token") ||
+        "";
+      const resolvedServer = server || (typeof window !== "undefined" ? window.location.origin : "");
+      if (token && resolvedServer) {
+        configureNativePushSync({ serverUrl: resolvedServer, token, userId: String(uid) });
+      }
+    } else if (!loader) {
+      stopNativePushSync();
+    }
+  }, [user, loader]);
+
+  useEffect(() => {
     const onVisibility = () => {
       if (isPrivacyBlurEnabled()) {
         setPrivacyShielded(document.hidden);
@@ -274,6 +309,9 @@ const App = () => {
       }
       if (document.hidden && isAppLockEnabled()) {
         setAppLocked(true);
+      }
+      if (!document.hidden) {
+        window.dispatchEvent(new Event("chitchat:app-resume"));
       }
     };
     const onAppLockChange = () => {
@@ -301,6 +339,9 @@ const App = () => {
         }
         if (!isActive && isAppLockEnabled()) {
           setAppLocked(true);
+        }
+        if (isActive && !cancelled) {
+          window.dispatchEvent(new Event("chitchat:app-resume"));
         }
       })
         .then((h) => {

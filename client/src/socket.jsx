@@ -22,9 +22,31 @@ class NativeChatWebSocket {
     this.ws = null;
     this.handlers = new Map();
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 20;
+    this.reconnectTimer = null;
     this.pingInterval = null;
     this.isClosedManually = false;
+    this._onWake = () => {
+      if (this.isClosedManually) return;
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (!this.ws || this.ws.readyState === WebSocket.CLOSED || this.ws.readyState === WebSocket.CLOSING) {
+        this.reconnectAttempts = 0;
+        this.connect();
+      } else if (this.ws.readyState === WebSocket.OPEN) {
+        try {
+          this.ws.send(JSON.stringify({ type: "ping" }));
+        } catch {
+          this.reconnectAttempts = 0;
+          this.connect();
+        }
+      }
+    };
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", this._onWake);
+      window.addEventListener("chitchat:app-resume", this._onWake);
+    }
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this._onWake);
+    }
     this.connect();
   }
 
@@ -135,12 +157,15 @@ class NativeChatWebSocket {
   }
 
   scheduleReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      return;
+    if (this.isClosedManually) return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
     }
-    const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 15000);
+    const exp = Math.min(this.reconnectAttempts, 10);
+    const delay = Math.min(1000 * Math.pow(1.4, exp), 15000);
     this.reconnectAttempts++;
-    setTimeout(() => {
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
       this.connect();
     }, delay);
   }
@@ -193,6 +218,17 @@ class NativeChatWebSocket {
 
   close() {
     this.isClosedManually = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (typeof window !== "undefined" && this._onWake) {
+      window.removeEventListener("online", this._onWake);
+      window.removeEventListener("chitchat:app-resume", this._onWake);
+    }
+    if (typeof document !== "undefined" && this._onWake) {
+      document.removeEventListener("visibilitychange", this._onWake);
+    }
     this.stopHeartbeat();
     if (this.ws) {
       const socket = this.ws;
