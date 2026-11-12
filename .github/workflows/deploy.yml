@@ -88,13 +88,13 @@ jobs:
           cache: pip
           cache-dependency-path: django_server/requirements.txt
 
-      - name: Install system libraries for MySQL
-        run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev pkg-config gcc
-
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          if ! pip install -r requirements.txt; then
+            sudo apt-get update -qq && sudo apt-get install -y default-libmysqlclient-dev pkg-config gcc
+            pip install -r requirements.txt
+          fi
 
       - name: Validate all .py files parse correctly
         run: |
@@ -271,15 +271,15 @@ jobs:
           cache: pip
           cache-dependency-path: django_server/requirements.txt
 
-      - name: Install system libraries for MySQL
-        run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev pkg-config gcc
-
       - name: Install pip-audit
         run: pip install pip-audit
 
       - name: pip-audit — CVE check on all dependencies
         run: |
-          pip install -r requirements.txt
+          if ! pip install -r requirements.txt; then
+            sudo apt-get update -qq && sudo apt-get install -y default-libmysqlclient-dev pkg-config gcc
+            pip install -r requirements.txt
+          fi
           pip-audit --requirement requirements.txt \
             --format json \
             --output pip-audit-report.json || true
@@ -376,13 +376,13 @@ jobs:
           cache: pip
           cache-dependency-path: django_server/requirements.txt
 
-      - name: Install system libraries for MySQL
-        run: sudo apt-get update && sudo apt-get install -y default-libmysqlclient-dev pkg-config gcc
-
       - name: Install all dependencies (including test)
         run: |
           pip install --upgrade pip
-          pip install -r requirements.txt
+          if ! pip install -r requirements.txt; then
+            sudo apt-get update -qq && sudo apt-get install -y default-libmysqlclient-dev pkg-config gcc
+            pip install -r requirements.txt
+          fi
           pip install pytest pytest-django pytest-asyncio pytest-cov factory-boy faker channels[daphne]
 
       - name: Run pytest with coverage
