@@ -929,7 +929,63 @@ class PublicUserProfileView(APIView):
                 "pendingRequestId": pending_request_id,
                 "directChatId": str(direct_conv.id) if direct_conv else None,
                 "sharedGroups": shared_groups,
+                "e2eePublicKey": (target.privacy or {}).get("e2ee_public_key"),
+                "e2eeFingerprint": (target.privacy or {}).get("e2ee_fingerprint"),
             },
+        })
+
+
+class E2EEKeyView(APIView):
+    """Publishes or retrieves public ECDH (P-256) JWK keys for client-side E2EE. Private keys never touch the server."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, user_id=None):
+        if user_id:
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            try:
+                target = User.objects.filter(id=user_id, is_active=True).first()
+            except (ValueError, DjangoValidationError):
+                target = None
+            if not target:
+                return Response({"success": False, "message": "User not found."}, status=status.HTTP_404_NOT_FOUND)
+        else:
+            target = request.user
+
+        priv = dict(target.privacy or {})
+        return Response({
+            "success": True,
+            "userId": str(target.id),
+            "publicKey": priv.get("e2ee_public_key"),
+            "fingerprint": priv.get("e2ee_fingerprint", ""),
+            "updatedAt": priv.get("e2ee_updated_at"),
+        })
+
+    def put(self, request):
+        jwk = request.data.get("publicKey")
+        fingerprint = str(request.data.get("fingerprint", "")).strip()[:128]
+        if not isinstance(jwk, dict) or jwk.get("kty") != "EC" or jwk.get("crv") != "P-256" or not jwk.get("x") or not jwk.get("y"):
+            return Response({"success": False, "message": "Valid ECDH P-256 public JWK is required."}, status=status.HTTP_400_BAD_REQUEST)
+        if "d" in jwk:
+            return Response({"success": False, "message": "Private key material ('d') must never be uploaded."}, status=status.HTTP_400_BAD_REQUEST)
+
+        clean_jwk = {
+            "kty": "EC",
+            "crv": "P-256",
+            "x": str(jwk["x"]),
+            "y": str(jwk["y"]),
+            "ext": True,
+        }
+        user_priv = dict(request.user.privacy or {})
+        user_priv["e2ee_public_key"] = clean_jwk
+        user_priv["e2ee_fingerprint"] = fingerprint
+        user_priv["e2ee_updated_at"] = timezone.now().isoformat()
+        request.user.privacy = user_priv
+        request.user.save(update_fields=["privacy"])
+        return Response({
+            "success": True,
+            "publicKey": clean_jwk,
+            "fingerprint": fingerprint,
+            "updatedAt": user_priv["e2ee_updated_at"],
         })
 
 

@@ -1,5 +1,10 @@
 import React, { memo } from "react";
-import { Box, Stack, Typography, useTheme } from "@mui/material";
+import { Box, IconButton, Stack, Typography, useTheme } from "@mui/material";
+import {
+  MoreVert as MoreIcon,
+  NotificationsOff as MutedIcon,
+  PushPin as PinIcon,
+} from "@mui/icons-material";
 import AvatarCard from "./AvatarCard";
 import { useDispatch } from "react-redux";
 import { setActiveChatId, setIsMobile } from "../../redux/reducers/misc";
@@ -10,6 +15,9 @@ const ChatItem = ({
   name,
   _id,
   groupChat = false,
+  isPinned = false,
+  isMuted = false,
+  isArchived = false,
   sameSender,
   isOnline,
   isTyping,
@@ -27,10 +35,15 @@ const ChatItem = ({
     dispatch(setIsMobile(false));
   };
 
+  const openChatOptions = (e) => {
+    e.stopPropagation();
+    handleDeleteChat?.(e, _id, groupChat, { isPinned, isMuted, isArchived });
+  };
+
   return (
     <Box
       onClick={handleClick}
-      onContextMenu={(e) => handleDeleteChat?.(e, _id, groupChat)}
+      onContextMenu={openChatOptions}
       sx={{
         cursor: "pointer",
         display: "flex",
@@ -39,8 +52,8 @@ const ChatItem = ({
         bgcolor: sameSender ? "primary.main" : "transparent",
         color: sameSender ? "#ffffff" : "text.primary",
         position: "relative",
-        px: 2,
-        py: 1.5,
+        px: 1.75,
+        py: 1.35,
         borderBottom: `1px solid ${theme.palette.divider}`,
         transition: "background-color 0.16s ease",
         WebkitTapHighlightColor: "transparent",
@@ -66,14 +79,18 @@ const ChatItem = ({
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: Math.min(0.25, 0.03 * index), duration: 0.22 }}
-        style={{ display: "flex", alignItems: "center", gap: "12px", width: "100%", minWidth: 0 }}
+        style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", minWidth: 0 }}
       >
         <AvatarCard avatar={avatar} name={name} />
 
         <Stack flex={1} minWidth={0}>
-          <Typography fontWeight={sameSender ? 600 : 500} noWrap>
-            {name}
-          </Typography>
+          <Stack direction="row" alignItems="center" spacing={0.5} minWidth={0}>
+            <Typography fontWeight={sameSender ? 600 : 500} noWrap sx={{ flex: 1 }}>
+              {name}
+            </Typography>
+            {isPinned && <PinIcon sx={{ fontSize: 13, opacity: 0.8, flexShrink: 0 }} />}
+            {isMuted && <MutedIcon sx={{ fontSize: 13, opacity: 0.8, flexShrink: 0 }} />}
+          </Stack>
           <Stack direction="row" alignItems="center" gap="0.5rem" minWidth={0}>
             {isTyping ? (
               <Typography variant="caption" sx={{ color: sameSender ? "#d1fae5" : "#48bb78", fontStyle: "italic", fontWeight: 600 }}>
@@ -116,14 +133,29 @@ const ChatItem = ({
         {isOnline && !groupChat && (
           <Box
             sx={{
-              width: "10px",
-              height: "10px",
+              width: "9px",
+              height: "9px",
               borderRadius: "50%",
               flexShrink: 0,
               backgroundColor: sameSender ? "#A7F3D0" : "#48bb78",
               boxShadow: "0 0 8px rgba(72, 187, 120, 0.6)",
             }}
           />
+        )}
+
+        {handleDeleteChat && (
+          <IconButton
+            size="small"
+            aria-label={`Options for ${name}`}
+            onClick={openChatOptions}
+            sx={{
+              p: 0.4,
+              color: sameSender ? "rgba(255,255,255,0.85)" : "text.secondary",
+              flexShrink: 0,
+            }}
+          >
+            <MoreIcon sx={{ fontSize: 18 }} />
+          </IconButton>
         )}
       </motion.div>
     </Box>

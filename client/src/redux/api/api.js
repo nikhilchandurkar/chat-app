@@ -15,7 +15,7 @@ const api = createApi({
       return headers;
     },
   }),
-  tagTypes: ["Chat", "User", "Message"],
+  tagTypes: ["Chat", "User", "Message", "Starred", "Status"],
 
   endpoints: (builder) => ({
     myChats: builder.query({
@@ -406,6 +406,214 @@ const api = createApi({
       }),
       invalidatesTags: ["Chat"],
     }),
+
+    deleteMessageForMe: builder.mutation({
+      query: (messageId) => ({
+        url: `message/${messageId}/delete-for-me`,
+        method: "POST",
+        credentials: "include",
+      }),
+    }),
+
+    createPoll: builder.mutation({
+      query: (data) => ({
+        url: "message/poll/create",
+        method: "POST",
+        credentials: "include",
+        body: data,
+      }),
+    }),
+
+    votePoll: builder.mutation({
+      query: ({ messageId, optionId }) => ({
+        url: `message/poll/${messageId}/vote`,
+        method: "POST",
+        credentials: "include",
+        body: { optionId },
+      }),
+    }),
+
+    getMessageReceipts: builder.query({
+      query: (messageId) => ({
+        url: `message/${messageId}/receipts`,
+        credentials: "include",
+      }),
+      keepUnusedDataFor: 0,
+    }),
+
+    togglePinChat: builder.mutation({
+      query: (chatId) => ({
+        url: `chat/pin/${chatId}`,
+        method: "POST",
+        credentials: "include",
+      }),
+      invalidatesTags: ["Chat"],
+    }),
+
+    toggleMuteChat: builder.mutation({
+      query: (chatId) => ({
+        url: `chat/mute/${chatId}`,
+        method: "POST",
+        credentials: "include",
+      }),
+      invalidatesTags: ["Chat"],
+    }),
+
+    toggleArchiveChat: builder.mutation({
+      query: (chatId) => ({
+        url: `chat/archive/${chatId}`,
+        method: "POST",
+        credentials: "include",
+      }),
+      invalidatesTags: ["Chat"],
+    }),
+
+    updateEphemeralTtl: builder.mutation({
+      query: ({ chatId, ephemeral_ttl }) => ({
+        url: `chat/${chatId}/ephemeral`,
+        method: "POST",
+        credentials: "include",
+        body: { ephemeral_ttl },
+      }),
+      invalidatesTags: ["Chat"],
+    }),
+
+    generateInviteLink: builder.mutation({
+      query: ({ chatId, max_uses = 25, expiry_days = 7 }) => ({
+        url: `chat/${chatId}/invite`,
+        method: "POST",
+        credentials: "include",
+        body: { max_uses, expiry_days },
+      }),
+    }),
+
+    inspectInviteLink: builder.query({
+      query: (token) => ({
+        url: `chat/invite/${token}`,
+        credentials: "include",
+      }),
+      keepUnusedDataFor: 0,
+    }),
+
+    acceptInviteLink: builder.mutation({
+      query: (token) => ({
+        url: `chat/invite/${token}/accept`,
+        method: "POST",
+        credentials: "include",
+      }),
+      invalidatesTags: ["Chat"],
+    }),
+
+    revokeInviteLink: builder.mutation({
+      query: (inviteId) => ({
+        url: `chat/invite/revoke/${inviteId}`,
+        method: "DELETE",
+        credentials: "include",
+      }),
+    }),
+
+    getBlockedUsers: builder.query({
+      query: () => ({
+        url: "user/blocked",
+        credentials: "include",
+      }),
+      providesTags: ["User"],
+    }),
+
+    getNotificationPrefs: builder.query({
+      query: () => ({
+        url: "notifications/preferences",
+        credentials: "include",
+      }),
+    }),
+
+    updateNotificationPrefs: builder.mutation({
+      query: (data) => ({
+        url: "notifications/preferences",
+        method: "PUT",
+        credentials: "include",
+        body: data,
+      }),
+    }),
+
+    getStatusFeed: builder.query({
+      query: () => ({
+        url: "status/feed",
+        credentials: "include",
+      }),
+      providesTags: ["Status"],
+    }),
+
+    getMyStatuses: builder.query({
+      query: () => ({
+        url: "status/my",
+        credentials: "include",
+      }),
+      providesTags: ["Status"],
+    }),
+
+    createStatus: builder.mutation({
+      query: (data) => ({
+        url: "status/",
+        method: "POST",
+        credentials: "include",
+        body: data,
+      }),
+      invalidatesTags: ["Status"],
+    }),
+
+    deleteStatus: builder.mutation({
+      query: (statusId) => ({
+        url: `status/${statusId}`,
+        method: "DELETE",
+        credentials: "include",
+      }),
+      invalidatesTags: ["Status"],
+    }),
+
+    recordStatusView: builder.mutation({
+      query: (statusId) => ({
+        url: `status/${statusId}/view`,
+        method: "POST",
+        credentials: "include",
+      }),
+    }),
+
+    getStatusViewers: builder.query({
+      query: (statusId) => ({
+        url: `status/${statusId}/viewers`,
+        credentials: "include",
+      }),
+      keepUnusedDataFor: 0,
+    }),
+
+    reactStatus: builder.mutation({
+      query: ({ statusId, reaction }) => ({
+        url: `status/${statusId}/react`,
+        method: "POST",
+        credentials: "include",
+        body: { reaction },
+      }),
+      invalidatesTags: ["Status"],
+    }),
+
+    getUserE2eeKey: builder.query({
+      query: (userId) => ({
+        url: `user/e2ee/key/${userId}`,
+        credentials: "include",
+      }),
+      keepUnusedDataFor: 60,
+    }),
+
+    publishE2eeKey: builder.mutation({
+      query: (data) => ({
+        url: "user/e2ee/key",
+        method: "PUT",
+        credentials: "include",
+        body: data,
+      }),
+      invalidatesTags: ["User"],
+    }),
   }),
 });
 
@@ -453,4 +661,28 @@ export const {
   useBlockUserMutation,
   useUnblockUserMutation,
   useReportUserMutation,
+  useDeleteMessageForMeMutation,
+  useCreatePollMutation,
+  useVotePollMutation,
+  useLazyGetMessageReceiptsQuery,
+  useTogglePinChatMutation,
+  useToggleMuteChatMutation,
+  useToggleArchiveChatMutation,
+  useUpdateEphemeralTtlMutation,
+  useGenerateInviteLinkMutation,
+  useInspectInviteLinkQuery,
+  useAcceptInviteLinkMutation,
+  useRevokeInviteLinkMutation,
+  useGetBlockedUsersQuery,
+  useGetNotificationPrefsQuery,
+  useUpdateNotificationPrefsMutation,
+  useGetStatusFeedQuery,
+  useGetMyStatusesQuery,
+  useCreateStatusMutation,
+  useDeleteStatusMutation,
+  useRecordStatusViewMutation,
+  useLazyGetStatusViewersQuery,
+  useReactStatusMutation,
+  useGetUserE2eeKeyQuery,
+  usePublishE2eeKeyMutation,
 } = api;

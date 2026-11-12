@@ -9,11 +9,18 @@ from .views import (
     ForwardMessageView,
     SearchMessagesView,
     GetChatMediaView,
+    CreatePollView,
+    VotePollView,
+    MessageReceiptsView,
 )
 
 urlpatterns = [
     path("send", SendMessageView.as_view(), name="message-send"),
     path("send/", SendMessageView.as_view(), name="message-send-slash"),
+    path("poll/create", CreatePollView.as_view(), name="message-poll-create"),
+    path("poll/create/", CreatePollView.as_view(), name="message-poll-create-slash"),
+    path("poll/<str:id>/vote", VotePollView.as_view(), name="message-poll-vote"),
+    path("poll/<str:id>/vote/", VotePollView.as_view(), name="message-poll-vote-slash"),
     path("forward", ForwardMessageView.as_view(), name="message-forward"),
     path("forward/", ForwardMessageView.as_view(), name="message-forward-slash"),
     path("search/<str:chat_id>", SearchMessagesView.as_view(), name="message-search"),
@@ -22,6 +29,8 @@ urlpatterns = [
     path("media/<str:chat_id>/", GetChatMediaView.as_view(), name="message-media-slash"),
     path("react/<str:id>", ReactMessageView.as_view(), name="message-react-prefix"),
     path("react/<str:id>/", ReactMessageView.as_view(), name="message-react-prefix-slash"),
+    path("<str:id>/receipts", MessageReceiptsView.as_view(), name="message-receipts"),
+    path("<str:id>/receipts/", MessageReceiptsView.as_view(), name="message-receipts-slash"),
     path("<str:id>/react", ReactMessageView.as_view(), name="message-react"),
     path("<str:id>/react/", ReactMessageView.as_view(), name="message-react-slash"),
     path("<str:id>/delete-for-me", DeleteMessageForMeView.as_view(), name="message-delete-for-me"),

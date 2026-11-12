@@ -22,7 +22,9 @@ import {
 } from "@mui/material";
 import { 
   Close as CloseIcon, 
+  ContentCopy as CopyIcon,
   Description as DocIcon, 
+  Link as LinkIcon,
   MoreVert as MoreVertIcon, 
   Edit as EditIcon, 
   Check as CheckIcon,
@@ -30,6 +32,8 @@ import {
   ExitToApp as ExitToAppIcon,
   Delete as DeleteIcon,
   Security as SecurityIcon,
+  Share as ShareIcon,
+  Timer as TimerIcon,
 } from "@mui/icons-material";
 import { 
   useLazyGetChatMediaQuery, 
@@ -40,6 +44,9 @@ import {
   useRemoveAdminMutation,
   useToggleRestrictMessagesMutation,
   useDeleteChatMutation,
+  useUpdateEphemeralTtlMutation,
+  useGenerateInviteLinkMutation,
+  useRevokeInviteLinkMutation,
 } from "../../redux/api/api";
 import { fileFormat, resolveMediaUrl } from "../../lib/feature";
 import { useSelector, useDispatch } from "react-redux";
@@ -80,6 +87,10 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
   const [removeAdmin] = useAsyncMutation(useRemoveAdminMutation);
   const [toggleRestrict, isLoadingRestrict] = useAsyncMutation(useToggleRestrictMessagesMutation);
   const [deleteGroup, isLoadingDeleteGroup] = useAsyncMutation(useDeleteChatMutation);
+  const [updateEphemeralTtl, { isLoading: isUpdatingTtl }] = useUpdateEphemeralTtlMutation();
+  const [generateInviteLink, { isLoading: isGeneratingInvite }] = useGenerateInviteLinkMutation();
+  const [revokeInviteLink] = useRevokeInviteLinkMutation();
+  const [generatedInvite, setGeneratedInvite] = useState(null);
   
   const [fetchMedia, { isLoading: isMediaLoading, data: mediaData }] = useLazyGetChatMediaQuery();
 
@@ -376,7 +387,148 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
                     control={<Switch checked={groupDetails?.restrictedMessages || false} onChange={handleToggleRestrict} disabled={isLoadingRestrict} />}
                     label="Only Admins can send messages"
                   />
+
+                  <Divider sx={{ my: 1.5 }} />
+                  <Stack spacing={1.25}>
+                    <Stack direction="row" alignItems="center" spacing={0.75}>
+                      <TimerIcon fontSize="small" color="primary" />
+                      <Typography variant="subtitle2" fontWeight={600}>Disappearing Messages</Typography>
+                    </Stack>
+                    <TextField
+                      select
+                      size="small"
+                      SelectProps={{ native: true }}
+                      value={groupDetails?.ephemeral_ttl || 0}
+                      disabled={isUpdatingTtl}
+                      onChange={async (e) => {
+                        const ttl = Number(e.target.value);
+                        try {
+                          await updateEphemeralTtl({ chatId, ephemeral_ttl: ttl }).unwrap();
+                          toast.success(ttl ? `Messages disappear after ${ttl}s` : "Disappearing messages off");
+                        } catch (err) {
+                          toast.error(err?.data?.message || "Failed to update timer");
+                        }
+                      }}
+                    >
+                      <option value={0}>Off</option>
+                      <option value={30}>30 seconds</option>
+                      <option value={60}>1 minute</option>
+                      <option value={300}>5 minutes</option>
+                      <option value={3600}>1 hour</option>
+                      <option value={86400}>24 hours</option>
+                      <option value={604800}>7 days</option>
+                    </TextField>
+
+                    <Stack direction="row" alignItems="center" spacing={0.75} pt={0.5}>
+                      <LinkIcon fontSize="small" color="primary" />
+                      <Typography variant="subtitle2" fontWeight={600}>Group Invite Link</Typography>
+                    </Stack>
+                    {generatedInvite ? (
+                      <Stack spacing={0.75}>
+                        <TextField
+                          size="small"
+                          fullWidth
+                          InputProps={{ readOnly: true }}
+                          value={`${window.location.origin}${generatedInvite.inviteUrl}`}
+                        />
+                        <Stack direction="row" spacing={1}>
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            startIcon={<CopyIcon />}
+                            onClick={() => {
+                              navigator.clipboard?.writeText(`${window.location.origin}${generatedInvite.inviteUrl}`);
+                              toast.success("Invite link copied");
+                            }}
+                          >
+                            Copy
+                          </Button>
+                          {navigator.share && (
+                            <Button
+                              size="small"
+                              variant="outlined"
+                              startIcon={<ShareIcon />}
+                              onClick={() =>
+                                navigator.share({
+                                  title: `Join ${groupDetails?.name || "Group"}`,
+                                  url: `${window.location.origin}${generatedInvite.inviteUrl}`,
+                                }).catch(() => {})
+                              }
+                            >
+                              Share
+                            </Button>
+                          )}
+                          <Button
+                            size="small"
+                            color="error"
+                            onClick={async () => {
+                              try {
+                                await revokeInviteLink(generatedInvite.inviteId).unwrap();
+                                setGeneratedInvite(null);
+                                toast.success("Invite link revoked");
+                              } catch {
+                                toast.error("Failed to revoke link");
+                              }
+                            }}
+                          >
+                            Revoke
+                          </Button>
+                        </Stack>
+                      </Stack>
+                    ) : (
+                      <Button
+                        size="small"
+                        variant="outlined"
+                        startIcon={<LinkIcon />}
+                        disabled={isGeneratingInvite}
+                        onClick={async () => {
+                          try {
+                            const res = await generateInviteLink({ chatId }).unwrap();
+                            setGeneratedInvite(res);
+                          } catch (err) {
+                            toast.error(err?.data?.message || "Failed to generate link");
+                          }
+                        }}
+                      >
+                        {isGeneratingInvite ? "Creating..." : "Create Shareable Invite Link"}
+                      </Button>
+                    )}
+                  </Stack>
                 </>
+              )}
+
+              {!isGroupChat && (
+                <Box px={2} pt={1}>
+                  <Stack direction="row" alignItems="center" spacing={0.75} mb={0.75}>
+                    <TimerIcon fontSize="small" color="primary" />
+                    <Typography variant="subtitle2" fontWeight={600}>Disappearing Messages</Typography>
+                  </Stack>
+                  <TextField
+                    select
+                    fullWidth
+                    size="small"
+                    SelectProps={{ native: true }}
+                    value={groupDetails?.ephemeral_ttl || 0}
+                    disabled={isUpdatingTtl}
+                    onChange={async (e) => {
+                      const ttl = Number(e.target.value);
+                      try {
+                        await updateEphemeralTtl({ chatId, ephemeral_ttl: ttl }).unwrap();
+                        toast.success(ttl ? `Messages disappear after ${ttl}s` : "Disappearing messages off");
+                      } catch (err) {
+                        toast.error(err?.data?.message || "Failed to update timer");
+                      }
+                    }}
+                  >
+                    <option value={0}>Off</option>
+                    <option value={30}>30 seconds</option>
+                    <option value={60}>1 minute</option>
+                    <option value={300}>5 minutes</option>
+                    <option value={3600}>1 hour</option>
+                    <option value={86400}>24 hours</option>
+                    <option value={604800}>7 days</option>
+                  </TextField>
+                </Box>
               )}
 
               {/* Leave/Delete Group */}

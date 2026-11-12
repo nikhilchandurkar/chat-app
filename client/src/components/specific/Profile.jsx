@@ -9,13 +9,16 @@ import {
   VisibilityOff,
   Security as SecurityIcon,
   AdminPanelSettings as AdminIcon,
+  Block as BlockIcon,
+  NotificationsActive as PushIcon,
+  ExpandMore as ExpandIcon,
 } from "@mui/icons-material";
 import {
   Avatar, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent,
   DialogContentText, DialogTitle, Divider, FormControlLabel, IconButton, InputAdornment,
   Paper, Stack, Switch, TextField, Typography
 } from "@mui/material";
-import React, { useState, lazy, Suspense } from "react";
+import React, { useEffect, useState, lazy, Suspense } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { useNavigate } from "react-router-dom";
 import { setFontFamily } from "../../redux/reducers/misc";
@@ -27,11 +30,24 @@ import {
   setScreenshotBlockPreference,
 } from "../../utils/feedback";
 import {
+  canUseNativeBiometricUnlock,
+  disableAppLock,
+  enableAppLockWithPin,
+  isAppLockEnabled,
+  isBiometricUnlockEnabled,
+  setBiometricUnlockPreference,
+} from "../../utils/appLock";
+import { isWebPushSupported, subscribeBrowserPushNotifications } from "../../utils/pushNotifications";
+import {
   useUpdateProfileMutation,
   useDeleteProfileMutation,
   useChangePasswordMutation,
   useUpdateStatusMutation,
   useUpdatePrivacyMutation,
+  useGetBlockedUsersQuery,
+  useUnblockUserMutation,
+  useGetNotificationPrefsQuery,
+  useUpdateNotificationPrefsMutation,
 } from "../../redux/api/api";
 import { userExists, userNotExists } from "../../redux/reducers/auth";
 import toast from "react-hot-toast";
@@ -48,6 +64,36 @@ const Profile = () => {
 
   const [blockScreenshots, setBlockScreenshots] = useState(isScreenshotBlockEnabled);
   const [blurOnSwitch, setBlurOnSwitch] = useState(isPrivacyBlurEnabled);
+  const [privacyOpen, setPrivacyOpen] = useState(false);
+  const [blockedOpen, setBlockedOpen] = useState(false);
+  const [pushOpen, setPushOpen] = useState(false);
+  const [appLockOpen, setAppLockOpen] = useState(false);
+  const [appLockActive, setAppLockActive] = useState(isAppLockEnabled);
+  const [biometricPref, setBiometricPref] = useState(isBiometricUnlockEnabled);
+  const [nativeBiometricSupported, setNativeBiometricSupported] = useState(false);
+  const [pinInput, setPinInput] = useState("");
+  const [pushBusy, setPushBusy] = useState(false);
+
+  const [updatePrivacy, { isLoading: isUpdatingPrivacy }] = useUpdatePrivacyMutation();
+  const { data: blockedData } = useGetBlockedUsersQuery(undefined, { skip: !blockedOpen });
+  const [unblockUser] = useUnblockUserMutation();
+  const { data: notifPrefsData } = useGetNotificationPrefsQuery(undefined, { skip: !pushOpen });
+  const [updateNotifPrefs] = useUpdateNotificationPrefsMutation();
+
+  const [privacyForm, setPrivacyForm] = useState(() => ({
+    privacy_avatar: user?.profile?.privacy_avatar || "everyone",
+    privacy_online: user?.profile?.privacy_online || "everyone",
+    privacy_last_seen: user?.profile?.privacy_last_seen || "everyone",
+    who_can_add_to_groups: user?.profile?.who_can_add_to_groups || "everyone",
+    who_can_message_me: user?.profile?.who_can_message_me || "everyone",
+    hide_from_search: Boolean(user?.profile?.hide_from_search),
+    privacy_read_receipts: user?.profile?.privacy_read_receipts !== false,
+    privacy_typing_indicator: user?.profile?.privacy_typing_indicator !== false,
+  }));
+
+  useEffect(() => {
+    canUseNativeBiometricUnlock().then(setNativeBiometricSupported).catch(() => {});
+  }, []);
 
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(user?.name || "");
@@ -68,7 +114,6 @@ const Profile = () => {
   const [deleteProfile, { isLoading: isDeleting }] = useDeleteProfileMutation();
   const [changePassword, { isLoading: isChangingPassword }] = useChangePasswordMutation();
   const [updateStatus] = useUpdateStatusMutation();
-  const [updatePrivacy, { isLoading: isUpdatingPrivacy }] = useUpdatePrivacyMutation();
 
   const handleAvatarChange = (e) => {
     const file = e.target.files[0];
@@ -313,6 +358,286 @@ const Profile = () => {
                 label={<Typography variant="caption">Blur Preview When Switching Apps</Typography>}
               />
             </Stack>
+          </Paper>
+
+          {/* Granular Account Privacy Controls */}
+          <Paper variant="outlined" sx={{ width: "100%", maxWidth: "350px", p: 1.5, borderRadius: 2 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              onClick={() => setPrivacyOpen((v) => !v)}
+              sx={{ cursor: "pointer" }}
+            >
+              <Typography variant="caption" fontWeight={700} color="primary">
+                Privacy &amp; Visibility Controls
+              </Typography>
+              <ExpandIcon fontSize="small" sx={{ transform: privacyOpen ? "rotate(180deg)" : "none", transition: "0.2s" }} />
+            </Stack>
+            <Collapse in={privacyOpen}>
+              <Stack spacing={1.25} pt={1.25}>
+                {[
+                  { key: "privacy_avatar", label: "Who can see my photo" },
+                  { key: "privacy_online", label: "Who can see I'm online" },
+                  { key: "privacy_last_seen", label: "Who can see my last seen" },
+                  { key: "who_can_add_to_groups", label: "Who can add me to groups" },
+                  { key: "who_can_message_me", label: "Who can DM me" },
+                ].map((item) => (
+                  <TextField
+                    key={item.key}
+                    select
+                    size="small"
+                    fullWidth
+                    label={item.label}
+                    SelectProps={{ native: true }}
+                    value={privacyForm[item.key]}
+                    onChange={(e) => setPrivacyForm((prev) => ({ ...prev, [item.key]: e.target.value }))}
+                  >
+                    <option value="everyone">Everyone</option>
+                    <option value="contacts">Contacts Only</option>
+                    <option value="nobody">Nobody</option>
+                  </TextField>
+                ))}
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={privacyForm.hide_from_search}
+                      onChange={(e) => setPrivacyForm((p) => ({ ...p, hide_from_search: e.target.checked }))}
+                    />
+                  }
+                  label={<Typography variant="caption">Hide Me From User Search</Typography>}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={privacyForm.privacy_read_receipts}
+                      onChange={(e) => setPrivacyForm((p) => ({ ...p, privacy_read_receipts: e.target.checked }))}
+                    />
+                  }
+                  label={<Typography variant="caption">Send Read Receipts</Typography>}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={privacyForm.privacy_typing_indicator}
+                      onChange={(e) => setPrivacyForm((p) => ({ ...p, privacy_typing_indicator: e.target.checked }))}
+                    />
+                  }
+                  label={<Typography variant="caption">Show Typing Indicator</Typography>}
+                />
+                <Button
+                  size="small"
+                  variant="contained"
+                  disabled={isUpdatingPrivacy}
+                  onClick={async () => {
+                    try {
+                      await updatePrivacy(privacyForm).unwrap();
+                      toast.success("Privacy settings saved");
+                    } catch {
+                      toast.error("Failed to save privacy settings");
+                    }
+                  }}
+                >
+                  Save Privacy Preferences
+                </Button>
+              </Stack>
+            </Collapse>
+          </Paper>
+
+          {/* App Lock (PIN + Native Biometric) */}
+          <Paper variant="outlined" sx={{ width: "100%", maxWidth: "350px", p: 1.5, borderRadius: 2 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              onClick={() => setAppLockOpen((v) => !v)}
+              sx={{ cursor: "pointer" }}
+            >
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <LockIcon fontSize="small" color="primary" />
+                <Typography variant="caption" fontWeight={700} color="primary">
+                  App Lock ({appLockActive ? "ON" : "OFF"})
+                </Typography>
+              </Stack>
+              <ExpandIcon fontSize="small" sx={{ transform: appLockOpen ? "rotate(180deg)" : "none", transition: "0.2s" }} />
+            </Stack>
+            <Collapse in={appLockOpen}>
+              <Stack spacing={1} pt={1.25}>
+                {appLockActive ? (
+                  <>
+                    {nativeBiometricSupported && (
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            size="small"
+                            checked={biometricPref}
+                            onChange={(e) => {
+                              setBiometricPref(e.target.checked);
+                              setBiometricUnlockPreference(e.target.checked);
+                            }}
+                          />
+                        }
+                        label={<Typography variant="caption">Allow Fingerprint / Device Unlock</Typography>}
+                      />
+                    )}
+                    <Button
+                      size="small"
+                      color="error"
+                      variant="outlined"
+                      onClick={() => {
+                        disableAppLock();
+                        setAppLockActive(false);
+                        toast.success("App Lock disabled");
+                      }}
+                    >
+                      Disable App Lock
+                    </Button>
+                  </>
+                ) : (
+                  <Stack direction="row" spacing={1}>
+                    <TextField
+                      size="small"
+                      type="password"
+                      placeholder="Set 4-6 digit PIN"
+                      inputProps={{ inputMode: "numeric", maxLength: 6 }}
+                      value={pinInput}
+                      onChange={(e) => setPinInput(e.target.value)}
+                      fullWidth
+                    />
+                    <Button
+                      size="small"
+                      variant="contained"
+                      onClick={async () => {
+                        try {
+                          await enableAppLockWithPin(pinInput);
+                          setPinInput("");
+                          setAppLockActive(true);
+                          toast.success("App Lock enabled");
+                        } catch (err) {
+                          toast.error(err?.message || "Invalid PIN");
+                        }
+                      }}
+                    >
+                      Enable
+                    </Button>
+                  </Stack>
+                )}
+              </Stack>
+            </Collapse>
+          </Paper>
+
+          {/* Push Notifications */}
+          <Paper variant="outlined" sx={{ width: "100%", maxWidth: "350px", p: 1.5, borderRadius: 2 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              onClick={() => setPushOpen((v) => !v)}
+              sx={{ cursor: "pointer" }}
+            >
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <PushIcon fontSize="small" color="primary" />
+                <Typography variant="caption" fontWeight={700} color="primary">
+                  Push Notification Alerts
+                </Typography>
+              </Stack>
+              <ExpandIcon fontSize="small" sx={{ transform: pushOpen ? "rotate(180deg)" : "none", transition: "0.2s" }} />
+            </Stack>
+            <Collapse in={pushOpen}>
+              <Stack spacing={1} pt={1.25}>
+                {isWebPushSupported() && (
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={pushBusy}
+                    onClick={async () => {
+                      setPushBusy(true);
+                      try {
+                        const res = await subscribeBrowserPushNotifications();
+                        if (res.subscribed) toast.success("Push notifications enabled!");
+                        else toast(res.reason || "Check browser notification settings");
+                      } catch {
+                        toast.error("Failed to enable push notifications");
+                      } finally {
+                        setPushBusy(false);
+                      }
+                    }}
+                  >
+                    {pushBusy ? "Configuring..." : "Enable Browser Push Alerts"}
+                  </Button>
+                )}
+                {notifPrefsData?.preferences && (
+                  <>
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          size="small"
+                          checked={Boolean(notifPrefsData.preferences.push_enabled)}
+                          onChange={(e) => updateNotifPrefs({ push_enabled: e.target.checked })}
+                        />
+                      }
+                      label={<Typography variant="caption">Push Alerts Enabled</Typography>}
+                    />
+                    <FormControlLabel
+                      control={
+                        <Switch
+                          size="small"
+                          checked={Boolean(notifPrefsData.preferences.show_message_preview)}
+                          onChange={(e) => updateNotifPrefs({ show_message_preview: e.target.checked })}
+                        />
+                      }
+                      label={<Typography variant="caption">Show Message Preview in Alert</Typography>}
+                    />
+                  </>
+                )}
+              </Stack>
+            </Collapse>
+          </Paper>
+
+          {/* Blocked Users */}
+          <Paper variant="outlined" sx={{ width: "100%", maxWidth: "350px", p: 1.5, borderRadius: 2 }}>
+            <Stack
+              direction="row"
+              alignItems="center"
+              justifyContent="space-between"
+              onClick={() => setBlockedOpen((v) => !v)}
+              sx={{ cursor: "pointer" }}
+            >
+              <Stack direction="row" alignItems="center" spacing={0.75}>
+                <BlockIcon fontSize="small" color="error" />
+                <Typography variant="caption" fontWeight={700} color="text.primary">
+                  Blocked Users
+                </Typography>
+              </Stack>
+              <ExpandIcon fontSize="small" sx={{ transform: blockedOpen ? "rotate(180deg)" : "none", transition: "0.2s" }} />
+            </Stack>
+            <Collapse in={blockedOpen}>
+              <Stack spacing={0.75} pt={1}>
+                {!(blockedData?.blockedUsers || []).length ? (
+                  <Typography variant="caption" color="text.secondary">No blocked users.</Typography>
+                ) : (
+                  blockedData.blockedUsers.map((bu) => (
+                    <Stack key={bu._id} direction="row" alignItems="center" justifyContent="space-between">
+                      <Typography variant="caption" fontWeight={600} noWrap>
+                        {bu.name || bu.username} (@{bu.username})
+                      </Typography>
+                      <Button
+                        size="small"
+                        onClick={async () => {
+                          await unblockUser(bu._id);
+                          toast.success(`Unblocked ${bu.username}`);
+                        }}
+                      >
+                        Unblock
+                      </Button>
+                    </Stack>
+                  ))
+                )}
+              </Stack>
+            </Collapse>
           </Paper>
 
           <Button

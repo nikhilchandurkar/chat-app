@@ -1,6 +1,12 @@
 import {
   Avatar,
   Box,
+  Button,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   Typography,
   IconButton,
   TextField,
@@ -26,8 +32,10 @@ import {
   DoneAll as DoneAllIcon,
   ContentCopy as CopyIcon,
   Favorite as HeartIcon,
+  Lock as LockIcon,
   MoreHoriz as MoreIcon,
   Person as PersonIcon,
+  Poll as PollIcon,
 } from "@mui/icons-material";
 import React, { memo, useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
@@ -40,11 +48,16 @@ import { useSelector } from "react-redux";
 import {
   useEditMessageMutation,
   useDeleteMessageMutation,
+  useDeleteMessageForMeMutation,
   useToggleStarMessageMutation,
   usePinMessageMutation,
   useReactMessageMutation,
+  useVotePollMutation,
+  useLazyGetMessageReceiptsQuery,
 } from "../../redux/api/api";
 import { getChatFontSize, PREFS_EVENT, triggerHaptic } from "../../utils/feedback";
+import { FormattedMessageContent } from "../../utils/markdown";
+import { decryptE2eeMessage, getStoredKeyPair, isE2eePayload } from "../../utils/e2ee";
 import toast from "react-hot-toast";
 
 const ForwardMessageDialog = lazy(() => import("../dialogs/ForwardMessageDialog"));
@@ -54,7 +67,18 @@ const SWIPE_THRESHOLD = 46;
 const HOLD_DELAY_MS = 340;
 const DOUBLE_TAP_WINDOW_MS = 340;
 
-const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, onViewProfile, chatId, isGroupAdmin }) => {
+const MessageComponent = ({
+  message,
+  onEdit,
+  onDelete,
+  onReply,
+  onReact,
+  onPollUpdate,
+  onViewProfile,
+  chatMembers = [],
+  chatId,
+  isGroupAdmin,
+}) => {
   const { user } = useSelector((state) => state.auth);
   const { themeMode } = useSelector((state) => state.misc);
   const isDark = themeMode === "dark";
@@ -72,14 +96,39 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, onViewP
 
   const [editMessageMutation, { isLoading: isEditing }] = useEditMessageMutation();
   const [deleteMessageMutation, { isLoading: isDeleting }] = useDeleteMessageMutation();
+  const [deleteForMeMutation, { isLoading: isDeletingForMe }] = useDeleteMessageForMeMutation();
   const [toggleStar] = useToggleStarMessageMutation();
   const [pinMessageMutation] = usePinMessageMutation();
   const [reactMessageMutation] = useReactMessageMutation();
+  const [votePollMutation] = useVotePollMutation();
+  const [fetchReceipts, { data: receiptsData, isFetching: receiptsLoading }] = useLazyGetMessageReceiptsQuery();
 
   const [isDesktopHover, setIsDesktopHover] = useState(false);
   const [holdSpotlightOpen, setHoldSpotlightOpen] = useState(false);
   const [showForwardDialog, setShowForwardDialog] = useState(false);
+  const [deleteChoiceOpen, setDeleteChoiceOpen] = useState(false);
+  const [receiptsOpen, setReceiptsOpen] = useState(false);
+  const [resolvedContent, setResolvedContent] = useState(() =>
+    isE2eePayload(content) ? "🔓 Decrypting..." : content
+  );
+  const [isE2eeMsg, setIsE2eeMsg] = useState(() => isE2eePayload(content));
   const [bursts, setBursts] = useState([]);
+
+  useEffect(() => {
+    let active = true;
+    if (!isE2eePayload(content)) {
+      setIsE2eeMsg(false);
+      setResolvedContent(content);
+      return undefined;
+    }
+    setIsE2eeMsg(true);
+    decryptE2eeMessage(content, getStoredKeyPair(), sameSender).then((res) => {
+      if (active) setResolvedContent(res.text);
+    });
+    return () => {
+      active = false;
+    };
+  }, [content, sameSender]);
 
   // 60fps Framer Motion values (zero React re-renders during drag/hold)
   const dragX = useMotionValue(0);
@@ -145,14 +194,19 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, onViewP
     setEditMode(false);
   };
 
-  const handleDelete = async () => {
+  const openDeleteChoices = () => {
     handleCloseMenu();
     setHoldSpotlightOpen(false);
+    setDeleteChoiceOpen(true);
+  };
+
+  const handleDeleteForEveryone = async () => {
+    setDeleteChoiceOpen(false);
     try {
       const res = await deleteMessageMutation(_id);
       if (res.data?.success) {
         onDelete?.(_id);
-        toast.success("Message deleted");
+        toast.success("Deleted for everyone");
       } else {
         toast.error(res.error?.data?.message || "Failed to delete");
       }
@@ -160,6 +214,50 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, onViewP
       toast.error("Failed to delete message");
     }
   };
+
+  const handleDeleteForMe = async () => {
+    setDeleteChoiceOpen(false);
+    try {
+      const res = await deleteForMeMutation(_id);
+      if (res.data?.success) {
+        onDelete?.(_id);
+        toast.success("Deleted for you");
+      } else {
+        toast.error(res.error?.data?.message || "Failed to delete for you");
+      }
+    } catch {
+      toast.error("Failed to delete message");
+    }
+  };
+
+  const handleOpenReceipts = (e) => {
+    e.stopPropagation();
+    setReceiptsOpen(true);
+    fetchReceipts(_id);
+  };
+
+  const handleVotePoll = async (optionId) => {
+    try {
+      const res = await votePollMutation({ messageId: _id, optionId }).unwrap();
+      if (res?.attachments) {
+        onPollUpdate?.(_id, res.attachments);
+      }
+    } catch {
+      toast.error("Failed to cast vote");
+    }
+  };
+
+  const handleMentionClick = useCallback(
+    (username) => {
+      if (!onViewProfile) return;
+      const found = (chatMembers || []).find(
+        (m) => String(m?.username || "").toLowerCase() === String(username).toLowerCase()
+      );
+      if (found) onViewProfile(found);
+      else toast(`@${username}`);
+    },
+    [chatMembers, onViewProfile]
+  );
 
   const handleStar = async () => {
     handleCloseMenu();
@@ -515,15 +613,11 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, onViewP
                   <ListItemText>Edit</ListItemText>
                 </MenuItem>
               )}
-              {(sameSender || isGroupAdmin) && (
-                <>
-                  <Divider />
-                  <MenuItem onClick={handleDelete} disabled={isDeleting} sx={{ py: 1.25 }}>
-                    <ListItemIcon><DeleteIcon fontSize="small" color="error" /></ListItemIcon>
-                    <ListItemText sx={{ color: "error.main" }}>Delete</ListItemText>
-                  </MenuItem>
-                </>
-              )}
+              <Divider />
+              <MenuItem onClick={openDeleteChoices} disabled={isDeleting || isDeletingForMe} sx={{ py: 1.25 }}>
+                <ListItemIcon><DeleteIcon fontSize="small" color="error" /></ListItemIcon>
+                <ListItemText sx={{ color: "error.main" }}>Delete...</ListItemText>
+              </MenuItem>
             </Paper>
           </motion.div>
         </motion.div>
@@ -821,24 +915,95 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, onViewP
                   </Box>
                 )}
 
-                {content && (
-                  <Typography
-                    sx={{
-                      fontSize: `${fontSize}px`,
-                      wordBreak: "break-word",
-                      whiteSpace: "pre-wrap",
-                      lineHeight: 1.45,
-                      color: isDark ? "#F1F3F0" : "#202421",
-                    }}
-                  >
-                    {content}
-                  </Typography>
+                {isE2eeMsg && (
+                  <Chip
+                    size="small"
+                    icon={<LockIcon sx={{ fontSize: 12 }} />}
+                    label="E2EE"
+                    color="success"
+                    variant="outlined"
+                    sx={{ height: 18, fontSize: "0.65rem", mb: 0.4, "& .MuiChip-label": { px: 0.6 } }}
+                  />
                 )}
 
-                {content && <LinkPreview content={content} />}
+                {attachments?.find((a) => a && typeof a === "object" && a.type === "poll") ? (
+                  (() => {
+                    const poll = attachments.find((a) => a && typeof a === "object" && a.type === "poll");
+                    const totalVotes = (poll.options || []).reduce((acc, o) => acc + (o.votes?.length || 0), 0);
+                    return (
+                      <Box onTouchStart={(e) => e.stopPropagation()} sx={{ minWidth: { xs: 210, sm: 250 }, py: 0.4 }}>
+                        <Stack direction="row" alignItems="center" spacing={0.6} mb={0.75}>
+                          <PollIcon fontSize="small" color="primary" />
+                          <Typography variant="subtitle2" fontWeight={700}>
+                            {poll.question}
+                          </Typography>
+                        </Stack>
+                        <Stack spacing={0.7}>
+                          {(poll.options || []).map((opt) => {
+                            const votes = opt.votes || [];
+                            const pct = totalVotes > 0 ? Math.round((votes.length / totalVotes) * 100) : 0;
+                            const iVoted = votes.includes(currentUserId);
+                            return (
+                              <Box
+                                key={opt.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleVotePoll(opt.id);
+                                }}
+                                sx={{
+                                  position: "relative",
+                                  overflow: "hidden",
+                                  borderRadius: 1.5,
+                                  border: "1px solid",
+                                  borderColor: iVoted ? "primary.main" : "divider",
+                                  p: 0.8,
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <Box
+                                  sx={{
+                                    position: "absolute",
+                                    inset: 0,
+                                    width: `${pct}%`,
+                                    bgcolor: iVoted ? "rgba(35,107,74,0.22)" : "rgba(35,107,74,0.1)",
+                                    transition: "width 0.25s ease",
+                                  }}
+                                />
+                                <Stack direction="row" justifyContent="space-between" alignItems="center" position="relative">
+                                  <Typography variant="caption" fontWeight={iVoted ? 700 : 500}>
+                                    {iVoted ? `✓ ${opt.text}` : opt.text}
+                                  </Typography>
+                                  <Typography variant="caption" color="text.secondary" fontWeight={600}>
+                                    {votes.length} ({pct}%)
+                                  </Typography>
+                                </Stack>
+                              </Box>
+                            );
+                          })}
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary" display="block" mt={0.6}>
+                          {totalVotes} vote{totalVotes === 1 ? "" : "s"} {poll.allowMultiple ? "· Multiple choice" : ""}
+                        </Typography>
+                      </Box>
+                    );
+                  })()
+                ) : (
+                  <>
+                    {resolvedContent && (
+                      <FormattedMessageContent
+                        content={resolvedContent}
+                        fontSize={fontSize}
+                        isDark={isDark}
+                        onMentionClick={handleMentionClick}
+                      />
+                    )}
+                    {resolvedContent && !isE2eeMsg && <LinkPreview content={resolvedContent} />}
+                  </>
+                )}
 
                 {attachments?.length > 0 &&
                   attachments.map((attachment, idx) => {
+                    if (attachment && typeof attachment === "object" && attachment.type === "poll") return null;
                     const url = typeof attachment === "string" ? attachment : attachment.url || attachment.path || "";
                     if (!url) return null;
                     const file = fileFormat(url);
@@ -862,13 +1027,17 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, onViewP
                 {timeAgo}
               </Typography>
               {sameSender && !isDeleted && (
-                <DoneAllIcon
-                  sx={{
-                    fontSize: "0.95rem",
-                    color: readBy.length > 0 ? "#27834A" : isDark ? "#A6AEA8" : "#737A75",
-                    ml: 0.2,
-                  }}
-                />
+                <Tooltip title="Seen By info">
+                  <DoneAllIcon
+                    onClick={handleOpenReceipts}
+                    sx={{
+                      fontSize: "0.95rem",
+                      cursor: "pointer",
+                      color: readBy.length > 0 ? "#27834A" : isDark ? "#A6AEA8" : "#737A75",
+                      ml: 0.2,
+                    }}
+                  />
+                </Tooltip>
               )}
             </Box>
 
@@ -936,7 +1105,71 @@ const MessageComponent = ({ message, onEdit, onDelete, onReply, onReact, onViewP
           <ListItemIcon><ReplyIcon fontSize="small" /></ListItemIcon>
           <ListItemText>Reply</ListItemText>
         </MenuItem>
+        {sameSender && (
+          <MenuItem onClick={handleOpenReceipts} dense>
+            <ListItemIcon><DoneAllIcon fontSize="small" color="primary" /></ListItemIcon>
+            <ListItemText>Seen By</ListItemText>
+          </MenuItem>
+        )}
+        <MenuItem onClick={openDeleteChoices} dense sx={{ color: "error.main" }}>
+          <ListItemIcon><DeleteIcon fontSize="small" color="error" /></ListItemIcon>
+          <ListItemText>Delete...</ListItemText>
+        </MenuItem>
       </Menu>
+
+      {/* Delete For Me vs Delete For Everyone */}
+      <Dialog open={deleteChoiceOpen} onClose={() => setDeleteChoiceOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Delete Message</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            Choose whether to remove this message only from your view or for everyone in the chat.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ flexDirection: "column", alignItems: "stretch", gap: 1, p: 2 }}>
+          <Button variant="outlined" color="warning" onClick={handleDeleteForMe} disabled={isDeletingForMe}>
+            Delete for Me
+          </Button>
+          {(sameSender || isGroupAdmin) && (
+            <Button variant="contained" color="error" onClick={handleDeleteForEveryone} disabled={isDeleting}>
+              Delete for Everyone
+            </Button>
+          )}
+          <Button color="inherit" onClick={() => setDeleteChoiceOpen(false)}>
+            Cancel
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Group / DM Read Receipts Dialog */}
+      <Dialog open={receiptsOpen} onClose={() => setReceiptsOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Seen By</DialogTitle>
+        <DialogContent>
+          {receiptsLoading ? (
+            <CircularProgress size={22} />
+          ) : !(receiptsData?.receipts || []).length ? (
+            <Typography variant="body2" color="text.secondary">Not read by other members yet.</Typography>
+          ) : (
+            <Stack spacing={1.25} pt={0.5}>
+              {(receiptsData?.receipts || []).map((r) => (
+                <Stack key={r._id} direction="row" alignItems="center" justifyContent="space-between">
+                  <Stack direction="row" alignItems="center" spacing={1}>
+                    <Avatar src={transformImage(r.avatar)} sx={{ width: 28, height: 28 }}>
+                      {(r.name || "U")[0]}
+                    </Avatar>
+                    <Typography variant="body2" fontWeight={600}>{r.name}</Typography>
+                  </Stack>
+                  <Typography variant="caption" color="text.secondary">
+                    {r.readAt ? formatTimeAgo(r.readAt) : "Read"}
+                  </Typography>
+                </Stack>
+              ))}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setReceiptsOpen(false)}>Close</Button>
+        </DialogActions>
+      </Dialog>
 
       {showForwardDialog && (
         <Suspense fallback={null}>

@@ -1,34 +1,40 @@
-import { Menu, Stack, Typography } from "@mui/material";
+import { Divider, ListItemIcon, ListItemText, Menu, MenuItem } from "@mui/material";
 import React, { useEffect } from "react";
 import { useSelector } from "react-redux";
-import { setIsDeleteMenu } from "../../redux/reducers/misc";
+import { setActiveChatId, setIsDeleteMenu } from "../../redux/reducers/misc";
 import {
+  Archive as ArchiveIcon,
   Delete as DeleteIcon,
   ExitToApp as ExitToAppIcon,
+  NotificationsActive as UnmuteIcon,
+  NotificationsOff as MuteIcon,
+  PushPin as PinIcon,
+  Unarchive as UnarchiveIcon,
 } from "@mui/icons-material";
 import { useNavigate } from "react-router-dom";
+import toast from "react-hot-toast";
 import { useAsyncMutation } from "../../hooks/hook";
 import {
   useDeleteChatMutation,
   useLeaveGroupMutation,
+  useToggleArchiveChatMutation,
+  useToggleMuteChatMutation,
+  useTogglePinChatMutation,
 } from "../../redux/api/api";
 
 const DeleteChatMenu = ({ dispatch, deleteMenuAnchor }) => {
   const navigate = useNavigate();
 
-  const { isDeleteMenu, selectedDeleteChat } = useSelector(
-    (state) => state.misc
-  );
+  const { isDeleteMenu, selectedDeleteChat } = useSelector((state) => state.misc);
 
-  const [deleteChat, _, deleteChatData] = useAsyncMutation(
-    useDeleteChatMutation
-  );
-
-  const [leaveGroup, __, leaveGroupData] = useAsyncMutation(
-    useLeaveGroupMutation
-  );
+  const [deleteChat, _, deleteChatData] = useAsyncMutation(useDeleteChatMutation);
+  const [leaveGroup, __, leaveGroupData] = useAsyncMutation(useLeaveGroupMutation);
+  const [togglePinChat] = useTogglePinChatMutation();
+  const [toggleMuteChat] = useToggleMuteChatMutation();
+  const [toggleArchiveChat] = useToggleArchiveChatMutation();
 
   const isGroup = selectedDeleteChat.groupChat;
+  const { chatId, isPinned, isMuted, isArchived } = selectedDeleteChat;
 
   const closeHandler = () => {
     dispatch(setIsDeleteMenu(false));
@@ -37,55 +43,82 @@ const DeleteChatMenu = ({ dispatch, deleteMenuAnchor }) => {
 
   const leaveGroupHandler = () => {
     closeHandler();
-    leaveGroup("Leaving Group...", selectedDeleteChat.chatId);
+    leaveGroup("Leaving Group...", chatId);
   };
 
   const deleteChatHandler = () => {
     closeHandler();
-    deleteChat("Deleting Chat...", selectedDeleteChat.chatId);
+    deleteChat("Deleting Chat...", chatId);
+  };
+
+  const handleTogglePin = async () => {
+    closeHandler();
+    try {
+      const res = await togglePinChat(chatId).unwrap();
+      toast.success(res.isPinned ? "Conversation pinned" : "Conversation unpinned");
+    } catch {
+      toast.error("Failed to update pin");
+    }
+  };
+
+  const handleToggleMute = async () => {
+    closeHandler();
+    try {
+      const res = await toggleMuteChat(chatId).unwrap();
+      toast.success(res.isMuted ? "Conversation muted" : "Conversation unmuted");
+    } catch {
+      toast.error("Failed to update mute");
+    }
+  };
+
+  const handleToggleArchive = async () => {
+    closeHandler();
+    try {
+      const res = await toggleArchiveChat(chatId).unwrap();
+      toast.success(res.isArchived ? "Conversation archived" : "Conversation unarchived");
+    } catch {
+      toast.error("Failed to update archive");
+    }
   };
 
   useEffect(() => {
-    if (deleteChatData || leaveGroupData) navigate("/");
-  }, [deleteChatData, leaveGroupData]);
+    if (deleteChatData || leaveGroupData) {
+      dispatch(setActiveChatId(null));
+      navigate("/");
+    }
+  }, [deleteChatData, leaveGroupData, dispatch, navigate]);
 
   return (
     <Menu
       open={isDeleteMenu}
       onClose={closeHandler}
       anchorEl={deleteMenuAnchor.current}
-      anchorOrigin={{
-        vertical: "bottom",
-        horizontal: "right",
-      }}
-      transformOrigin={{
-        vertical: "center",
-        horizontal: "center",
-      }}
+      anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+      transformOrigin={{ vertical: "top", horizontal: "right" }}
     >
-      <Stack
-        sx={{
-          width: "10rem",
-          padding: "0.5rem",
-          cursor: "pointer",
-        }}
-        direction={"row"}
-        alignItems={"center"}
-        spacing={"0.5rem"}
-        onClick={isGroup ? leaveGroupHandler : deleteChatHandler}
-      >
-        {isGroup ? (
-          <>
-            <ExitToAppIcon />
-            <Typography>Leave Group</Typography>
-          </>
-        ) : (
-          <>
-            <DeleteIcon />
-            <Typography>Delete Chat</Typography>
-          </>
-        )}
-      </Stack>
+      <MenuItem onClick={handleTogglePin} dense>
+        <ListItemIcon><PinIcon fontSize="small" color={isPinned ? "primary" : "inherit"} /></ListItemIcon>
+        <ListItemText>{isPinned ? "Unpin Chat" : "Pin to Top"}</ListItemText>
+      </MenuItem>
+      <MenuItem onClick={handleToggleMute} dense>
+        <ListItemIcon>
+          {isMuted ? <UnmuteIcon fontSize="small" /> : <MuteIcon fontSize="small" />}
+        </ListItemIcon>
+        <ListItemText>{isMuted ? "Unmute" : "Mute Notifications"}</ListItemText>
+      </MenuItem>
+      <MenuItem onClick={handleToggleArchive} dense>
+        <ListItemIcon>
+          {isArchived ? <UnarchiveIcon fontSize="small" /> : <ArchiveIcon fontSize="small" />}
+        </ListItemIcon>
+        <ListItemText>{isArchived ? "Unarchive Chat" : "Archive Chat"}</ListItemText>
+      </MenuItem>
+      <Divider />
+      <MenuItem onClick={isGroup ? leaveGroupHandler : deleteChatHandler} dense sx={{ color: "error.main" }}>
+        <ListItemIcon>
+          {isGroup ? <ExitToAppIcon fontSize="small" color="error" /> : <DeleteIcon fontSize="small" color="error" />}
+        </ListItemIcon>
+        <ListItemText>{isGroup ? "Leave Group" : "Delete Chat"}</ListItemText>
+      </MenuItem>
     </Menu>
   );
 };

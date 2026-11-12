@@ -27,8 +27,11 @@ import {
   ContentCopy as CopyIcon,
   DeleteOutline as RevokeIcon,
   Devices as DevicesIcon,
+  Key as KeyIcon,
+  Lock as LockIcon,
   Logout as LogoutIcon,
   PhoneAndroid as AndroidIcon,
+  Refresh as RotateIcon,
   Security as SecurityIcon,
   Shield as ShieldIcon,
   VerifiedUser as VerifiedIcon,
@@ -42,11 +45,24 @@ import toast from "react-hot-toast";
 import { useDispatch } from "react-redux";
 import { server } from "../../constants/config";
 import { userExists } from "../../redux/reducers/auth";
+import { usePublishE2eeKeyMutation } from "../../redux/api/api";
+import {
+  ensureLocalIdentityKeyPair,
+  exportEncryptedKeyBackup,
+  getStoredKeyPair,
+  importEncryptedKeyBackup,
+  rotateLocalIdentityKeyPair,
+} from "../../utils/e2ee";
 
 const SecurityDevicesDialog = ({ open, onClose, initialTab = 0 }) => {
   const dispatch = useDispatch();
-  // 0 = Shared Sessions (active devices + link companion scanner), 1 = Two-Factor Auth
-  const [tab, setTab] = useState(initialTab > 1 ? 1 : initialTab);
+  // 0 = Shared Sessions, 1 = Two-Factor Auth, 2 = E2EE Encryption Keys
+  const [tab, setTab] = useState(initialTab > 2 ? 2 : initialTab);
+  const [publishE2eeKey] = usePublishE2eeKeyMutation();
+  const [e2eeKeyPair, setE2eeKeyPair] = useState(getStoredKeyPair);
+  const [e2eeBusy, setE2eeBusy] = useState(false);
+  const [backupPassphrase, setBackupPassphrase] = useState("");
+  const [backupText, setBackupText] = useState("");
 
   // Shared Sessions state
   const [sessionsLoading, setSessionsLoading] = useState(false);
@@ -366,9 +382,10 @@ const SecurityDevicesDialog = ({ open, onClose, initialTab = 0 }) => {
         <IconButton onClick={onClose} size="small"><CloseIcon /></IconButton>
       </DialogTitle>
 
-      <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="fullWidth" sx={{ borderBottom: 1, borderColor: "divider" }}>
+      <Tabs value={tab} onChange={(_, v) => setTab(v)} variant="scrollable" scrollButtons="auto" sx={{ borderBottom: 1, borderColor: "divider" }}>
         <Tab icon={<DevicesIcon fontSize="small" />} iconPosition="start" label={`Shared Sessions (${sessions.length}/${maxDevices})`} />
         <Tab icon={<ShieldIcon fontSize="small" />} iconPosition="start" label="Two-Factor Auth (2FA)" />
+        <Tab icon={<KeyIcon fontSize="small" />} iconPosition="start" label="E2EE Keys" />
       </Tabs>
 
       <DialogContent sx={{ pt: 2.5, minHeight: 340 }}>
@@ -609,6 +626,135 @@ const SecurityDevicesDialog = ({ open, onClose, initialTab = 0 }) => {
                 </form>
               </>
             )}
+          </Stack>
+        )}
+
+        {/* TAB 2: CLIENT-SIDE END-TO-END ENCRYPTION KEYS */}
+        {tab === 2 && (
+          <Stack spacing={2}>
+            <Alert icon={<LockIcon fontSize="small" />} severity={e2eeKeyPair ? "success" : "info"}>
+              {e2eeKeyPair
+                ? "Your ECDH P-256 identity key is active on this device. Your private key never leaves this device."
+                : "Generate & publish your public ECDH P-256 key so direct contacts can send you client-side E2EE messages."}
+            </Alert>
+
+            {e2eeKeyPair?.fingerprint && (
+              <Paper variant="outlined" sx={{ p: 1.5, borderRadius: 2 }}>
+                <Typography variant="caption" color="text.secondary" fontWeight={700} display="block">
+                  PUBLIC KEY FINGERPRINT
+                </Typography>
+                <Typography fontFamily="monospace" fontWeight={700} fontSize={14} mt={0.5}>
+                  {e2eeKeyPair.fingerprint}
+                </Typography>
+              </Paper>
+            )}
+
+            <Stack direction="row" spacing={1}>
+              <Button
+                variant="contained"
+                fullWidth
+                startIcon={<KeyIcon />}
+                disabled={e2eeBusy}
+                onClick={async () => {
+                  setE2eeBusy(true);
+                  try {
+                    const pair = await ensureLocalIdentityKeyPair();
+                    await publishE2eeKey({ publicKey: pair.publicJwk, fingerprint: pair.fingerprint }).unwrap();
+                    setE2eeKeyPair(pair);
+                    toast.success("Public E2EE key published");
+                  } catch (err) {
+                    toast.error(err?.data?.message || err?.message || "Failed to publish key");
+                  } finally {
+                    setE2eeBusy(false);
+                  }
+                }}
+              >
+                {e2eeKeyPair ? "Sync Public Key" : "Generate & Publish Key"}
+              </Button>
+              {e2eeKeyPair && (
+                <Button
+                  variant="outlined"
+                  color="warning"
+                  startIcon={<RotateIcon />}
+                  disabled={e2eeBusy}
+                  onClick={async () => {
+                    setE2eeBusy(true);
+                    try {
+                      const pair = await rotateLocalIdentityKeyPair();
+                      await publishE2eeKey({ publicKey: pair.publicJwk, fingerprint: pair.fingerprint }).unwrap();
+                      setE2eeKeyPair(pair);
+                      toast.success("Identity key rotated & synced");
+                    } catch {
+                      toast.error("Failed to rotate key");
+                    } finally {
+                      setE2eeBusy(false);
+                    }
+                  }}
+                >
+                  Rotate
+                </Button>
+              )}
+            </Stack>
+
+            <Divider />
+            <Typography variant="subtitle2" fontWeight={700}>
+              Encrypted Key Backup / Restore (Multi-Device)
+            </Typography>
+            <TextField
+              size="small"
+              type="password"
+              fullWidth
+              label="Backup Passphrase"
+              value={backupPassphrase}
+              onChange={(e) => setBackupPassphrase(e.target.value)}
+            />
+            <TextField
+              size="small"
+              fullWidth
+              multiline
+              minRows={2}
+              placeholder="Encrypted key backup JSON (export or paste here to import)"
+              value={backupText}
+              onChange={(e) => setBackupText(e.target.value)}
+            />
+            <Stack direction="row" spacing={1}>
+              <Button
+                size="small"
+                variant="outlined"
+                fullWidth
+                disabled={!e2eeKeyPair || !backupPassphrase}
+                onClick={async () => {
+                  try {
+                    const exported = await exportEncryptedKeyBackup(e2eeKeyPair, backupPassphrase);
+                    setBackupText(exported);
+                    navigator.clipboard?.writeText(exported);
+                    toast.success("Encrypted key backup exported & copied");
+                  } catch {
+                    toast.error("Export failed");
+                  }
+                }}
+              >
+                Export Encrypted Backup
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                fullWidth
+                disabled={!backupText.trim() || !backupPassphrase}
+                onClick={async () => {
+                  try {
+                    const imported = await importEncryptedKeyBackup(backupText.trim(), backupPassphrase);
+                    await publishE2eeKey({ publicKey: imported.publicJwk, fingerprint: imported.fingerprint }).unwrap();
+                    setE2eeKeyPair(imported);
+                    toast.success("E2EE key restored on this device");
+                  } catch {
+                    toast.error("Invalid passphrase or backup JSON");
+                  }
+                }}
+              >
+                Import Backup
+              </Button>
+            </Stack>
           </Stack>
         )}
       </DialogContent>

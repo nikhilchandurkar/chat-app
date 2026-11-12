@@ -98,8 +98,16 @@ class StatusFeedView(APIView):
 
     def get(self, request):
         now = timezone.now()
-        # Find contacts / friends
+        # Find contacts / direct chat friends
+        from apps.chat.models import ConversationMember
         contact_ids = set(Contact.objects.filter(user=request.user).values_list("contact_user_id", flat=True))
+        direct_conv_ids = ConversationMember.objects.filter(
+            user=request.user, conversation__type="direct"
+        ).values_list("conversation_id", flat=True)
+        friend_ids = ConversationMember.objects.filter(
+            conversation_id__in=direct_conv_ids
+        ).exclude(user=request.user).values_list("user_id", flat=True)
+        contact_ids |= set(friend_ids)
 
         # Blocked users
         blocked_ids = set(BlockedUser.objects.filter(user=request.user).values_list("blocked_user_id", flat=True))

@@ -4,16 +4,26 @@ import { useDispatch, useSelector } from "react-redux";
 import { setIsFileMenu, setUploadingLoader } from "../../redux/reducers/misc";
 import {
   AudioFile as AudioFileIcon,
+  GifBox as GifIcon,
   Image as ImageIcon,
   KeyboardReturn as EnterKeyIcon,
   Mic as MicIcon,
+  Poll as PollIcon,
   UploadFile as UploadFileIcon,
   VideoFile as VideoFileIcon,
 } from "@mui/icons-material";
 import toast from "react-hot-toast";
 import { useSendAttachmentsMutation } from "../../redux/api/api";
 
-const FileMenu = ({ anchorEl, chatId, onStartVoiceNote, enterToSend = true, onToggleEnterToSend }) => {
+const FileMenu = ({
+  anchorEl,
+  chatId,
+  onStartVoiceNote,
+  onOpenGifStudio,
+  onOpenCreatePoll,
+  enterToSend = true,
+  onToggleEnterToSend,
+}) => {
   const { isFileMenu } = useSelector((state) => state.misc);
 
   const dispatch = useDispatch();
@@ -136,6 +146,30 @@ const FileMenu = ({ anchorEl, chatId, onStartVoiceNote, enterToSend = true, onTo
             <MenuItem onClick={handleVoicePick}>
               <ListItemIcon><MicIcon fontSize="small" color="error" /></ListItemIcon>
               <ListItemText>Record Voice Note</ListItemText>
+            </MenuItem>
+          )}
+
+          {onOpenGifStudio && (
+            <MenuItem
+              onClick={() => {
+                closeFileMenu();
+                onOpenGifStudio();
+              }}
+            >
+              <ListItemIcon><GifIcon fontSize="small" color="primary" /></ListItemIcon>
+              <ListItemText>GIFs &amp; Create GIF</ListItemText>
+            </MenuItem>
+          )}
+
+          {onOpenCreatePoll && (
+            <MenuItem
+              onClick={() => {
+                closeFileMenu();
+                onOpenCreatePoll();
+              }}
+            >
+              <ListItemIcon><PollIcon fontSize="small" color="secondary" /></ListItemIcon>
+              <ListItemText>Create Poll</ListItemText>
             </MenuItem>
           )}
 

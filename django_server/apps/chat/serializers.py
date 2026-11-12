@@ -36,6 +36,7 @@ class ChatDetailsSerializer(serializers.ModelSerializer):
             "admins",
             "restrictedMessages",
             "pinnedMessages",
+            "ephemeral_ttl",
             "created_at",
             "updated_at",
         ]

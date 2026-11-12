@@ -11,7 +11,6 @@ import {
   AccountCircle as AccountCircleIcon,
   Palette as PaletteIcon,
   Speed as SpeedIcon,
-  Wifi as WifiIcon,
   MoreVert as MoreVertIcon,
   Security as SecurityIcon,
   AdminPanelSettings as AdminIcon,
@@ -57,7 +56,6 @@ const NewGroupsDialog = lazy(() => import("../specific/NewGroup"));
 const StarredMessages = lazy(() => import("../specific/StarredMessages"));
 const AppearanceSettingsDialog = lazy(() => import("../dialogs/AppearanceSettingsDialog"));
 const DevicePerformanceDialog = lazy(() => import("../dialogs/DevicePerformanceDialog"));
-const ConnectivityOfflineDialog = lazy(() => import("../dialogs/ConnectivityOfflineDialog"));
 const SecurityDevicesDialog = lazy(() => import("../dialogs/SecurityDevicesDialog"));
 
 const Header = ({ unreadMessagesCount = 0 }) => {
@@ -74,7 +72,6 @@ const Header = ({ unreadMessagesCount = 0 }) => {
   const [showStarred, setShowStarred] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);
   const [showPerformance, setShowPerformance] = useState(false);
-  const [showConnectivity, setShowConnectivity] = useState(false);
   const [showSecurity, setShowSecurity] = useState(false);
   const [mobileMenuAnchor, setMobileMenuAnchor] = useState(null);
 
@@ -208,7 +205,6 @@ const Header = ({ unreadMessagesCount = 0 }) => {
                   <IconBtn title="Superadmin Dashboard" icon={<AdminIcon color="secondary" />} onClick={() => navigate("/admin-panel")} />
                 )}
                 <IconBtn title="Device & Performance" icon={<SpeedIcon />} onClick={() => setShowPerformance(true)} />
-                <IconBtn title="Connectivity & Offline" icon={<WifiIcon />} onClick={() => setShowConnectivity(true)} />
                 <IconBtn
                   title={themeMode === "dark" ? "Light Mode" : "Dark Mode"}
                   icon={themeMode === "dark" ? <LightModeIcon /> : <DarkModeIcon />}
@@ -262,10 +258,6 @@ const Header = ({ unreadMessagesCount = 0 }) => {
                     <ListItemIcon><SpeedIcon fontSize="small" /></ListItemIcon>
                     <ListItemText>Device &amp; Performance</ListItemText>
                   </MenuItem>
-                  <MenuItem onClick={() => { setMobileMenuAnchor(null); setShowConnectivity(true); }}>
-                    <ListItemIcon><WifiIcon fontSize="small" /></ListItemIcon>
-                    <ListItemText>Connectivity &amp; Sync</ListItemText>
-                  </MenuItem>
                   <MenuItem onClick={() => { setMobileMenuAnchor(null); dispatch(toggleTheme()); }}>
                     <ListItemIcon>{themeMode === "dark" ? <LightModeIcon fontSize="small" /> : <DarkModeIcon fontSize="small" />}</ListItemIcon>
                     <ListItemText>{themeMode === "dark" ? "Light Mode" : "Dark Mode"}</ListItemText>
@@ -309,10 +301,6 @@ const Header = ({ unreadMessagesCount = 0 }) => {
 
       <Suspense fallback={null}>
         <DevicePerformanceDialog open={showPerformance} onClose={() => setShowPerformance(false)} />
-      </Suspense>
-
-      <Suspense fallback={null}>
-        <ConnectivityOfflineDialog open={showConnectivity} onClose={() => setShowConnectivity(false)} />
       </Suspense>
 
       <Suspense fallback={null}>

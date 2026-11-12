@@ -279,6 +279,9 @@ class EditMessageView(APIView):
         OutboxService.publish_item(outbox_entry)
         return Response({"success": True, "message": "Message edited.", "data": {"content": new_content, "isEdited": True}})
 
+    def delete(self, request, id):
+        return DeleteMessageView().delete(request, id)
+
 
 class DeleteMessageView(APIView):
     permission_classes = [IsAuthenticated]
@@ -322,6 +325,9 @@ class DeleteMessageForMeView(APIView):
 
         DeletedMessageForUser.objects.get_or_create(user=request.user, message=message)
         return Response({"success": True, "message": "Message deleted for you."})
+
+    def delete(self, request, id):
+        return self.post(request, id)
 
 
 class ReactMessageView(APIView):
@@ -487,3 +493,175 @@ class GetChatMediaView(APIView):
                 })
 
         return Response({"success": True, "media": all_attachments})
+
+
+class CreatePollView(APIView):
+    """Creates an interactive poll message inside a conversation and broadcasts it via Outbox/WS."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        chat_id = request.data.get("chatId") or request.data.get("conversation_id")
+        question = str(request.data.get("question", "")).strip()
+        raw_options = request.data.get("options", [])
+        allow_multiple = bool(request.data.get("allowMultiple", False))
+
+        if not chat_id or not question or not isinstance(raw_options, list):
+            return Response({"success": False, "message": "chatId, question, and options are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        clean_options = [str(o).strip()[:120] for o in raw_options if str(o).strip()]
+        if len(clean_options) < 2 or len(clean_options) > 8:
+            return Response({"success": False, "message": "Polls require between 2 and 8 non-empty options."}, status=status.HTTP_400_BAD_REQUEST)
+
+        conversation = get_object_or_404(Conversation, id=chat_id)
+        if not conversation.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+        if conversation.restricted_messages and not (conversation.admins.filter(id=request.user.id).exists() or conversation.creator == request.user):
+            return Response({"success": False, "message": "Only admins may post polls in this restricted group."}, status=status.HTTP_403_FORBIDDEN)
+
+        poll_payload = {
+            "type": "poll",
+            "question": question[:240],
+            "allowMultiple": allow_multiple,
+            "options": [
+                {"id": str(idx + 1), "text": opt, "votes": []}
+                for idx, opt in enumerate(clean_options)
+            ],
+        }
+        expires_at = timezone.now() + timedelta(seconds=conversation.ephemeral_ttl) if conversation.ephemeral_ttl else None
+
+        with transaction.atomic():
+            msg = Message.objects.create(
+                conversation=conversation,
+                sender=request.user,
+                message_type="poll",
+                content=f"📊 Poll: {poll_payload['question']}",
+                attachments=[poll_payload],
+                status="sent",
+                expires_at=expires_at,
+            )
+            conversation.updated_at = timezone.now()
+            conversation.save(update_fields=["updated_at"])
+            ConversationMember.objects.filter(conversation=conversation).exclude(user=request.user).update(
+                unread_count=models.F("unread_count") + 1
+            )
+            serialized_msg = MessageSerializer(msg).data
+            recipient_ids = get_conversation_recipient_ids(conversation, request.user.id)
+            outbox_entry = OutboxService.create_outbox_event(
+                event_type="message.created",
+                conversation_id=str(conversation.id),
+                payload={
+                    "event": "message.created",
+                    "legacy_event": "NEW_MESSAGE",
+                    "chatId": str(conversation.id),
+                    "conversation_id": str(conversation.id),
+                    "message_id": str(msg.id),
+                    "sender_id": str(request.user.id),
+                    "sender_name": request.user.name or request.user.username,
+                    "content": serialized_msg["content"],
+                    "attachments": [poll_payload],
+                    "recipient_ids": recipient_ids,
+                    "message": serialized_msg,
+                },
+            )
+        OutboxService.publish_item(outbox_entry)
+        return Response({"success": True, "message": serialized_msg}, status=status.HTTP_201_CREATED)
+
+
+class VotePollView(APIView):
+    """Toggles the authenticated conversation member's vote on a poll option."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        option_id = str(request.data.get("optionId", "")).strip()
+        if not option_id:
+            return Response({"success": False, "message": "optionId is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        uid = str(request.user.id)
+        with transaction.atomic():
+            msg = get_object_or_404(Message.objects.select_for_update().select_related("conversation"), id=id)
+            if not msg.conversation.member_records.filter(user=request.user).exists():
+                return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+            attachments = list(msg.attachments or [])
+            poll_idx = next((i for i, a in enumerate(attachments) if isinstance(a, dict) and a.get("type") == "poll"), -1)
+            if poll_idx < 0:
+                return Response({"success": False, "message": "Message does not contain a poll."}, status=status.HTTP_400_BAD_REQUEST)
+
+            poll = dict(attachments[poll_idx])
+            options = [dict(o) for o in poll.get("options", [])]
+            target_opt = next((o for o in options if str(o.get("id")) == option_id), None)
+            if not target_opt:
+                return Response({"success": False, "message": "Invalid poll option."}, status=status.HTTP_400_BAD_REQUEST)
+
+            allow_multiple = bool(poll.get("allowMultiple", False))
+            already_voted = uid in (target_opt.get("votes") or [])
+            for opt in options:
+                votes = [str(v) for v in (opt.get("votes") or []) if str(v) != uid]
+                if str(opt.get("id")) == option_id and not already_voted:
+                    votes.append(uid)
+                elif not allow_multiple and str(opt.get("id")) != option_id:
+                    pass
+                elif allow_multiple and str(opt.get("id")) != option_id:
+                    votes = list(opt.get("votes") or [])
+                opt["votes"] = votes
+
+            poll["options"] = options
+            attachments[poll_idx] = poll
+            msg.attachments = attachments
+            msg.save(update_fields=["attachments"])
+
+            recipient_ids = get_conversation_recipient_ids(msg.conversation, request.user.id)
+            outbox_entry = OutboxService.create_outbox_event(
+                event_type="message.poll_updated",
+                conversation_id=str(msg.conversation_id),
+                payload={
+                    "event": "message.poll_updated",
+                    "legacy_event": "MESSAGE_POLL_UPDATED",
+                    "chatId": str(msg.conversation_id),
+                    "conversation_id": str(msg.conversation_id),
+                    "message_id": str(msg.id),
+                    "messageId": str(msg.id),
+                    "attachments": attachments,
+                    "recipient_ids": recipient_ids,
+                },
+            )
+        OutboxService.publish_item(outbox_entry)
+        return Response({"success": True, "attachments": attachments})
+
+
+class MessageReceiptsView(APIView):
+    """Returns per-member read receipts & timestamps for a message (Seen By sheet)."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, id):
+        from apps.authentication.models import User as AuthUser
+
+        msg = get_object_or_404(Message.objects.select_related("conversation"), id=id)
+        if not msg.conversation.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        receipts_qs = MessageReceipt.objects.filter(message=msg, status="read").select_related("user").order_by("timestamp")
+        receipts_by_uid = {}
+        for r in receipts_qs:
+            u = r.user
+            receipts_by_uid[str(u.id)] = {
+                "_id": str(u.id),
+                "name": u.name or u.username,
+                "username": u.username,
+                "avatar": u.avatar.get("url") if isinstance(u.avatar, dict) else None,
+                "readAt": r.timestamp.isoformat() if r.timestamp else None,
+            }
+
+        missing_uids = [str(uid) for uid in (msg.read_by or []) if str(uid) not in receipts_by_uid and str(uid) != str(msg.sender_id)]
+        if missing_uids:
+            for u in AuthUser.objects.filter(id__in=missing_uids):
+                receipts_by_uid[str(u.id)] = {
+                    "_id": str(u.id),
+                    "name": u.name or u.username,
+                    "username": u.username,
+                    "avatar": u.avatar.get("url") if isinstance(u.avatar, dict) else None,
+                    "readAt": None,
+                }
+
+        receipts_by_uid.pop(str(msg.sender_id), None)
+        return Response({"success": True, "receipts": list(receipts_by_uid.values())})

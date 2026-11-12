@@ -26,8 +26,16 @@ import {
   PREFS_EVENT,
 } from "./utils/feedback";
 import { syncScreenPrivacy } from "./utils/screenPrivacy";
+import {
+  APP_LOCK_EVENT,
+  canUseNativeBiometricUnlock,
+  isAppLockEnabled,
+  isBiometricUnlockEnabled,
+  triggerNativeBiometricUnlock,
+  verifyAppLockPin,
+} from "./utils/appLock";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
-import { Box, Button, Paper, Stack, Typography } from "@mui/material";
+import { Box, Button, Paper, Stack, TextField, Typography } from "@mui/material";
 import CssBaseline from "@mui/material/CssBaseline";
 import toast from "react-hot-toast";
 
@@ -59,6 +67,7 @@ const Groups = lazy(() => import("./pages/Groups"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
 const ResetPassword = lazy(() => import("./pages/ResetPassword"));
+const InviteAccept = lazy(() => import("./pages/InviteAccept"));
 
 // Global Axios authorization interceptor
 axios.interceptors.request.use((config) => {
@@ -242,6 +251,9 @@ const App = () => {
   const { themeMode, fontFamily } = useSelector((state) => state.misc);
   const [stayInBrowser, setStayInBrowser] = useState(false);
   const [privacyShielded, setPrivacyShielded] = useState(false);
+  const [appLocked, setAppLocked] = useState(() => isAppLockEnabled());
+  const [unlockPin, setUnlockPin] = useState("");
+  const [biometricAvailable, setBiometricAvailable] = useState(false);
   const dispatch = useDispatch();
   const browserAndroidOAuthUrl = stayInBrowser ? null : getPendingBrowserAndroidOAuthUrl();
 
@@ -260,7 +272,14 @@ const App = () => {
       } else {
         setPrivacyShielded(false);
       }
+      if (document.hidden && isAppLockEnabled()) {
+        setAppLocked(true);
+      }
     };
+    const onAppLockChange = () => {
+      if (!isAppLockEnabled()) setAppLocked(false);
+    };
+    canUseNativeBiometricUnlock().then(setBiometricAvailable).catch(() => {});
     const onKeyUp = (e) => {
       if (!isScreenshotBlockEnabled()) return;
       if (e.key === "PrintScreen") {
@@ -271,6 +290,7 @@ const App = () => {
 
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener(APP_LOCK_EVENT, onAppLockChange);
 
     let stateHandle;
     let cancelled = false;
@@ -278,6 +298,9 @@ const App = () => {
       CapacitorApp.addListener("appStateChange", ({ isActive }) => {
         if (!cancelled && isPrivacyBlurEnabled()) {
           setPrivacyShielded(!isActive);
+        }
+        if (!isActive && isAppLockEnabled()) {
+          setAppLocked(true);
         }
       })
         .then((h) => {
@@ -291,6 +314,7 @@ const App = () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener(APP_LOCK_EVENT, onAppLockChange);
       if (stateHandle) stateHandle.remove();
     };
   }, []);
@@ -384,6 +408,7 @@ const App = () => {
                 <Route element={<ProtectRoute user={user} />}>
                   <Route path="/" element={<Dashboard />} />
                   <Route path="/groups" element={<Groups />} />
+                  <Route path="/invite/:token" element={<InviteAccept />} />
                   <Route
                     path="/admin-panel"
                     element={
@@ -438,6 +463,71 @@ const App = () => {
                 <Typography variant="caption" color="rgba(255,255,255,0.75)">
                   Screen hidden while app is inactive
                 </Typography>
+              </Box>
+            )}
+            {user && appLocked && (
+              <Box
+                sx={{
+                  position: "fixed",
+                  inset: 0,
+                  zIndex: 9999,
+                  bgcolor: "rgba(18, 22, 19, 0.96)",
+                  backdropFilter: "blur(20px)",
+                  WebkitBackdropFilter: "blur(20px)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  p: 2,
+                }}
+              >
+                <Paper sx={{ p: 3, borderRadius: 3, maxWidth: 340, width: "100%", textAlign: "center" }}>
+                  <Typography variant="h6" fontWeight={700} gutterBottom>
+                    ChitChat Locked
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" mb={2}>
+                    Enter your App Lock PIN to continue
+                  </Typography>
+                  <form
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      const ok = await verifyAppLockPin(unlockPin);
+                      if (ok) {
+                        setUnlockPin("");
+                        setAppLocked(false);
+                      } else {
+                        toast.error("Incorrect PIN");
+                      }
+                    }}
+                  >
+                    <Stack spacing={1.5}>
+                      <TextField
+                        type="password"
+                        size="small"
+                        fullWidth
+                        autoFocus
+                        inputProps={{ inputMode: "numeric", maxLength: 6 }}
+                        placeholder="Enter 4-6 digit PIN"
+                        value={unlockPin}
+                        onChange={(e) => setUnlockPin(e.target.value)}
+                      />
+                      <Button type="submit" variant="contained" fullWidth>
+                        Unlock
+                      </Button>
+                      {biometricAvailable && isBiometricUnlockEnabled() && (
+                        <Button
+                          variant="outlined"
+                          fullWidth
+                          onClick={async () => {
+                            const ok = await triggerNativeBiometricUnlock();
+                            if (ok) setAppLocked(false);
+                          }}
+                        >
+                          Unlock with Fingerprint / Device Lock
+                        </Button>
+                      )}
+                    </Stack>
+                  </form>
+                </Paper>
               </Box>
             )}
           </BrowserRouter>

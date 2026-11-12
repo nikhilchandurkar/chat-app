@@ -4,8 +4,11 @@ import {
   AutoAwesome as SparkleIcon,
   Close as CloseIcon,
   EmojiEmotions as EmojiIcon,
+  GifBox as GifIcon,
   Info as InfoIcon,
   KeyboardArrowDown as ScrollDownIcon,
+  Lock as LockIcon,
+  LockOpen as LockOpenIcon,
   Search as SearchIcon,
   Send as SendIcon,
 } from "@mui/icons-material";
@@ -44,10 +47,22 @@ import {
   MESSAGE_READ_UPDATE,
 } from "../constants/events";
 import { useSocketEvents } from "../hooks/hook";
-import { useChatDetailsQuery, useGetMessagesQuery } from "../redux/api/api";
-import { setIsFileMenu, setIsMobile, toggleTheme } from "../redux/reducers/misc";
+import {
+  useChatDetailsQuery,
+  useGetMessagesQuery,
+  useGetUserE2eeKeyQuery,
+  usePublishE2eeKeyMutation,
+  useSendAttachmentsMutation,
+} from "../redux/api/api";
+import { setIsFileMenu, setIsMobile, setUploadingLoader, toggleTheme } from "../redux/reducers/misc";
 import ChatDetailsDrawer from "../components/specific/ChatDetailsDrawer";
 import { getSocket } from "../socket.jsx";
+import {
+  encryptE2eeMessage,
+  ensureLocalIdentityKeyPair,
+  isChatE2eeEnabled,
+  setChatE2eeEnabled,
+} from "../utils/e2ee";
 import {
   extractBurstEmoji,
   getShakeAction,
@@ -58,9 +73,11 @@ import {
   triggerHaptic,
 } from "../utils/feedback";
 
-// Lazy-load emoji picker (heavy component, ~200KB)
+// Lazy-load emoji picker & heavy composer dialogs
 const EmojiPicker = lazy(() => import("emoji-picker-react"));
 const UserProfileDialog = lazy(() => import("../components/dialogs/UserProfileDialog"));
+const GifStudioDialog = lazy(() => import("../components/dialogs/GifStudioDialog"));
+const CreatePollDialog = lazy(() => import("../components/dialogs/CreatePollDialog"));
 
 const QUICK_EMOJIS = ["❤️", "🔥", "😂", "👍", "🙏", "🎉", "😍", "🥳", "🚀", "👏"];
 const LAST_SEEN_KEY = "chat_last_seen";
@@ -98,9 +115,14 @@ const ChatComposer = React.memo(
     onCancelVoice,
     enterToSend,
     onCelebrateSend,
+    onOpenGifStudio,
+    isGroupChat,
+    e2eeEnabled,
+    peerPublicKey,
   }) => {
     const [message, setMessage] = useState("");
     const [showEmoji, setShowEmoji] = useState(false);
+    const [mentionQuery, setMentionQuery] = useState("");
     const typingTimeout = useRef(null);
     const lastTypingEmit = useRef(0);
     const inputRef = useRef(null);
@@ -131,7 +153,7 @@ const ChatComposer = React.memo(
       resizeTextarea();
     }, [message, resizeTextarea]);
 
-    const doSend = useCallback(() => {
+    const doSend = useCallback(async () => {
       if (!message.trim()) return;
       const clean = message.trim();
       const burstEm = extractBurstEmoji(clean);
@@ -139,14 +161,27 @@ const ChatComposer = React.memo(
         onCelebrateSend?.(burstEm);
       }
       triggerHaptic(10);
-      socket.emit(NEW_MESSAGE, { chatId, members, message: clean, replyTo: replyingTo });
+
+      let payloadText = clean;
+      if (e2eeEnabled && peerPublicKey) {
+        try {
+          const pair = await ensureLocalIdentityKeyPair();
+          payloadText = await encryptE2eeMessage(clean, pair, peerPublicKey);
+        } catch {
+          toast.error("E2EE encryption failed; check your Encryption Keys");
+          return;
+        }
+      }
+
+      socket.emit(NEW_MESSAGE, { chatId, members, message: payloadText, replyTo: replyingTo });
       setMessage("");
       setShowEmoji(false);
+      setMentionQuery("");
       onClearReply();
       lastTypingEmit.current = 0;
       if (typingTimeout.current) clearTimeout(typingTimeout.current);
       socket.emit(STOP_TYPING, { members, chatId });
-    }, [chatId, members, message, onCelebrateSend, onClearReply, replyingTo, socket]);
+    }, [chatId, e2eeEnabled, members, message, onCelebrateSend, onClearReply, peerPublicKey, replyingTo, socket]);
 
     const submitHandler = (e) => {
       e.preventDefault();
@@ -167,7 +202,14 @@ const ChatComposer = React.memo(
     );
 
     const messageOnChange = (e) => {
-      setMessage(e.target.value);
+      const val = e.target.value;
+      setMessage(val);
+      if (isGroupChat) {
+        const match = /(?:^|\s)@([a-zA-Z0-9_.-]{0,24})$/.exec(val);
+        setMentionQuery(match ? match[1] : "");
+      } else {
+        setMentionQuery("");
+      }
       const now = Date.now();
       if (now - lastTypingEmit.current > 2000) {
         socket.emit(START_TYPING, { members, chatId });
@@ -178,6 +220,26 @@ const ChatComposer = React.memo(
         socket.emit(STOP_TYPING, { members, chatId });
         lastTypingEmit.current = 0;
       }, 2000);
+    };
+
+    const mentionSuggestions = useMemo(() => {
+      if (!isGroupChat || !mentionQuery) return [];
+      const q = mentionQuery.toLowerCase();
+      return (members || [])
+        .filter((m) => m && typeof m === "object")
+        .filter(
+          (m) =>
+            String(m.username || "").toLowerCase().includes(q) ||
+            String(m.name || "").toLowerCase().includes(q)
+        )
+        .slice(0, 5);
+    }, [isGroupChat, members, mentionQuery]);
+
+    const handlePickMention = (member) => {
+      const handle = member.username || member.name?.replace(/\s+/g, "_") || "user";
+      setMessage((prev) => prev.replace(/@([a-zA-Z0-9_.-]{0,24})$/, `@${handle} `));
+      setMentionQuery("");
+      inputRef.current?.focus();
     };
 
     const handleKeyDown = (e) => {
@@ -270,6 +332,44 @@ const ChatComposer = React.memo(
             zIndex: 5,
           }}
         >
+          {mentionSuggestions.length > 0 && (
+            <Paper
+              elevation={4}
+              sx={{
+                mx: { xs: 1, sm: 2 },
+                mb: 0.5,
+                borderRadius: 2,
+                border: "1px solid",
+                borderColor: "divider",
+                overflow: "hidden",
+              }}
+            >
+              {mentionSuggestions.map((m) => (
+                <Box
+                  key={m._id || m.id}
+                  onClick={() => handlePickMention(m)}
+                  sx={{
+                    px: 1.5,
+                    py: 0.75,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                    cursor: "pointer",
+                    "&:hover": { bgcolor: "action.hover" },
+                  }}
+                >
+                  <Avatar src={transformImage(m.avatar)} sx={{ width: 24, height: 24, fontSize: "0.75rem" }}>
+                    {(m.name || m.username || "U")[0]}
+                  </Avatar>
+                  <Typography variant="body2" fontWeight={600}>{m.name || m.username}</Typography>
+                  {m.username && (
+                    <Typography variant="caption" color="text.secondary">@{m.username}</Typography>
+                  )}
+                </Box>
+              ))}
+            </Paper>
+          )}
+
           {replyingTo && (
             <Box
               sx={{
@@ -348,7 +448,24 @@ const ChatComposer = React.memo(
                     </IconButton>
                   </Tooltip>
 
-                  <Tooltip title="Attach files or record voice note">
+                  <Tooltip title="GIFs & Create GIF">
+                    <IconButton
+                      size="small"
+                      onClick={onOpenGifStudio}
+                      aria-label="Open GIF Studio"
+                      sx={{
+                        width: 32,
+                        height: 34,
+                        mb: "2px",
+                        color: "primary.main",
+                        flexShrink: 0,
+                      }}
+                    >
+                      <GifIcon sx={{ fontSize: 21 }} />
+                    </IconButton>
+                  </Tooltip>
+
+                  <Tooltip title="Attach files, Poll or Voice Note">
                     <IconButton
                       size="small"
                       onClick={handleFileOpen}
@@ -447,11 +564,75 @@ const Chat = ({ chatId, user }) => {
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [chatBursts, setChatBursts] = useState([]);
   const [viewingUser, setViewingUser] = useState(null);
+  const [showGifStudio, setShowGifStudio] = useState(false);
+  const [showPollDialog, setShowPollDialog] = useState(false);
+  const [e2eeEnabled, setE2eeEnabled] = useState(() => isChatE2eeEnabled(chatId));
 
   const chatDetails = useChatDetailsQuery({ chatId, populate: true }, { skip: !chatId });
   const oldMessageChunk = useGetMessagesQuery({ chatId, page }, { skip: !chatId });
+  const [sendAttachments] = useSendAttachmentsMutation();
+  const [publishE2eeKey] = usePublishE2eeKeyMutation();
 
   const members = chatDetails?.data?.chat?.members;
+  const chat = chatDetails?.data?.chat;
+  const isGroupChat = Boolean(chat?.groupChat);
+  const myIdStr = String(user?._id || user?.id || "");
+  const otherMember = !isGroupChat && Array.isArray(members)
+    ? members.find((m) => String(m?._id || m?.id || m) !== myIdStr)
+    : null;
+  const otherMemberId = otherMember ? String(otherMember?._id || otherMember?.id || otherMember) : "";
+  const { data: peerE2eeData } = useGetUserE2eeKeyQuery(otherMemberId, {
+    skip: isGroupChat || !otherMemberId,
+  });
+  const peerPublicKey = peerE2eeData?.publicKey || null;
+
+  useEffect(() => {
+    setE2eeEnabled(isChatE2eeEnabled(chatId));
+  }, [chatId]);
+
+  const handleToggleE2ee = async () => {
+    if (isGroupChat) return;
+    if (e2eeEnabled) {
+      setChatE2eeEnabled(chatId, false);
+      setE2eeEnabled(false);
+      toast("Client-side E2EE disabled for this chat");
+      return;
+    }
+    try {
+      const pair = await ensureLocalIdentityKeyPair();
+      await publishE2eeKey({ publicKey: pair.publicJwk, fingerprint: pair.fingerprint }).unwrap();
+      if (!peerPublicKey) {
+        toast("Your E2EE key is ready! Waiting for your contact to publish theirs too.");
+      } else {
+        toast.success("Client-side E2EE enabled for this chat 🔒");
+      }
+      setChatE2eeEnabled(chatId, true);
+      setE2eeEnabled(true);
+    } catch {
+      toast.error("Failed to initialize E2EE keys");
+    }
+  };
+
+  const handleSendGifFile = async (gifFile) => {
+    if (!gifFile || !chatId) return;
+    dispatch(setUploadingLoader(true));
+    const toastId = toast.loading("Sending GIF...");
+    try {
+      const fd = new FormData();
+      fd.append("chatId", chatId);
+      fd.append("files", gifFile);
+      const res = await sendAttachments(fd);
+      if (res.data?.success) {
+        toast.success("GIF sent!", { id: toastId });
+      } else {
+        toast.error(res.error?.data?.message || "Failed to send GIF", { id: toastId });
+      }
+    } catch {
+      toast.error("Failed to send GIF", { id: toastId });
+    } finally {
+      dispatch(setUploadingLoader(false));
+    }
+  };
 
   const spawnChatBurst = useCallback((emoji = "🎉") => {
     const id = ++burstCounterRef.current;
@@ -695,6 +876,24 @@ const Chat = ({ chatId, user }) => {
     [chatId]
   );
 
+  const handleLocalPollUpdate = useCallback((messageId, attachments) => {
+    const patch = (msg) => (String(msg._id) === String(messageId) ? { ...msg, attachments } : msg);
+    setMessages((prev) => prev.map(patch));
+    setOldMessages((prev) => prev.map(patch));
+  }, []);
+
+  const pollUpdatedHandler = useCallback(
+    (data) => {
+      if (!data) return;
+      const targetChatId = data.chatId || data.conversation_id;
+      if (targetChatId && String(targetChatId) !== String(chatId)) return;
+      const targetMsgId = data.messageId || data.message_id;
+      if (!targetMsgId || !data.attachments) return;
+      handleLocalPollUpdate(targetMsgId, data.attachments);
+    },
+    [chatId, handleLocalPollUpdate]
+  );
+
   useSocketEvents(socket, {
     [NEW_MESSAGE]: newMessagesHandler,
     [START_TYPING]: startTypingListener,
@@ -703,6 +902,8 @@ const Chat = ({ chatId, user }) => {
     [MESSAGE_DELETED]: messageDeletedHandler,
     MESSAGE_REACTED: messageReactedHandler,
     "message.reaction": messageReactedHandler,
+    MESSAGE_POLL_UPDATED: pollUpdatedHandler,
+    "message.poll_updated": pollUpdatedHandler,
     [MESSAGE_READ_UPDATE]: messageReadUpdateHandler,
   });
 
@@ -737,12 +938,6 @@ const Chat = ({ chatId, user }) => {
 
   const unreadCount = unreadIndex !== null ? allMessages.length - unreadIndex : 0;
 
-  const chat = chatDetails?.data?.chat;
-  const isGroupChat = Boolean(chat?.groupChat);
-  const myIdStr = String(user?._id || user?.id || "");
-  const otherMember = !isGroupChat && Array.isArray(members)
-    ? members.find((m) => String(m?._id || m?.id || m) !== myIdStr)
-    : null;
   const chatDisplayName =
     (isGroupChat ? chat?.name : otherMember?.name || otherMember?.username || chat?.name) || "Conversation";
   const rawChatAvatar = isGroupChat
@@ -841,13 +1036,30 @@ const Chat = ({ chatId, user }) => {
                 {chatDisplayName}
               </Typography>
               <Typography variant="caption" color={userTyping ? "primary" : "text.secondary"} noWrap display="block">
-                {userTyping ? "Typing..." : "Hold or swipe messages · Tap for info"}
+                {userTyping
+                  ? "Typing..."
+                  : chat?.ephemeral_ttl
+                  ? `⏱ Disappearing (${chat.ephemeral_ttl >= 3600 ? `${Math.round(chat.ephemeral_ttl / 3600)}h` : `${chat.ephemeral_ttl}s`}) · Tap for info`
+                  : e2eeEnabled && peerPublicKey
+                  ? "🔒 End-to-End Encrypted · Tap for info"
+                  : "Hold or swipe messages · Tap for info"}
               </Typography>
             </Box>
           </Stack>
         </Stack>
 
         <Stack direction="row" spacing={0.25} flexShrink={0}>
+          {!isGroupChat && (
+            <Tooltip title={e2eeEnabled ? "Client E2EE On (Tap to toggle)" : "Enable Client E2EE"}>
+              <IconButton
+                size="small"
+                onClick={handleToggleE2ee}
+                sx={{ color: e2eeEnabled ? "success.main" : "text.secondary" }}
+              >
+                {e2eeEnabled ? <LockIcon fontSize="small" /> : <LockOpenIcon fontSize="small" />}
+              </IconButton>
+            </Tooltip>
+          )}
           <Tooltip title="Emoji Burst Wave">
             <IconButton size="small" onClick={() => triggerShakeAction()} sx={{ color: "primary.main" }}>
               <SparkleIcon fontSize="small" />
@@ -917,11 +1129,13 @@ const Chat = ({ chatId, user }) => {
                   <MessageComponent
                     message={value}
                     chatId={chatId}
+                    chatMembers={members}
                     isGroupAdmin={isAdmin}
                     onEdit={handleLocalEdit}
                     onDelete={handleLocalDelete}
                     onReply={handleSetReply}
                     onReact={handleLocalReact}
+                    onPollUpdate={handleLocalPollUpdate}
                     onViewProfile={setViewingUser}
                   />
                 </div>
@@ -962,6 +1176,10 @@ const Chat = ({ chatId, user }) => {
           onCancelVoice={() => setVoiceActive(false)}
           enterToSend={enterToSend}
           onCelebrateSend={spawnChatBurst}
+          onOpenGifStudio={() => setShowGifStudio(true)}
+          isGroupChat={isGroupChat}
+          e2eeEnabled={e2eeEnabled}
+          peerPublicKey={peerPublicKey}
         />
       ) : (
         <Box
@@ -987,9 +1205,31 @@ const Chat = ({ chatId, user }) => {
         anchorEl={fileMenuAnchor}
         chatId={chatId}
         onStartVoiceNote={() => setVoiceActive(true)}
+        onOpenGifStudio={() => setShowGifStudio(true)}
+        onOpenCreatePoll={() => setShowPollDialog(true)}
         enterToSend={enterToSend}
         onToggleEnterToSend={() => setEnterToSendPreference(!enterToSend)}
       />
+
+      {showGifStudio && (
+        <Suspense fallback={null}>
+          <GifStudioDialog
+            open={showGifStudio}
+            onClose={() => setShowGifStudio(false)}
+            onSendGifFile={handleSendGifFile}
+          />
+        </Suspense>
+      )}
+
+      {showPollDialog && (
+        <Suspense fallback={null}>
+          <CreatePollDialog
+            open={showPollDialog}
+            onClose={() => setShowPollDialog(false)}
+            chatId={chatId}
+          />
+        </Suspense>
+      )}
 
       <ChatDetailsDrawer
         open={showInfo}

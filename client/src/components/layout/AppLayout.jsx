@@ -120,11 +120,19 @@ const AppLayout = () => (WrappedComponent) => {
     useSocketEvents(socket, eventHandlers);
     const deleteMenuAnchor = useRef(null);
 
-    const handleDeleteChats = (e, _id, groupChat) => {
+    const handleDeleteChats = (e, _id, groupChat, chatMeta = {}) => {
       e.preventDefault();
       deleteMenuAnchor.current = e.currentTarget;
       dispatch(setIsDeleteMenu(true));
-      dispatch(setSelectedDeleteChat({ chatId: _id, groupChat }));
+      dispatch(
+        setSelectedDeleteChat({
+          chatId: _id,
+          groupChat,
+          isPinned: Boolean(chatMeta.isPinned),
+          isMuted: Boolean(chatMeta.isMuted),
+          isArchived: Boolean(chatMeta.isArchived),
+        })
+      );
     };
     
     const handleMobileClose = () => dispatch(setIsMobile(false));
@@ -175,6 +183,7 @@ const AppLayout = () => (WrappedComponent) => {
             </Stack>
             <ChatList
               w="100%"
+              handleDeleteChat={handleDeleteChats}
               chats={data?.chats}
               chatId={chatId}
               user={user}
