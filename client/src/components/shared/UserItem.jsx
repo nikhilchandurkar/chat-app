@@ -1,5 +1,5 @@
 import { Add as AddIcon, Remove as RemoveIcon } from "@mui/icons-material";
-import { Avatar, IconButton, ListItem, Stack, Typography } from "@mui/material";
+import { Avatar, Box, IconButton, ListItem, Stack, Typography } from "@mui/material";
 import React, { memo } from "react";
 
 import { transformImage } from "../../lib/feature";
@@ -16,36 +16,43 @@ const UserItem = ({
   const avatarSrc = transformImage(typeof avatar === "string" ? avatar : avatar?.url);
 
   return (
-    <ListItem>
+    <ListItem disableGutters sx={{ px: 0.5, py: 0.75 }}>
       <Stack
-        direction={"row"}
-        alignItems={"center"}
-        spacing={"1rem"}
-        width={"100%"}
+        direction="row"
+        alignItems="center"
+        spacing={1.25}
+        width="100%"
+        minWidth={0}
         {...styling}
       >
-        <Avatar src={avatarSrc} alt={displayName} sx={{ bgcolor: "#236B4A", color: "#fff" }}>
+        <Avatar
+          src={avatarSrc}
+          alt={displayName}
+          sx={{ bgcolor: "#236B4A", color: "#fff", width: 38, height: 38, flexShrink: 0 }}
+        >
           {displayName[0].toUpperCase()}
         </Avatar>
 
-        <Typography
-          variant="body1"
-          sx={{
-            flexGrow: 1,
-            display: "-webkit-box",
-            WebkitLineClamp: 1,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            width: "100%",
-          }}
-        >
-          {displayName}
-        </Typography>
+        <Box sx={{ flex: 1, minWidth: 0 }}>
+          <Typography
+            variant="body2"
+            fontWeight={600}
+            noWrap
+          >
+            {displayName}
+          </Typography>
+          {username && (
+            <Typography variant="caption" color="text.secondary" noWrap display="block">
+              @{username}
+            </Typography>
+          )}
+        </Box>
 
         <IconButton
           size="small"
+          aria-label={isAdded ? `Remove ${displayName}` : `Add ${displayName}`}
           sx={{
+            flexShrink: 0,
             bgcolor: isAdded ? "error.main" : "primary.main",
             color: "white",
             "&:hover": {
@@ -55,7 +62,7 @@ const UserItem = ({
           onClick={() => handler(_id)}
           disabled={handlerIsLoading}
         >
-          {isAdded ? <RemoveIcon /> : <AddIcon />}
+          {isAdded ? <RemoveIcon fontSize="small" /> : <AddIcon fontSize="small" />}
         </IconButton>
       </Stack>
     </ListItem>

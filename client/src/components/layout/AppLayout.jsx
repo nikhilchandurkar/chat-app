@@ -160,7 +160,7 @@ const AppLayout = () => (WrappedComponent) => {
           </Box>
         </Drawer>
 
-        <Box sx={{ display: 'flex', height: 'calc(100vh - 4rem)', bgcolor: 'background.default' }}>
+        <Box sx={{ display: "flex", height: "calc(100dvh - 4rem)", minHeight: 0, bgcolor: "background.default" }}>
           <Grid container sx={{ height: '100%', m: 0, p: 0 }}>
             <Grid item
               sm={4}

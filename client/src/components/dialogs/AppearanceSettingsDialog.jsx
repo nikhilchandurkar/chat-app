@@ -16,9 +16,10 @@ import {
   Stack,
   IconButton,
 } from "@mui/material";
-import { Close as CloseIcon, Palette, VolumeUp, Animation, Vibration } from "@mui/icons-material";
+import { Close as CloseIcon, Palette, Animation, Vibration, KeyboardReturn } from "@mui/icons-material";
 import { useDispatch, useSelector } from "react-redux";
 import { toggleTheme } from "../../redux/reducers/misc";
+import { emitPreferencesChanged } from "../../utils/feedback";
 
 const AppearanceSettingsDialog = ({ open, onClose }) => {
   const dispatch = useDispatch();
@@ -33,6 +34,9 @@ const AppearanceSettingsDialog = ({ open, onClose }) => {
   const [messageEffects, setMessageEffects] = useState(localStorage.getItem("chat_message_effects") !== "false");
   const [hapticFeedback, setHapticFeedback] = useState(localStorage.getItem("chat_haptics") !== "false");
   const [soundEffects, setSoundEffects] = useState(localStorage.getItem("chat_sounds") !== "false");
+  const [enterToSend, setEnterToSend] = useState(localStorage.getItem("chat_enter_to_send") !== "false");
+  const [shakeEnabled, setShakeEnabled] = useState(localStorage.getItem("chat_shake_enabled") !== "false");
+  const [shakeAction, setShakeAction] = useState(localStorage.getItem("chat_shake_action") || "wave");
 
   const handleSave = () => {
     localStorage.setItem("chat_wallpaper", wallpaper);
@@ -42,6 +46,10 @@ const AppearanceSettingsDialog = ({ open, onClose }) => {
     localStorage.setItem("chat_message_effects", messageEffects.toString());
     localStorage.setItem("chat_haptics", hapticFeedback.toString());
     localStorage.setItem("chat_sounds", soundEffects.toString());
+    localStorage.setItem("chat_enter_to_send", enterToSend.toString());
+    localStorage.setItem("chat_shake_enabled", shakeEnabled.toString());
+    localStorage.setItem("chat_shake_action", shakeAction);
+    emitPreferencesChanged();
     onClose();
   };
 
@@ -170,7 +178,46 @@ const AppearanceSettingsDialog = ({ open, onClose }) => {
               }
               label={<Typography variant="body2">In-App Sound Effects (Subtle audio cues)</Typography>}
             />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={shakeEnabled}
+                  onChange={(e) => setShakeEnabled(e.target.checked)}
+                  sx={{ "& .Mui-checked": { color: "#236B4A" }, "& .Mui-checked + .MuiSwitch-track": { backgroundColor: "#236B4A" } }}
+                />
+              }
+              label={<Typography variant="body2">Shake Device Gestures (Wave / Jump / Theme)</Typography>}
+            />
           </Stack>
+          {shakeEnabled && (
+            <RadioGroup row value={shakeAction} onChange={(e) => setShakeAction(e.target.value)} sx={{ mt: 1 }}>
+              <FormControlLabel value="wave" control={<Radio size="small" />} label={<Typography variant="caption">Emoji Wave</Typography>} />
+              <FormControlLabel value="scroll_bottom" control={<Radio size="small" />} label={<Typography variant="caption">Jump to Latest</Typography>} />
+              <FormControlLabel value="theme" control={<Radio size="small" />} label={<Typography variant="caption">Toggle Theme</Typography>} />
+            </RadioGroup>
+          )}
+        </Box>
+
+        <Divider sx={{ my: 2, borderColor: isDark ? "#343B36" : "#E3E6E1" }} />
+
+        {/* Composer Send Preference */}
+        <Box>
+          <Box display="flex" alignItems="center" gap={1} mb={1}>
+            <KeyboardReturn sx={{ fontSize: 20, color: "#236B4A" }} />
+            <Typography variant="subtitle2" fontWeight={600}>
+              Chat Composer
+            </Typography>
+          </Box>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={enterToSend}
+                onChange={(e) => setEnterToSend(e.target.checked)}
+                sx={{ "& .Mui-checked": { color: "#236B4A" }, "& .Mui-checked + .MuiSwitch-track": { backgroundColor: "#236B4A" } }}
+              />
+            }
+            label={<Typography variant="body2">Enter Key Sends Message (Off = Tap Send Button)</Typography>}
+          />
         </Box>
       </DialogContent>
 

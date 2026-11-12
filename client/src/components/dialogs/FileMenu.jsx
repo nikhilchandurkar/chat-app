@@ -1,17 +1,19 @@
-import { ListItemText, Menu, MenuItem, MenuList, Tooltip } from "@mui/material";
+import { Divider, ListItemIcon, ListItemText, Menu, MenuItem, MenuList, Switch } from "@mui/material";
 import React, { useRef } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { setIsFileMenu, setUploadingLoader } from "../../redux/reducers/misc";
 import {
   AudioFile as AudioFileIcon,
   Image as ImageIcon,
+  KeyboardReturn as EnterKeyIcon,
+  Mic as MicIcon,
   UploadFile as UploadFileIcon,
   VideoFile as VideoFileIcon,
 } from "@mui/icons-material";
 import toast from "react-hot-toast";
 import { useSendAttachmentsMutation } from "../../redux/api/api";
 
-const FileMenu = ({ anchorEl, chatId }) => {
+const FileMenu = ({ anchorEl, chatId, onStartVoiceNote, enterToSend = true, onToggleEnterToSend }) => {
   const { isFileMenu } = useSelector((state) => state.misc);
 
   const dispatch = useDispatch();
@@ -30,17 +32,23 @@ const FileMenu = ({ anchorEl, chatId }) => {
   const selectVideo = () => videoRef.current?.click();
   const selectFile = () => fileRef.current?.click();
 
+  const handleVoicePick = () => {
+    closeFileMenu();
+    onStartVoiceNote?.();
+  };
+
   const fileChangeHandler = async (e, key) => {
     const files = Array.from(e.target.files || []);
 
     if (files.length <= 0) return;
 
-    if (files.length > 5)
+    if (files.length > 5) {
       return toast.error(`You can only send 5 ${key} at a time`);
+    }
 
     const hasLargeFile = files.some((file) => file.size > 1024 * 1024 * 25);
     if (hasLargeFile) {
-      return toast.error(`Files must be smaller than 25MB`);
+      return toast.error("Files must be smaller than 25MB");
     }
 
     dispatch(setUploadingLoader(true));
@@ -50,7 +58,6 @@ const FileMenu = ({ anchorEl, chatId }) => {
 
     try {
       const myForm = new FormData();
-
       myForm.append("chatId", chatId);
       files.forEach((file) => myForm.append("files", file));
 
@@ -61,10 +68,9 @@ const FileMenu = ({ anchorEl, chatId }) => {
       } else {
         toast.error(res.error?.data?.message || `Failed to send ${key}`, { id: toastId });
       }
-    } catch (error) {
+    } catch {
       toast.error("Failed to upload attachments", { id: toastId });
     } finally {
-      // Clear input value so same file can be selected again
       if (e.target) e.target.value = "";
       dispatch(setUploadingLoader(false));
     }
@@ -72,47 +78,24 @@ const FileMenu = ({ anchorEl, chatId }) => {
 
   return (
     <Menu anchorEl={anchorEl} open={isFileMenu} onClose={closeFileMenu}>
-      <div
-        style={{
-          width: "10rem",
-        }}
-      >
-        <MenuList>
+      <div style={{ minWidth: "13rem" }}>
+        <MenuList dense>
           <MenuItem onClick={selectImage}>
-            <Tooltip title="Image">
-              <ImageIcon />
-            </Tooltip>
-            <ListItemText style={{ marginLeft: "0.5rem" }}>Image</ListItemText>
+            <ListItemIcon><ImageIcon fontSize="small" color="primary" /></ListItemIcon>
+            <ListItemText>Photo / Image</ListItemText>
             <input
               type="file"
               multiple
-              accept="image/png, image/jpeg, image/gif"
+              accept="image/*"
               style={{ display: "none" }}
               onChange={(e) => fileChangeHandler(e, "Images")}
               ref={imageRef}
             />
           </MenuItem>
 
-          <MenuItem onClick={selectAudio}>
-            <Tooltip title="Audio">
-              <AudioFileIcon />
-            </Tooltip>
-            <ListItemText style={{ marginLeft: "0.5rem" }}>Audio</ListItemText>
-            <input
-              type="file"
-              multiple
-              accept="audio/mpeg, audio/wav"
-              style={{ display: "none" }}
-              onChange={(e) => fileChangeHandler(e, "Audios")}
-              ref={audioRef}
-            />
-          </MenuItem>
-
           <MenuItem onClick={selectVideo}>
-            <Tooltip title="Video">
-              <VideoFileIcon />
-            </Tooltip>
-            <ListItemText style={{ marginLeft: "0.5rem" }}>Video</ListItemText>
+            <ListItemIcon><VideoFileIcon fontSize="small" color="primary" /></ListItemIcon>
+            <ListItemText>Video</ListItemText>
             <input
               type="file"
               multiple
@@ -123,11 +106,22 @@ const FileMenu = ({ anchorEl, chatId }) => {
             />
           </MenuItem>
 
+          <MenuItem onClick={selectAudio}>
+            <ListItemIcon><AudioFileIcon fontSize="small" color="primary" /></ListItemIcon>
+            <ListItemText>Audio File</ListItemText>
+            <input
+              type="file"
+              multiple
+              accept="audio/*"
+              style={{ display: "none" }}
+              onChange={(e) => fileChangeHandler(e, "Audios")}
+              ref={audioRef}
+            />
+          </MenuItem>
+
           <MenuItem onClick={selectFile}>
-            <Tooltip title="File">
-              <UploadFileIcon />
-            </Tooltip>
-            <ListItemText style={{ marginLeft: "0.5rem" }}>File</ListItemText>
+            <ListItemIcon><UploadFileIcon fontSize="small" color="primary" /></ListItemIcon>
+            <ListItemText>Document / File</ListItemText>
             <input
               type="file"
               multiple
@@ -137,6 +131,27 @@ const FileMenu = ({ anchorEl, chatId }) => {
               ref={fileRef}
             />
           </MenuItem>
+
+          {onStartVoiceNote && (
+            <MenuItem onClick={handleVoicePick}>
+              <ListItemIcon><MicIcon fontSize="small" color="error" /></ListItemIcon>
+              <ListItemText>Record Voice Note</ListItemText>
+            </MenuItem>
+          )}
+
+          {onToggleEnterToSend && (
+            <>
+              <Divider sx={{ my: 0.5 }} />
+              <MenuItem onClick={onToggleEnterToSend}>
+                <ListItemIcon><EnterKeyIcon fontSize="small" /></ListItemIcon>
+                <ListItemText
+                  primary="Enter sends message"
+                  secondary={enterToSend ? "Shift+Enter for new line" : "Tap Send button to send"}
+                />
+                <Switch size="small" checked={enterToSend} />
+              </MenuItem>
+            </>
+          )}
         </MenuList>
       </div>
     </Menu>
