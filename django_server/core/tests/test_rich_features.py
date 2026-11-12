@@ -112,6 +112,11 @@ class RichFeaturesTestCase(APITestCase):
 
     def test_upload_image_story_returns_valid_media_url(self):
         from django.core.files.uploadedfile import SimpleUploadedFile
+        from apps.storage_app.services.file_validator import validate_file_header
+
+        jfif_bytes = b"\xFF\xD8\xFF\xE0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
+        ok, err_msg = validate_file_header(jfif_bytes, "photo.jfif")
+        self.assertTrue(ok, err_msg)
 
         png_bytes = (
             b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"

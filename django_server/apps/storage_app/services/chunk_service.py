@@ -148,7 +148,7 @@ class ChunkUploadService:
         # Generate thumbnail for images
         thumbnail_dir = (storage_root / "thumbnails" / str(user.id)).resolve()
         thumb_path = ""
-        if ext.lower() in (".jpg", ".jpeg", ".png", ".webp", ".gif"):
+        if ext.lower() in (".jpg", ".jpeg", ".jfif", ".png", ".webp", ".gif"):
             thumb_full = generate_image_thumbnail(str(final_file_path), thumbnail_dir)
             if thumb_full:
                 thumb_path = thumb_full

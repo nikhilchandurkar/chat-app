@@ -107,7 +107,7 @@ const StatusSection = () => {
     const lowerName = (f.name || "").toLowerCase();
     const isVideo = f.type.startsWith("video/") || /\.(mp4|webm|ogg|mov|mkv|m4v)$/.test(lowerName);
     const isImage =
-      f.type.startsWith("image/") || /\.(jpg|jpeg|png|gif|webp|bmp|heic|heif|avif)$/.test(lowerName);
+      f.type.startsWith("image/") || /\.(jpg|jpeg|jfif|png|gif|webp|bmp|heic|heif|avif)$/.test(lowerName);
     if (!isVideo && !isImage) {
       toast.error("Please select an image, GIF, or video file.");
       return;

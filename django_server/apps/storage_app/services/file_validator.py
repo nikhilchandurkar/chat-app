@@ -10,7 +10,7 @@ DANGEROUS_EXTENSIONS = {
 
 ALLOWED_EXTENSIONS = {
     # Images
-    ".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg", ".heic", ".heif", ".avif",
+    ".jpg", ".jpeg", ".jfif", ".pjpeg", ".pjp", ".png", ".gif", ".webp", ".bmp", ".svg", ".heic", ".heif", ".avif",
     # Documents
     ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".csv", ".rtf",
     # Audio
@@ -63,7 +63,7 @@ def validate_file_header(header_bytes: bytes, file_name: str) -> tuple[bool, str
             return False, f"Disallowed file format detected: {desc}."
 
     # 4. Strict Magic Signature Verification for common types
-    if ext in (".jpg", ".jpeg") and not header_bytes.startswith(b"\xFF\xD8\xFF"):
+    if ext in (".jpg", ".jpeg", ".jfif", ".pjpeg", ".pjp") and not header_bytes.startswith(b"\xFF\xD8\xFF"):
         return False, "Corrupted image file header (not a valid JPEG)."
     if ext == ".png" and not header_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
         return False, "Corrupted image file header (not a valid PNG)."
