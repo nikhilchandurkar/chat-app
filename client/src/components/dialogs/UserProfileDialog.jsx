@@ -123,6 +123,9 @@ const UserProfileDialog = ({ open, onClose, userId, initialUser = null }) => {
 
   const handleFriendAction = async () => {
     if (!normalizedId || isSelf) return;
+    if (profileUser.relationship === "friends" || profileUser.relationship === "sent") {
+      return;
+    }
     try {
       if (profileUser.relationship === "received" && profileUser.pendingRequestId) {
         const res = await acceptFriendRequest({ requestId: profileUser.pendingRequestId, accept: true }).unwrap();

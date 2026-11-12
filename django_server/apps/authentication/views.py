@@ -1316,6 +1316,49 @@ class ForgotPasswordOTPResetView(APIView):
         return response
 
 
+def _get_relationships_map(viewer, targets):
+    """Computes viewer -> target relationship metadata ('friends' | 'sent' | 'received' | 'none') in batch."""
+    from apps.chat.models import ConversationMember
+
+    target_ids = [t.id for t in targets if t and t.id != viewer.id]
+    rel_map = {str(tid): {"relationship": "none", "pendingRequestId": None} for tid in target_ids}
+    if not target_ids:
+        return rel_map
+
+    direct_conv_ids = ConversationMember.objects.filter(
+        user=viewer,
+        conversation__type="direct",
+    ).values_list("conversation_id", flat=True)
+    dm_peer_ids = set(
+        ConversationMember.objects.filter(
+            conversation_id__in=direct_conv_ids,
+            user_id__in=target_ids,
+        ).values_list("user_id", flat=True)
+    )
+    for uid in dm_peer_ids:
+        rel_map[str(uid)] = {"relationship": "friends", "pendingRequestId": None}
+
+    reqs = Request.objects.filter(
+        (Q(sender=viewer, receiver_id__in=target_ids) | Q(sender_id__in=target_ids, receiver=viewer)),
+        status__in=["accepted", "pending"],
+    ).order_by("-created_at")
+
+    for req in reqs:
+        peer_id = str(req.receiver_id if req.sender_id == viewer.id else req.sender_id)
+        entry = rel_map.get(peer_id)
+        if not entry or entry["relationship"] == "friends":
+            continue
+        if req.status == "accepted":
+            rel_map[peer_id] = {"relationship": "friends", "pendingRequestId": None}
+        elif req.status == "pending":
+            if req.sender_id == viewer.id and entry["relationship"] == "none":
+                rel_map[peer_id] = {"relationship": "sent", "pendingRequestId": str(req.id)}
+            elif req.receiver_id == viewer.id:
+                rel_map[peer_id] = {"relationship": "received", "pendingRequestId": str(req.id)}
+
+    return rel_map
+
+
 class SearchUserView(APIView):
     permission_classes = [IsAuthenticated]
     throttle_classes = [SearchThrottle]
@@ -1365,9 +1408,16 @@ class SearchUserView(APIView):
             for _, cand in fuzzy_ranked[: max(0, 20 - len(users))]:
                 users.append(cand)
 
+        rel_map = _get_relationships_map(request.user, users)
+        serialized_users = UserSerializer(users, many=True).data
+        for item in serialized_users:
+            rel_info = rel_map.get(str(item.get("_id") or item.get("id")), {})
+            item["relationship"] = rel_info.get("relationship", "none")
+            item["pendingRequestId"] = rel_info.get("pendingRequestId")
+
         return Response({
             "success": True,
-            "users": UserSerializer(users, many=True).data
+            "users": serialized_users,
         })
 
 
@@ -1380,20 +1430,35 @@ class SendFriendRequestView(APIView):
         if not user_id:
             return Response({"success": False, "message": "userId is required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        target = User.objects.filter(id=user_id).first()
+        target = User.objects.filter(id=user_id, is_active=True).first()
         if not target or target == request.user:
             return Response({"success": False, "message": "Target user not found or invalid."}, status=status.HTTP_400_BAD_REQUEST)
 
-        req, created = Request.objects.get_or_create(
+        if BlockedUser.objects.filter(
+            Q(user=request.user, blocked_user=target) | Q(user=target, blocked_user=request.user)
+        ).exists():
+            return Response({"success": False, "message": "Cannot send friend request to this user."}, status=status.HTTP_403_FORBIDDEN)
+
+        rel_info = _get_relationships_map(request.user, [target]).get(str(target.id), {})
+        rel = rel_info.get("relationship", "none")
+        if rel == "friends":
+            return Response({"success": False, "message": "You are already friends with this user."}, status=status.HTTP_400_BAD_REQUEST)
+        if rel == "sent":
+            return Response({"success": False, "message": "Request already sent."}, status=status.HTTP_400_BAD_REQUEST)
+        if rel == "received":
+            return Response(
+                {"success": False, "message": "This user already sent you a friend request. Accept it in notifications."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        req, _created = Request.objects.get_or_create(
             sender=request.user,
             receiver=target,
             defaults={"status": "pending"}
         )
-        if not created and req.status == "pending":
-            return Response({"success": False, "message": "Request already sent."}, status=status.HTTP_400_BAD_REQUEST)
-
-        req.status = "pending"
-        req.save(update_fields=["status"])
+        if req.status != "pending":
+            req.status = "pending"
+            req.save(update_fields=["status"])
         return Response({"success": True, "message": "Friend request sent."})
 
 
@@ -1409,8 +1474,11 @@ class AcceptFriendRequestView(APIView):
             return Response({"success": False, "message": "Request not found."}, status=status.HTTP_404_NOT_FOUND)
 
         if accept:
-            req.status = "accepted"
-            req.save(update_fields=["status"])
+            if req.status != "accepted":
+                req.status = "accepted"
+                req.save(update_fields=["status"])
+            # Keep any opposite-direction pending request in sync
+            Request.objects.filter(sender=request.user, receiver=req.sender, status="pending").update(status="accepted")
             # Create a 1-to-1 conversation if one does not exist
             from apps.chat.models import Conversation, ConversationMember
             conv = Conversation.objects.filter(

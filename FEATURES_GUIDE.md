@@ -34,8 +34,8 @@ Type any of these inside any DM or Group message box to trigger full-screen Fram
 
 ## 3. Touch, Mobile & Desktop Gestures (Hidden Power Shortcuts)
 
-- **Swipe Right on a message bubble:** Instantly quote-reply to that message.
-- **Swipe Left on a message bubble:** Instant ❤️ heart reaction.
+- **Swipe Left on a message bubble:** Instantly quote-reply to that message.
+- **Swipe Right on a message bubble:** Instant ❤️ heart reaction.
 - **Double-tap (mobile or desktop) on a message:** Instant ❤️ reaction.
 - **Long-press / Hold any message (mobile):** Opens **Hold Spotlight** with quick reaction pills, **Reply**, **Reply in Thread**, **Copy**, **Star**, **Forward** (disabled for View-Once media), **View Profile**, **Pin** (admin), **Edit**, and **Delete for Me / Everyone**.
 - **Right-click a message (desktop):** Context menu with **Reply**, **Reply in Thread**, **Seen By** (timestamped member read receipts), and **Delete**.

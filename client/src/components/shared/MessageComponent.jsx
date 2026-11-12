@@ -140,10 +140,10 @@ const MessageComponent = ({
   // 60fps Framer Motion values (zero React re-renders during drag/hold)
   const dragX = useMotionValue(0);
   const bubbleScale = useMotionValue(1);
-  const replyIconScale = useTransform(dragX, [8, SWIPE_THRESHOLD, 80], [0.25, 1.15, 1.25]);
-  const replyIconOpacity = useTransform(dragX, [8, SWIPE_THRESHOLD], [0, 1]);
-  const heartIconScale = useTransform(dragX, [-80, -SWIPE_THRESHOLD, -8], [1.25, 1.15, 0.25]);
-  const heartIconOpacity = useTransform(dragX, [-SWIPE_THRESHOLD, -8], [1, 0]);
+  const replyIconScale = useTransform(dragX, [-80, -SWIPE_THRESHOLD, -8], [1.25, 1.15, 0.25]);
+  const replyIconOpacity = useTransform(dragX, [-SWIPE_THRESHOLD, -8], [1, 0]);
+  const heartIconScale = useTransform(dragX, [8, SWIPE_THRESHOLD, 80], [0.25, 1.15, 1.25]);
+  const heartIconOpacity = useTransform(dragX, [8, SWIPE_THRESHOLD], [0, 1]);
 
   const wrapperRef = useRef(null);
   const burstCounterRef = useRef(0);
@@ -405,9 +405,9 @@ const MessageComponent = ({
       if (!st) return;
 
       if (st.axis === "swipe") {
-        if (currentDrag >= SWIPE_THRESHOLD) {
+        if (currentDrag <= -SWIPE_THRESHOLD) {
           onReply?.(message);
-        } else if (currentDrag <= -SWIPE_THRESHOLD) {
+        } else if (currentDrag >= SWIPE_THRESHOLD) {
           handleReact("❤️");
         }
         return;
@@ -675,39 +675,11 @@ const MessageComponent = ({
           if (!isDeleted && !editMode) handleReact("❤️");
         }}
       >
-        {/* Left Swipe Indicator -> Reply */}
+        {/* Left Swipe (drag right) Indicator -> Quick Heart React */}
         <motion.div
           style={{
             position: "absolute",
             left: 4,
-            scale: replyIconScale,
-            opacity: replyIconOpacity,
-            pointerEvents: "none",
-            zIndex: 0,
-          }}
-        >
-          <Box
-            sx={{
-              width: 32,
-              height: 32,
-              borderRadius: "50%",
-              bgcolor: "#236B4A",
-              color: "#FFFFFF",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxShadow: 2,
-            }}
-          >
-            <ReplyIcon sx={{ fontSize: 18 }} />
-          </Box>
-        </motion.div>
-
-        {/* Right Swipe Indicator -> Quick Heart React */}
-        <motion.div
-          style={{
-            position: "absolute",
-            right: 4,
             scale: heartIconScale,
             opacity: heartIconOpacity,
             pointerEvents: "none",
@@ -728,6 +700,34 @@ const MessageComponent = ({
             }}
           >
             <HeartIcon sx={{ fontSize: 17 }} />
+          </Box>
+        </motion.div>
+
+        {/* Right Edge Indicator (swipe left) -> Reply */}
+        <motion.div
+          style={{
+            position: "absolute",
+            right: 4,
+            scale: replyIconScale,
+            opacity: replyIconOpacity,
+            pointerEvents: "none",
+            zIndex: 0,
+          }}
+        >
+          <Box
+            sx={{
+              width: 32,
+              height: 32,
+              borderRadius: "50%",
+              bgcolor: "#236B4A",
+              color: "#FFFFFF",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: 2,
+            }}
+          >
+            <ReplyIcon sx={{ fontSize: 18 }} />
           </Box>
         </motion.div>
 

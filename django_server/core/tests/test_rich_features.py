@@ -3,7 +3,7 @@
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from apps.authentication.models import User
+from apps.authentication.models import Request, User
 from apps.chat.models import Conversation, ConversationMember
 from apps.messages_app.models import Message, MessageReceipt
 from apps.status_app.models import UserStatus
@@ -344,6 +344,62 @@ class RichFeaturesTestCase(APITestCase):
         self.client.force_authenticate(user=self.alice)
         alice_list = self.client.get("/api/v1/chat/my")
         self.assertTrue(any(c["_id"] == str(dm.id) for c in alice_list.data["chats"]))
+
+    def test_cannot_send_friend_request_when_already_friends_and_search_relationship(self):
+        carol = User.objects.create_user(
+            email="carol_rich@example.com",
+            username="carol_rich",
+            password="StrongPassword123!",
+            name="Carol Rich",
+        )
+
+        # Before request: Carol appears as 'none'
+        s1 = self.client.get("/api/v1/user/search?name=carol")
+        self.assertEqual(s1.status_code, status.HTTP_200_OK)
+        self.assertEqual(s1.data["users"][0]["relationship"], "none")
+
+        # Alice sends request -> succeeds; Search shows 'sent'; duplicate blocked
+        send_res = self.client.put("/api/v1/user/sendrequest", {"userId": str(carol.id)}, format="json")
+        self.assertEqual(send_res.status_code, status.HTTP_200_OK)
+
+        s2 = self.client.get("/api/v1/user/search?name=carol")
+        self.assertEqual(s2.data["users"][0]["relationship"], "sent")
+
+        dup_res = self.client.put("/api/v1/user/sendrequest", {"userId": str(carol.id)}, format="json")
+        self.assertEqual(dup_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Carol sees 'received' and cannot send reverse request; accepts instead
+        self.client.force_authenticate(user=carol)
+        s3 = self.client.get("/api/v1/user/search?name=alice_rich")
+        self.assertEqual(s3.data["users"][0]["relationship"], "received")
+        req_id = s3.data["users"][0]["pendingRequestId"]
+        self.assertIsNotNone(req_id)
+
+        rev_res = self.client.put("/api/v1/user/sendrequest", {"userId": str(self.alice.id)}, format="json")
+        self.assertEqual(rev_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+        acc_res = self.client.put("/api/v1/user/acceptrequest", {"requestId": req_id, "accept": True}, format="json")
+        self.assertEqual(acc_res.status_code, status.HTTP_200_OK)
+
+        # Once friends: neither Carol nor Alice can send another friend request
+        again_carol = self.client.put("/api/v1/user/sendrequest", {"userId": str(self.alice.id)}, format="json")
+        self.assertEqual(again_carol.status_code, status.HTTP_400_BAD_REQUEST)
+
+        self.client.force_authenticate(user=self.alice)
+        again_alice = self.client.put("/api/v1/user/sendrequest", {"userId": str(carol.id)}, format="json")
+        self.assertEqual(again_alice.status_code, status.HTTP_400_BAD_REQUEST)
+
+        s4 = self.client.get("/api/v1/user/search?name=carol")
+        self.assertEqual(s4.data["users"][0]["relationship"], "friends")
+
+        # Even if DM exists without an accepted Request row, they are treated as friends
+        dm = Conversation.objects.create(type="direct", creator=self.alice)
+        ConversationMember.objects.create(conversation=dm, user=self.alice, role="member")
+        ConversationMember.objects.create(conversation=dm, user=self.bob, role="member")
+        dm_req = self.client.put("/api/v1/user/sendrequest", {"userId": str(self.bob.id)}, format="json")
+        self.assertEqual(dm_req.status_code, status.HTTP_400_BAD_REQUEST)
+        s5 = self.client.get("/api/v1/user/search?name=bob_rich")
+        self.assertEqual(s5.data["users"][0]["relationship"], "friends")
 
 
 

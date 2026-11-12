@@ -17,8 +17,12 @@ import { Close as CloseIcon, Search as SearchIcon } from "@mui/icons-material";
 import UserItem from "../shared/UserItem";
 import { useDispatch, useSelector } from "react-redux";
 import { setIsSearch } from "../../redux/reducers/misc";
-import { useLazySearchUserQuery, useSendFriendRequestMutation } from "../../redux/api/api";
-import { useAsyncMutation } from "../../hooks/hook";
+import {
+  useAcceptFriendRequestMutation,
+  useLazySearchUserQuery,
+  useSendFriendRequestMutation,
+} from "../../redux/api/api";
+import toast from "react-hot-toast";
 
 const UserProfileDialog = lazy(() => import("../dialogs/UserProfileDialog"));
 
@@ -48,26 +52,65 @@ const Search = () => {
 
   const searchCloseHandler = () => dispatch(setIsSearch(false));
 
-  const [sendFriendRequest] = useAsyncMutation(useSendFriendRequestMutation);
+  const [sendFriendRequest] = useSendFriendRequestMutation();
+  const [acceptFriendRequest] = useAcceptFriendRequestMutation();
 
   useEffect(() => {
+    if (!isSearch) return;
     if (!debouncedSearch) {
       setUsers([]);
       setError("");
       return;
     }
-    searchUser(debouncedSearch)
+    searchUser(debouncedSearch, false)
       .then(({ data }) => {
         setUsers(data?.users || []);
         setError("");
       })
       .catch(() => setError("Failed to fetch users. Please try again."));
-  }, [debouncedSearch, searchUser]);
+  }, [debouncedSearch, isSearch, searchUser]);
 
   const addFriendHandler = async (id) => {
+    const target = users.find((u) => (u._id || u.id) === id);
+    if (target?.relationship === "friends" || target?.relationship === "sent") {
+      return;
+    }
     setLoadingIds((prev) => [...prev, id]);
-    await sendFriendRequest("Sending friend request...", { userId: id });
-    setLoadingIds((prev) => prev.filter((loadingId) => loadingId !== id));
+    const toastId = toast.loading("Sending friend request...");
+    try {
+      const res = await sendFriendRequest({ userId: id }).unwrap();
+      toast.success(res?.message || "Friend request sent.", { id: toastId });
+      setUsers((prev) =>
+        prev.map((u) => ((u._id || u.id) === id ? { ...u, relationship: "sent" } : u))
+      );
+      if (debouncedSearch) {
+        searchUser(debouncedSearch, false).then(({ data }) => {
+          if (data?.users) setUsers(data.users);
+        });
+      }
+    } catch (err) {
+      toast.error(err?.data?.message || "Could not send friend request", { id: toastId });
+    } finally {
+      setLoadingIds((prev) => prev.filter((loadingId) => loadingId !== id));
+    }
+  };
+
+  const acceptFriendHandler = async (user) => {
+    const id = user?._id || user?.id;
+    if (!id || !user?.pendingRequestId) return;
+    setLoadingIds((prev) => [...prev, id]);
+    const toastId = toast.loading("Accepting friend request...");
+    try {
+      const res = await acceptFriendRequest({ requestId: user.pendingRequestId, accept: true }).unwrap();
+      toast.success(res?.message || "Friend request accepted.", { id: toastId });
+      setUsers((prev) =>
+        prev.map((u) => ((u._id || u.id) === id ? { ...u, relationship: "friends", pendingRequestId: null } : u))
+      );
+    } catch (err) {
+      toast.error(err?.data?.message || "Could not accept friend request", { id: toastId });
+    } finally {
+      setLoadingIds((prev) => prev.filter((loadingId) => loadingId !== id));
+    }
   };
 
   return (
@@ -157,6 +200,8 @@ const Search = () => {
                   key={user._id}
                   handler={addFriendHandler}
                   handlerIsLoading={loadingIds.includes(user._id)}
+                  relationship={user.relationship || "none"}
+                  onAcceptFriend={acceptFriendHandler}
                   onSelectUser={(u) => setSelectedUser(u)}
                 />
               ))

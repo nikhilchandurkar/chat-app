@@ -126,8 +126,8 @@ const Home = () => {
           </Stack>
 
           <Stack direction="row" spacing={1} justifyContent="center" flexWrap="wrap" mt={2.5} useFlexGap>
-            <Chip icon={<SparkleIcon fontSize="small" />} label="Hold message to react" size="small" variant="outlined" />
-            <Chip label="Swipe right to reply" size="small" variant="outlined" />
+            <Chip icon={<SparkleIcon fontSize="small" />} label="Hold or swipe right to ❤️" size="small" variant="outlined" />
+            <Chip label="Swipe left to reply" size="small" variant="outlined" />
           </Stack>
         </Paper>
       </motion.div>
