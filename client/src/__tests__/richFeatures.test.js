@@ -11,6 +11,7 @@ import { hashPin } from "../utils/appLock";
 import { transformImage } from "../lib/feature";
 import { extractCelebrationTrigger } from "../utils/feedback";
 import { extractYouTubeId, parseRemindCommand } from "../utils/interactive";
+import { buildUnreadRecap, getSmartReplySuggestions } from "../utils/chatEnhancements";
 
 describe("rich composer & security utilities", () => {
   it("encodes RGBA frames into a valid looping GIF89a blob", async () => {
@@ -91,6 +92,34 @@ describe("rich composer & security utilities", () => {
     const rem = parseRemindCommand("/remind me in 15m check builds");
     expect(rem?.content).toBe("⏰ Reminder: check builds");
     expect(rem?.scheduledFor instanceof Date).toBe(true);
+  });
+
+  it("builds local Catch Me Up unread recap & contextual smart reply chips", () => {
+    const replies = getSmartReplySuggestions(
+      { _id: "m1", sender: { _id: "u2", name: "Bob" }, content: "Where are you right now?" },
+      "u1"
+    );
+    expect(replies).toContain("On my way!");
+
+    const emptyForSelf = getSmartReplySuggestions(
+      { _id: "m2", sender: { _id: "u1", name: "Me" }, content: "Hello?" },
+      "u1"
+    );
+    expect(emptyForSelf).toEqual([]);
+
+    const recap = buildUnreadRecap(
+      [
+        { _id: "1", sender: { _id: "u2", name: "Bob" }, content: "Hey @alice can you review https://example.com ?" },
+        { _id: "2", sender: { _id: "u3", name: "Carol" }, content: "Vote here", attachments: [{ type: "poll", question: "Dinner?" }] },
+      ],
+      2,
+      "u1",
+      "alice"
+    );
+    expect(recap.questions.length).toBe(1);
+    expect(recap.mentions.length).toBe(1);
+    expect(recap.links[0].url).toBe("https://example.com");
+    expect(recap.highlights[0]).toContain("Dinner?");
   });
 });
 

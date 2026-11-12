@@ -478,6 +478,83 @@ class RichFeaturesTestCase(APITestCase):
         self.assertEqual(app_res.status_code, status.HTTP_200_OK)
         self.assertTrue(ConversationMember.objects.filter(conversation=self.conv, user=carol).exists())
 
+    def test_widgets_saved_vault_snooze_unread_and_bulk_actions(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        # 1. Saved Messages personal vault
+        saved_res = self.client.post("/api/v1/chat/saved")
+        self.assertEqual(saved_res.status_code, status.HTTP_200_OK)
+        vault_id = saved_res.data["chatId"]
+        my_chats = self.client.get("/api/v1/chat/my")
+        vault_entry = next((c for c in my_chats.data["chats"] if c["_id"] == vault_id), None)
+        self.assertIsNotNone(vault_entry)
+        self.assertTrue(vault_entry["isSavedMessages"])
+
+        # 2. Mark as Unread + Mute Snooze 8h
+        u_res = self.client.post(f"/api/v1/chat/unread/{self.conv.id}")
+        self.assertEqual(u_res.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(u_res.data["unreadCount"], 1)
+
+        m_res = self.client.post(f"/api/v1/chat/mute/{self.conv.id}", {"durationHours": 8}, format="json")
+        self.assertEqual(m_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(m_res.data["isMuted"])
+        self.assertIsNotNone(m_res.data["muteUntil"])
+
+        un_res = self.client.post(f"/api/v1/chat/mute/{self.conv.id}", {"mute": False}, format="json")
+        self.assertFalse(un_res.data["isMuted"])
+        self.assertIsNone(un_res.data["muteUntil"])
+
+        # 3. Interactive Checklist, Spin-the-Wheel, Countdown
+        todo_res = self.client.post(
+            "/api/v1/message/interactive/widget/create",
+            {"chatId": str(self.conv.id), "widgetType": "checklist", "title": "Trip Packing", "items": ["Passport", "Charger"]},
+            format="json",
+        )
+        self.assertEqual(todo_res.status_code, status.HTTP_201_CREATED)
+        todo_id = todo_res.data["message"]["_id"]
+        first_item_id = todo_res.data["message"]["attachments"][0]["items"][0]["id"]
+
+        tog = self.client.post(f"/api/v1/message/interactive/widget/{todo_id}/action", {"action": "toggle", "itemId": first_item_id}, format="json")
+        self.assertEqual(tog.status_code, status.HTTP_200_OK)
+        self.assertTrue(tog.data["attachments"][0]["items"][0]["done"])
+
+        add_it = self.client.post(f"/api/v1/message/interactive/widget/{todo_id}/action", {"action": "add", "text": "Water"}, format="json")
+        self.assertEqual(len(add_it.data["attachments"][0]["items"]), 3)
+
+        spin_res = self.client.post(
+            "/api/v1/message/interactive/widget/create",
+            {"chatId": str(self.conv.id), "widgetType": "roulette", "title": "Lunch", "options": ["Pizza", "Tacos", "Sushi"]},
+            format="json",
+        )
+        self.assertEqual(spin_res.status_code, status.HTTP_201_CREATED)
+        spin_id = spin_res.data["message"]["_id"]
+        spun = self.client.post(f"/api/v1/message/interactive/widget/{spin_id}/action", {"action": "spin"}, format="json")
+        self.assertEqual(spun.status_code, status.HTTP_200_OK)
+        self.assertEqual(spun.data["attachments"][0]["spinCount"], 1)
+        self.assertIn(spun.data["attachments"][0]["winnerText"], ["Pizza", "Tacos", "Sushi"])
+
+        cd_res = self.client.post(
+            "/api/v1/message/interactive/widget/create",
+            {"chatId": str(self.conv.id), "widgetType": "countdown", "title": "Launch", "targetIso": (timezone.now() + timedelta(hours=2)).isoformat()},
+            format="json",
+        )
+        self.assertEqual(cd_res.status_code, status.HTTP_201_CREATED)
+
+        # 4. Bulk Star, Bulk Forward, Bulk Delete For Me
+        msg_ids = [todo_id, spin_id]
+        bs = self.client.post("/api/v1/message/bulk-star", {"messageIds": msg_ids}, format="json")
+        self.assertEqual(bs.status_code, status.HTTP_200_OK)
+        self.assertEqual(bs.data["starredCount"], 2)
+
+        bf = self.client.post("/api/v1/message/forward", {"messageIds": msg_ids, "targetChatIds": [vault_id]}, format="json")
+        self.assertEqual(bf.status_code, status.HTTP_200_OK)
+        self.assertEqual(bf.data["forwardedCount"], 2)
+
+        bd = self.client.post("/api/v1/message/bulk-delete", {"messageIds": [cd_res.data["message"]["_id"]], "mode": "me"}, format="json")
+        self.assertEqual(bd.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(bd.data["deletedIds"]), 1)
+
 
 
 

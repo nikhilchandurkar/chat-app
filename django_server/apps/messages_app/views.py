@@ -483,13 +483,35 @@ class ForwardMessageView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        message_id = request.data.get("messageId")
-        chat_ids = request.data.get("chatIds", [])
-        original = get_object_or_404(Message.objects.select_related("conversation"), id=message_id)
+        message_ids = request.data.get("messageIds")
+        if not isinstance(message_ids, list) or not message_ids:
+            single_id = request.data.get("messageId")
+            message_ids = [single_id] if single_id else []
+        chat_ids = request.data.get("targetChatIds") or request.data.get("chatIds") or []
 
-        # IDOR protection: User must be a member of the original conversation!
-        if not original.conversation.member_records.filter(user=request.user).exists():
-            return Response({"success": False, "message": "Cannot forward a message from a conversation you are not a member of."}, status=status.HTTP_403_FORBIDDEN)
+        if not message_ids or not chat_ids:
+            return Response({"success": False, "message": "messageIds and targetChatIds are required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        originals = list(
+            Message.objects.filter(id__in=message_ids, view_once=False, is_deleted=False)
+            .select_related("conversation")
+            .order_by("created_at")
+        )
+        if not originals:
+            return Response({"success": False, "message": "No forwardable messages found."}, status=status.HTTP_404_NOT_FOUND)
+
+        allowed_conv_ids = set(
+            ConversationMember.objects.filter(
+                user=request.user,
+                conversation_id__in=[o.conversation_id for o in originals],
+            ).values_list("conversation_id", flat=True)
+        )
+        for orig in originals:
+            if orig.conversation_id not in allowed_conv_ids:
+                return Response(
+                    {"success": False, "message": "Cannot forward a message from a conversation you are not a member of."},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
         forwarded_messages = []
         for cid in chat_ids:
@@ -497,33 +519,42 @@ class ForwardMessageView(APIView):
             if not conv:
                 continue
 
-            with transaction.atomic():
-                new_msg = Message.objects.create(
-                    conversation=conv,
-                    sender=request.user,
-                    message_type=original.message_type,
-                    content=original.content,
-                    attachments=original.attachments,
-                    status="sent",
-                )
-                forwarded_messages.append(str(new_msg.id))
-
-                recipient_ids = get_conversation_recipient_ids(conv, request.user.id)
-                OutboxService.create_outbox_event(
-                    event_type="message.created",
-                    conversation_id=str(conv.id),
-                    payload={
-                        "event": "message.created",
-                        "conversation_id": str(conv.id),
-                        "message_id": str(new_msg.id),
-                        "sender_id": str(request.user.id),
-                        "sender_name": request.user.name or request.user.username,
-                        "content": original.decrypted_content,
-                        "attachments": original.attachments,
-                        "timestamp": new_msg.created_at.isoformat(),
-                        "recipient_ids": recipient_ids,
-                    }
-                )
+            for original in originals:
+                with transaction.atomic():
+                    new_msg = Message.objects.create(
+                        conversation=conv,
+                        sender=request.user,
+                        message_type=original.message_type,
+                        content=original.content,
+                        attachments=original.attachments,
+                        status="sent",
+                    )
+                    conv.updated_at = timezone.now()
+                    conv.save(update_fields=["updated_at"])
+                    ConversationMember.objects.filter(conversation=conv).exclude(user=request.user).update(
+                        unread_count=models.F("unread_count") + 1
+                    )
+                    forwarded_messages.append(str(new_msg.id))
+                    serialized_msg = MessageSerializer(new_msg).data
+                    recipient_ids = get_conversation_recipient_ids(conv, request.user.id)
+                    OutboxService.create_outbox_event(
+                        event_type="message.created",
+                        conversation_id=str(conv.id),
+                        payload={
+                            "event": "message.created",
+                            "legacy_event": "NEW_MESSAGE",
+                            "chatId": str(conv.id),
+                            "conversation_id": str(conv.id),
+                            "message_id": str(new_msg.id),
+                            "sender_id": str(request.user.id),
+                            "sender_name": request.user.name or request.user.username,
+                            "content": original.decrypted_content,
+                            "attachments": original.attachments,
+                            "timestamp": new_msg.created_at.isoformat(),
+                            "recipient_ids": recipient_ids,
+                            "message": serialized_msg,
+                        },
+                    )
 
         OutboxService.publish_pending()
         return Response({"success": True, "forwardedCount": len(forwarded_messages)})
@@ -1199,6 +1230,167 @@ class MoveGameView(APIView):
 
         _broadcast_interactive_update(msg, recipient_ids)
         return Response({"success": True, "attachments": attachments})
+
+
+class CreateWidgetView(APIView):
+    """Creates an interactive checklist (/todo), spin-the-wheel (/spin), or countdown widget."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .interactive import create_widget_state
+
+        chat_id = request.data.get("chatId") or request.data.get("conversation_id")
+        widget_type = (request.data.get("widgetType") or "checklist").strip().lower()
+        topic_name = str(request.data.get("topicName") or "").strip().lstrip("#")[:64]
+
+        conversation = get_object_or_404(Conversation, id=chat_id)
+        if not conversation.member_records.filter(user=request.user).exists():
+            return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            widget_state = create_widget_state(widget_type, request.user, options=request.data)
+        except ValueError as err:
+            return Response({"success": False, "message": str(err)}, status=status.HTTP_400_BAD_REQUEST)
+
+        labels = {
+            "checklist": f"☑️ {widget_state.get('title', 'Shared Checklist')}",
+            "roulette": f"🎡 {widget_state.get('title', 'Spin the Wheel')}",
+            "countdown": f"{widget_state.get('emoji', '⏳')} {widget_state.get('title', 'Countdown')}",
+        }
+        serialized = _publish_interactive_message(
+            conversation,
+            request.user,
+            "widget",
+            labels.get(widget_type, "Interactive Card"),
+            widget_state,
+            topic_name=topic_name,
+        )
+        return Response({"success": True, "message": serialized}, status=status.HTTP_201_CREATED)
+
+
+class ActionWidgetView(APIView):
+    """Applies a collaborative update on an in-chat checklist or spin-the-wheel widget."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        from .interactive import apply_widget_action
+
+        with transaction.atomic():
+            msg = get_object_or_404(Message.objects.select_for_update().select_related("conversation"), id=id)
+            if not msg.conversation.member_records.filter(user=request.user).exists():
+                return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
+
+            attachments = list(msg.attachments or [])
+            idx = next((i for i, a in enumerate(attachments) if isinstance(a, dict) and a.get("type") == "widget"), -1)
+            if idx < 0:
+                return Response({"success": False, "message": "Widget not found on message."}, status=status.HTTP_400_BAD_REQUEST)
+
+            next_state, err = apply_widget_action(attachments[idx], request.user, request.data)
+            if err:
+                return Response({"success": False, "message": err}, status=status.HTTP_400_BAD_REQUEST)
+
+            attachments[idx] = next_state
+            msg.attachments = attachments
+            msg.save(update_fields=["attachments"])
+            recipient_ids = get_conversation_recipient_ids(msg.conversation, request.user.id)
+
+        _broadcast_interactive_update(msg, recipient_ids)
+        return Response({"success": True, "attachments": attachments})
+
+
+class BulkStarMessagesView(APIView):
+    """Stars multiple messages at once for the current user."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from .models import StarredMessage
+
+        message_ids = request.data.get("messageIds") or []
+        if not isinstance(message_ids, list) or not message_ids:
+            return Response({"success": False, "message": "messageIds list required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user_conv_ids = set(
+            ConversationMember.objects.filter(user=request.user).values_list("conversation_id", flat=True)
+        )
+        msgs = list(Message.objects.filter(id__in=message_ids[:50], conversation_id__in=user_conv_ids))
+        count = 0
+        for m in msgs:
+            _, created = StarredMessage.objects.get_or_create(user=request.user, message=m)
+            if created:
+                count += 1
+        return Response({"success": True, "starredCount": len(msgs), "newlyStarred": count})
+
+
+class BulkDeleteMessagesView(APIView):
+    """Deletes multiple selected messages for 'me' or 'everyone'."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        message_ids = request.data.get("messageIds") or []
+        mode = str(request.data.get("mode") or "me").lower()
+        if not isinstance(message_ids, list) or not message_ids:
+            return Response({"success": False, "message": "messageIds list required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user_conv_ids = set(
+            ConversationMember.objects.filter(user=request.user).values_list("conversation_id", flat=True)
+        )
+        msgs = list(
+            Message.objects.filter(id__in=message_ids[:50], conversation_id__in=user_conv_ids)
+            .select_related("conversation")
+        )
+        if not msgs:
+            return Response({"success": True, "deletedIds": []})
+
+        deleted_ids = []
+        if mode == "everyone":
+            admin_conv_ids = set(request.user.admin_chats.values_list("id", flat=True))
+            for m in msgs:
+                is_authorized = (
+                    m.sender_id == request.user.id
+                    or m.conversation.creator_id == request.user.id
+                    or m.conversation_id in admin_conv_ids
+                )
+                if not is_authorized:
+                    continue
+                m.is_deleted = True
+                m.deleted_at = timezone.now()
+                m.content = ""
+                m.attachments = []
+                m.save(update_fields=["is_deleted", "deleted_at", "content", "attachments"])
+                deleted_ids.append(str(m.id))
+                recipient_ids = get_conversation_recipient_ids(m.conversation, request.user.id)
+                OutboxService.create_outbox_event(
+                    event_type="message.deleted",
+                    conversation_id=str(m.conversation_id),
+                    payload={
+                        "event": "message.deleted",
+                        "legacy_event": "MESSAGE_DELETED",
+                        "conversation_id": str(m.conversation_id),
+                        "chatId": str(m.conversation_id),
+                        "message_id": str(m.id),
+                        "messageId": str(m.id),
+                        "recipient_ids": recipient_ids,
+                    },
+                )
+            OutboxService.publish_pending()
+        else:
+            for m in msgs:
+                DeletedMessageForUser.objects.get_or_create(message=m, user=request.user)
+                deleted_ids.append(str(m.id))
+                OutboxService.create_outbox_event(
+                    event_type="message.deleted_for_me",
+                    conversation_id="",
+                    payload={
+                        "event": "message.deleted_for_me",
+                        "chatId": str(m.conversation_id),
+                        "message_id": str(m.id),
+                        "messageId": str(m.id),
+                        "recipient_ids": [str(request.user.id)],
+                    },
+                )
+            OutboxService.publish_pending()
+
+        return Response({"success": True, "deletedIds": deleted_ids, "mode": mode})
 
 
 class LiveLocationShareView(APIView):

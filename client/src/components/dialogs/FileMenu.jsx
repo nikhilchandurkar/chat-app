@@ -7,6 +7,7 @@ const MediaEditorDialog = lazy(() => import("./MediaEditorDialog"));
 import {
   AudioFile as AudioFileIcon,
   Brush as BrushIcon,
+  CheckBox as TodoWidgetIcon,
   GifBox as GifIcon,
   Headphones as HeadphonesIcon,
   Image as ImageIcon,
@@ -35,6 +36,7 @@ const FileMenu = ({
   onOpenWhiteboard,
   onShareLiveLocation,
   onOpenSchedule,
+  onOpenWidgetDialog,
   enterToSend = true,
   onToggleEnterToSend,
 }) => {
@@ -251,6 +253,18 @@ const FileMenu = ({
             >
               <ListItemIcon><PollIcon fontSize="small" color="secondary" /></ListItemIcon>
               <ListItemText>Create Poll</ListItemText>
+            </MenuItem>
+          )}
+
+          {onOpenWidgetDialog && (
+            <MenuItem
+              onClick={() => {
+                closeFileMenu();
+                onOpenWidgetDialog();
+              }}
+            >
+              <ListItemIcon><TodoWidgetIcon fontSize="small" color="primary" /></ListItemIcon>
+              <ListItemText>Checklist / Spin Wheel / Timer</ListItemText>
             </MenuItem>
           )}
 

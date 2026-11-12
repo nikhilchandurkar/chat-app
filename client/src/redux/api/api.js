@@ -270,11 +270,51 @@ const api = createApi({
     }),
 
     forwardMessage: builder.mutation({
-      query: ({ messageId, targetChatIds }) => ({
+      query: ({ messageId, messageIds, targetChatIds }) => ({
         url: `message/forward`,
         method: "POST",
         credentials: "include",
-        body: { messageId, targetChatIds },
+        body: {
+          ...(messageId ? { messageId } : {}),
+          ...(Array.isArray(messageIds) && messageIds.length ? { messageIds } : {}),
+          targetChatIds,
+        },
+      }),
+    }),
+
+    bulkStarMessages: builder.mutation({
+      query: (messageIds) => ({
+        url: `message/bulk-star`,
+        method: "POST",
+        credentials: "include",
+        body: { messageIds },
+      }),
+    }),
+
+    bulkDeleteMessages: builder.mutation({
+      query: ({ messageIds, mode = "me" }) => ({
+        url: `message/bulk-delete`,
+        method: "POST",
+        credentials: "include",
+        body: { messageIds, mode },
+      }),
+    }),
+
+    createWidget: builder.mutation({
+      query: (body) => ({
+        url: `message/interactive/widget/create`,
+        method: "POST",
+        credentials: "include",
+        body,
+      }),
+    }),
+
+    actionWidget: builder.mutation({
+      query: ({ messageId, ...body }) => ({
+        url: `message/interactive/widget/${messageId}/action`,
+        method: "POST",
+        credentials: "include",
+        body,
       }),
     }),
 
@@ -499,8 +539,37 @@ const api = createApi({
     }),
 
     toggleMuteChat: builder.mutation({
+      query: (arg) => {
+        const chatId = typeof arg === "object" ? arg.chatId : arg;
+        const body =
+          typeof arg === "object"
+            ? {
+                ...(arg.durationHours !== undefined ? { durationHours: arg.durationHours } : {}),
+                ...(arg.mute !== undefined ? { mute: arg.mute } : {}),
+              }
+            : {};
+        return {
+          url: `chat/mute/${chatId}`,
+          method: "POST",
+          credentials: "include",
+          body,
+        };
+      },
+      invalidatesTags: ["Chat"],
+    }),
+
+    markChatUnread: builder.mutation({
       query: (chatId) => ({
-        url: `chat/mute/${chatId}`,
+        url: `chat/unread/${chatId}`,
+        method: "POST",
+        credentials: "include",
+      }),
+      invalidatesTags: ["Chat"],
+    }),
+
+    openSavedMessages: builder.mutation({
+      query: () => ({
+        url: `chat/saved`,
         method: "POST",
         credentials: "include",
       }),
@@ -690,6 +759,10 @@ export const {
   useDeleteMessageMutation,
   useReactMessageMutation,
   useForwardMessageMutation,
+  useBulkStarMessagesMutation,
+  useBulkDeleteMessagesMutation,
+  useCreateWidgetMutation,
+  useActionWidgetMutation,
   useLazySearchMessagesQuery,
   useLazyGlobalSearchMessagesQuery,
   useLazyGetChatMediaQuery,
@@ -720,6 +793,8 @@ export const {
   useLazyGetMessageReceiptsQuery,
   useTogglePinChatMutation,
   useToggleMuteChatMutation,
+  useMarkChatUnreadMutation,
+  useOpenSavedMessagesMutation,
   useToggleArchiveChatMutation,
   useUpdateEphemeralTtlMutation,
   useGenerateInviteLinkMutation,

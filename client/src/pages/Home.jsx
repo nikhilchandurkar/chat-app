@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Button, Chip, Paper, Stack, Typography } from "@mui/material";
 import {
+  Bookmark as VaultIcon,
   ChatBubbleOutline as ChatIcon,
   DarkMode as ThemeIcon,
   GroupAdd as GroupIcon,
@@ -9,13 +10,28 @@ import {
 } from "@mui/icons-material";
 import { motion } from "framer-motion";
 import { useDispatch, useSelector } from "react-redux";
-import { setIsMobile, setIsNewGroup, setIsSearch, toggleTheme } from "../redux/reducers/misc";
+import toast from "react-hot-toast";
+import { useOpenSavedMessagesMutation } from "../redux/api/api";
+import { setActiveChatId, setIsMobile, setIsNewGroup, setIsSearch, toggleTheme } from "../redux/reducers/misc";
 
 const Home = () => {
   const dispatch = useDispatch();
   const { themeMode } = useSelector((state) => state.misc);
   const { user } = useSelector((state) => state.auth);
   const isDark = themeMode === "dark";
+  const [openSavedMessages, { isLoading: isOpeningVault }] = useOpenSavedMessagesMutation();
+
+  const handleOpenSaved = async () => {
+    try {
+      const res = await openSavedMessages().unwrap();
+      if (res?.chatId) {
+        dispatch(setActiveChatId(res.chatId));
+        dispatch(setIsMobile(false));
+      }
+    } catch {
+      toast.error("Could not open Saved Messages");
+    }
+  };
 
   return (
     <Box
@@ -111,6 +127,17 @@ const Home = () => {
                 sx={{ borderRadius: 2 }}
               >
                 New Group
+              </Button>
+              <Button
+                variant="outlined"
+                color="info"
+                fullWidth
+                startIcon={<VaultIcon />}
+                disabled={isOpeningVault}
+                onClick={handleOpenSaved}
+                sx={{ borderRadius: 2 }}
+              >
+                Saved Vault
               </Button>
             </Stack>
 

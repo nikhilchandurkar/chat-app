@@ -1,6 +1,7 @@
 import React, { memo } from "react";
 import { Box, IconButton, Stack, Typography, useTheme } from "@mui/material";
 import {
+  Bookmark as VaultIcon,
   MoreVert as MoreIcon,
   NotificationsOff as MutedIcon,
   PushPin as PinIcon,
@@ -15,6 +16,7 @@ const ChatItem = ({
   name,
   _id,
   groupChat = false,
+  isSavedMessages = false,
   isPinned = false,
   isMuted = false,
   isArchived = false,
@@ -93,7 +95,25 @@ const ChatItem = ({
         transition={{ delay: Math.min(0.25, 0.03 * index), duration: 0.22 }}
         style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", minWidth: 0 }}
       >
-        <AvatarCard avatar={avatar} name={name} />
+        {isSavedMessages ? (
+          <Box
+            sx={{
+              width: 44,
+              height: 44,
+              borderRadius: "50%",
+              bgcolor: "#0EA5E9",
+              color: "#FFFFFF",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+            }}
+          >
+            <VaultIcon />
+          </Box>
+        ) : (
+          <AvatarCard avatar={avatar} name={name} />
+        )}
 
         <Stack flex={1} minWidth={0}>
           <Stack direction="row" alignItems="center" spacing={0.5} minWidth={0}>
@@ -148,7 +168,7 @@ const ChatItem = ({
                 )}
                 {sameSender && !groupChat && (
                   <Typography variant="caption" sx={{ color: "rgba(255,255,255,0.85)", fontStyle: "italic" }}>
-                    Active Chat
+                    {isSavedMessages ? "Personal Vault" : "Active Chat"}
                   </Typography>
                 )}
                 {!sameSender && isOnline && !groupChat && (

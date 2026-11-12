@@ -21,6 +21,10 @@ from .views import (
     MoveGameView,
     LiveLocationShareView,
     LiveLocationUpdateView,
+    CreateWidgetView,
+    ActionWidgetView,
+    BulkStarMessagesView,
+    BulkDeleteMessagesView,
 )
 
 urlpatterns = [
@@ -38,6 +42,14 @@ urlpatterns = [
     path("interactive/location/share/", LiveLocationShareView.as_view(), name="message-location-share-slash"),
     path("interactive/location/<str:id>/update", LiveLocationUpdateView.as_view(), name="message-location-update"),
     path("interactive/location/<str:id>/update/", LiveLocationUpdateView.as_view(), name="message-location-update-slash"),
+    path("interactive/widget/create", CreateWidgetView.as_view(), name="message-widget-create"),
+    path("interactive/widget/create/", CreateWidgetView.as_view(), name="message-widget-create-slash"),
+    path("interactive/widget/<str:id>/action", ActionWidgetView.as_view(), name="message-widget-action"),
+    path("interactive/widget/<str:id>/action/", ActionWidgetView.as_view(), name="message-widget-action-slash"),
+    path("bulk-star", BulkStarMessagesView.as_view(), name="message-bulk-star"),
+    path("bulk-star/", BulkStarMessagesView.as_view(), name="message-bulk-star-slash"),
+    path("bulk-delete", BulkDeleteMessagesView.as_view(), name="message-bulk-delete"),
+    path("bulk-delete/", BulkDeleteMessagesView.as_view(), name="message-bulk-delete-slash"),
     path("schedule", ScheduleMessageView.as_view(), name="message-schedule"),
     path("schedule/", ScheduleMessageView.as_view(), name="message-schedule-slash"),
     path("scheduled/<str:chat_id>", ListScheduledMessagesView.as_view(), name="message-scheduled-list"),

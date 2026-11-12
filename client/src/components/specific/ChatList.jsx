@@ -1,8 +1,36 @@
-import { Box, Button, Chip, Stack, Typography } from "@mui/material";
-import { Archive as ArchiveIcon, Search as SearchIcon } from "@mui/icons-material";
+import {
+  Box,
+  Button,
+  Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  IconButton,
+  Stack,
+  TextField,
+  Tooltip,
+  Typography,
+} from "@mui/material";
+import {
+  Add as AddIcon,
+  Archive as ArchiveIcon,
+  Bookmark as VaultIcon,
+  Close as CloseIcon,
+  Folder as FolderIcon,
+  Search as SearchIcon,
+} from "@mui/icons-material";
 import React, { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { useDispatch } from "react-redux";
-import { setIsNewGroup, setIsSearch } from "../../redux/reducers/misc";
+import { useDispatch, useSelector } from "react-redux";
+import toast from "react-hot-toast";
+import { useOpenSavedMessagesMutation } from "../../redux/api/api";
+import { setActiveChatId, setIsMobile, setIsNewGroup, setIsSearch } from "../../redux/reducers/misc";
+import {
+  CHAT_FOLDER_EVENT,
+  createChatFolder,
+  deleteChatFolder,
+  getChatFolders,
+} from "../../utils/chatEnhancements";
 import ChatItem from "../shared/ChatItem";
 import StatusSection from "./StatusSection";
 
@@ -49,9 +77,34 @@ const ChatList = ({
   handleDeleteChat,
 }) => {
   const dispatch = useDispatch();
+  const { user } = useSelector((state) => state.auth);
+  const userId = user?._id || user?.id;
   const [filterMode, setFilterMode] = useState("all");
   const [draftTick, setDraftTick] = useState(0);
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [folders, setFolders] = useState(() => getChatFolders(userId));
+  const [folderDialogOpen, setFolderDialogOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [openSavedMessages, { isLoading: isOpeningVault }] = useOpenSavedMessagesMutation();
+
+  useEffect(() => {
+    setFolders(getChatFolders(userId));
+    const syncFolders = () => setFolders(getChatFolders(userId));
+    window.addEventListener(CHAT_FOLDER_EVENT, syncFolders);
+    return () => window.removeEventListener(CHAT_FOLDER_EVENT, syncFolders);
+  }, [userId]);
+
+  const handleOpenSavedVault = async () => {
+    try {
+      const res = await openSavedMessages().unwrap();
+      if (res?.chatId) {
+        dispatch(setActiveChatId(res.chatId));
+        dispatch(setIsMobile(false));
+      }
+    } catch {
+      toast.error("Could not open Saved Messages");
+    }
+  };
 
   useEffect(() => {
     const bump = () => setDraftTick((t) => t + 1);
@@ -81,42 +134,56 @@ const ChatList = ({
     return { activeChats: active, unreadChats: unread, groupChats: groups, archivedChats: archived };
   }, [chats, newMessagesAlert]);
 
+  const activeFolder = folders.find((f) => f.id === filterMode);
   const showArchived = filterMode === "archived";
-  const displayedChats =
-    filterMode === "archived"
-      ? archivedChats
-      : filterMode === "unread"
-      ? unreadChats
-      : filterMode === "groups"
-      ? groupChats
-      : activeChats;
+  const displayedChats = activeFolder
+    ? activeChats.filter((c) => (activeFolder.chatIds || []).map(String).includes(String(c._id)))
+    : filterMode === "archived"
+    ? archivedChats
+    : filterMode === "unread"
+    ? unreadChats
+    : filterMode === "groups"
+    ? groupChats
+    : activeChats;
 
   return (
     <Stack width={w} direction="column" overflow="auto" height="100%">
       <StatusSection />
 
-      {chats.length > 0 && (
-        <Box sx={{ px: 1.5, pt: 0.75, pb: 0.25, flexShrink: 0 }}>
+      <Stack direction="row" spacing={0.75} alignItems="center" sx={{ px: 1.5, pt: 0.75, pb: 0.25, flexShrink: 0 }}>
+        <Button
+          fullWidth
+          size="small"
+          variant="outlined"
+          startIcon={<SearchIcon fontSize="small" />}
+          onClick={() => setGlobalSearchOpen(true)}
+          sx={{
+            justifyContent: "flex-start",
+            borderRadius: 2,
+            textTransform: "none",
+            color: "text.secondary",
+            borderColor: "divider",
+            bgcolor: "action.hover",
+            py: 0.55,
+            minWidth: 0,
+          }}
+        >
+          Search messages...
+        </Button>
+        <Tooltip title="Saved Messages Vault (personal notes & files across devices)">
           <Button
-            fullWidth
             size="small"
             variant="outlined"
-            startIcon={<SearchIcon fontSize="small" />}
-            onClick={() => setGlobalSearchOpen(true)}
-            sx={{
-              justifyContent: "flex-start",
-              borderRadius: 2,
-              textTransform: "none",
-              color: "text.secondary",
-              borderColor: "divider",
-              bgcolor: "action.hover",
-              py: 0.55,
-            }}
+            color="info"
+            startIcon={<VaultIcon fontSize="small" />}
+            disabled={isOpeningVault}
+            onClick={handleOpenSavedVault}
+            sx={{ borderRadius: 2, textTransform: "none", flexShrink: 0, py: 0.55 }}
           >
-            Search messages across all chats...
+            Saved
           </Button>
-        </Box>
-      )}
+        </Tooltip>
+      </Stack>
 
       {chats.length > 0 && (
         <Stack
@@ -167,12 +234,40 @@ const ChatList = ({
               onClick={() => setFilterMode("archived")}
             />
           )}
+          {folders.map((fld) => (
+            <Chip
+              key={fld.id}
+              size="small"
+              icon={<FolderIcon sx={{ fontSize: 14 }} />}
+              label={fld.name}
+              clickable
+              color={filterMode === fld.id ? "primary" : "default"}
+              variant={filterMode === fld.id ? "filled" : "outlined"}
+              onClick={() => setFilterMode(fld.id)}
+              onDelete={
+                filterMode === fld.id
+                  ? () => {
+                      setFolders(deleteChatFolder(userId, fld.id));
+                      setFilterMode("all");
+                    }
+                  : undefined
+              }
+            />
+          ))}
+          <Chip
+            size="small"
+            clickable
+            icon={<AddIcon sx={{ fontSize: 14 }} />}
+            label="Folder"
+            variant="outlined"
+            onClick={() => setFolderDialogOpen(true)}
+          />
         </Stack>
       )}
 
       {displayedChats.length > 0 ? (
         displayedChats.map((data, index) => {
-          const { avatar, _id, name, groupChat, members, memberNames, isPinned, isMuted, isArchived, unreadCount, lastMessage } = data;
+          const { avatar, _id, name, groupChat, isSavedMessages, members, memberNames, isPinned, isMuted, isArchived, unreadCount, lastMessage } = data;
           const newMessageAlert = Array.isArray(newMessagesAlert)
             ? newMessagesAlert.find(({ chatId: alertChatId }) => alertChatId === _id)
             : undefined;
@@ -194,6 +289,7 @@ const ChatList = ({
               _id={_id}
               key={_id}
               groupChat={groupChat}
+              isSavedMessages={Boolean(isSavedMessages)}
               isPinned={isPinned}
               isMuted={isMuted}
               isArchived={isArchived}
@@ -231,6 +327,46 @@ const ChatList = ({
           <GlobalMessageSearchDialog open={globalSearchOpen} onClose={() => setGlobalSearchOpen(false)} />
         </Suspense>
       )}
+
+      <Dialog open={folderDialogOpen} onClose={() => setFolderDialogOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", py: 1.25 }}>
+          <Typography variant="subtitle1" fontWeight={700}>New Chat Folder</Typography>
+          <IconButton size="small" onClick={() => setFolderDialogOpen(false)} aria-label="Close">
+            <CloseIcon fontSize="small" />
+          </IconButton>
+        </DialogTitle>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const clean = newFolderName.trim();
+            if (!clean) return;
+            const next = createChatFolder(userId, clean);
+            setFolders(next);
+            const created = next.find((f) => f.name.toLowerCase() === clean.toLowerCase());
+            if (created) setFilterMode(created.id);
+            setNewFolderName("");
+            setFolderDialogOpen(false);
+            toast.success(`Folder "${clean}" created — use any chat's ⋮ menu to add chats`);
+          }}
+        >
+          <DialogContent sx={{ pt: 0.5 }}>
+            <TextField
+              autoFocus
+              fullWidth
+              size="small"
+              label="Folder name (e.g. Work, Family, Study)"
+              value={newFolderName}
+              onChange={(e) => setNewFolderName(e.target.value)}
+            />
+          </DialogContent>
+          <DialogActions sx={{ px: 2.5, pb: 2 }}>
+            <Button onClick={() => setFolderDialogOpen(false)}>Cancel</Button>
+            <Button type="submit" variant="contained" disabled={!newFolderName.trim()}>
+              Create
+            </Button>
+          </DialogActions>
+        </form>
+      </Dialog>
     </Stack>
   );
 };

@@ -87,7 +87,19 @@ Type any of these inside any DM or Group message box to trigger full-screen Fram
   - **Invite Link Join Approval & Group QR Code:** Toggle **Require Admin approval** so invitees wait in a pending **Approve / Reject** queue, plus share/download a scannable **Group Invite QR Code**.
   - **`@all` / `@everyone` Mentions:** Type `@` in groups to ping everyone with an amber mention badge.
 - **Pre-Send Media Editor (`📎 Attach -> Photo / Video`):** Rotate, crop (`Free`, `1:1`, `4:3`, `16:9`), freehand draw, stamp text overlays, or trim/mute/rotate videos and add a caption before sending.
-- **Chat List Filters, Saved Drafts & Wallpapers:** Filter chats with **All | Unread | Groups | Archived** chips; unfinished messages auto-save per chat (`📝 Draft: ...`); customize chat backgrounds under **Chat Header -> Settings -> Chat Wallpaper**.
+- **Chat List Filters, Saved Vault, Folders, Drafts & Wallpapers:**
+  - Tap **Saved** in the sidebar or Home screen to open your **Saved Messages** personal cross-device vault.
+  - Filter chats with **All | Unread | Groups | Archived**, or tap **+ Folder** to create custom tabs (`Work`, `Family`) and assign chats via any chat's `⋮` menu.
+  - Use a chat's `⋮` menu to **Mark as Unread** or **Snooze** notifications for `1h / 8h / 24h`.
+  - Unfinished messages auto-save per chat (`📝 Draft: ...`); customize chat backgrounds under **Chat Header -> Settings -> Chat Wallpaper**.
+- **Interactive Cards (`📎 Attach -> Checklist / Spin Wheel / Timer` or `/todo`, `/spin`):**
+  - **Shared Checklist (`/todo Title | a, b`):** Live synced collaborative checkboxes & item additions.
+  - **Spin the Wheel (`/spin Title | opt1, opt2`):** Synced animated prize/decision roulette wheel for all participants.
+  - **Live Countdown Card:** Live ticking timer down to an event date & time.
+- **Productivity In-Chat (`Catch Me Up`, Smart Replies & Bulk Multi-Select):**
+  - Tap the **Recap** icon in the chat header for a local **Catch Me Up** summary (questions, `@mentions`, shared links, cards, active senders).
+  - Tap 1-tap **Smart Reply** pills above an empty composer to reply instantly.
+  - Long-press or right-click any message -> **Select Multiple** to **Copy**, **Star**, **Forward**, or **Delete** batches cleanly.
 
 ---
 

@@ -2,6 +2,7 @@ import {
   Avatar,
   Box,
   Button,
+  Checkbox,
   Chip,
   Dialog,
   DialogActions,
@@ -36,6 +37,7 @@ import {
   MoreHoriz as MoreIcon,
   Person as PersonIcon,
   Poll as PollIcon,
+  CheckBox as CheckBoxIcon,
   Forum as ThreadIcon,
 } from "@mui/icons-material";
 import React, { memo, useState, useRef, useEffect, useCallback, lazy, Suspense } from "react";
@@ -47,6 +49,7 @@ import EmojiBurst from "./EmojiBurst";
 import MiniGameBubble from "./MiniGameBubble";
 import LiveLocationBubble from "./LiveLocationBubble";
 import ViewOnceBubble from "./ViewOnceBubble";
+import InteractiveWidgetBubble from "./InteractiveWidgetBubble";
 import { AnimatePresence, animate, motion, useMotionValue, useTransform } from "framer-motion";
 import { useSelector } from "react-redux";
 import {
@@ -82,6 +85,10 @@ const MessageComponent = ({
   onViewOnceConsumed,
   onOpenThread,
   onViewProfile,
+  selectionMode = false,
+  isSelected = false,
+  onToggleSelect,
+  onStartMultiSelect,
   chatMembers = [],
   chatId,
   isGroupAdmin,
@@ -604,6 +611,18 @@ const MessageComponent = ({
                 <ListItemIcon><StarIcon fontSize="small" sx={{ color: "#f59e0b" }} /></ListItemIcon>
                 <ListItemText>Star Message</ListItemText>
               </MenuItem>
+              {onStartMultiSelect && (
+                <MenuItem
+                  onClick={() => {
+                    setHoldSpotlightOpen(false);
+                    onStartMultiSelect(message);
+                  }}
+                  sx={{ py: 1.25 }}
+                >
+                  <ListItemIcon><CheckBoxIcon fontSize="small" color="primary" /></ListItemIcon>
+                  <ListItemText>Select Multiple</ListItemText>
+                </MenuItem>
+              )}
               {!message.viewOnce && (
                 <MenuItem onClick={handleForwardClick} sx={{ py: 1.25 }}>
                   <ListItemIcon><ForwardIcon fontSize="small" /></ListItemIcon>
@@ -663,7 +682,15 @@ const MessageComponent = ({
           WebkitUserSelect: "none",
           userSelect: "none",
         }}
-        onContextMenu={handleContextMenu}
+        onClick={
+          selectionMode
+            ? (e) => {
+                e.stopPropagation();
+                onToggleSelect?.(message);
+              }
+            : undefined
+        }
+        onContextMenu={selectionMode ? undefined : handleContextMenu}
         onPointerEnter={(e) => {
           if (e.pointerType === "mouse") setIsDesktopHover(true);
         }}
@@ -671,10 +698,20 @@ const MessageComponent = ({
           if (e.pointerType === "mouse") setIsDesktopHover(false);
         }}
         onDoubleClick={() => {
+          if (selectionMode) return;
           if (Date.now() - lastBurstTapAtRef.current < 450) return;
           if (!isDeleted && !editMode) handleReact("❤️");
         }}
       >
+        {selectionMode && (
+          <Checkbox
+            size="small"
+            checked={Boolean(isSelected)}
+            onChange={() => onToggleSelect?.(message)}
+            onClick={(e) => e.stopPropagation()}
+            sx={{ mr: 0.5, p: 0.4, flexShrink: 0 }}
+          />
+        )}
         {/* Left Swipe (drag right) Indicator -> Quick Heart React */}
         <motion.div
           style={{
@@ -980,6 +1017,12 @@ const MessageComponent = ({
                     sameSender={sameSender}
                     onUpdated={onInteractiveUpdate || onPollUpdate}
                   />
+                ) : attachments?.find((a) => a && typeof a === "object" && a.type === "widget") ? (
+                  <InteractiveWidgetBubble
+                    messageId={_id}
+                    widget={attachments.find((a) => a && typeof a === "object" && a.type === "widget")}
+                    onUpdated={onInteractiveUpdate || onPollUpdate}
+                  />
                 ) : attachments?.find((a) => a && typeof a === "object" && a.type === "poll") ? (
                   (() => {
                     const poll = attachments.find((a) => a && typeof a === "object" && a.type === "poll");
@@ -1209,6 +1252,18 @@ const MessageComponent = ({
           <MenuItem onClick={handleOpenReceipts} dense>
             <ListItemIcon><DoneAllIcon fontSize="small" color="primary" /></ListItemIcon>
             <ListItemText>Seen By</ListItemText>
+          </MenuItem>
+        )}
+        {onStartMultiSelect && (
+          <MenuItem
+            dense
+            onClick={() => {
+              handleCloseMenu();
+              onStartMultiSelect(message);
+            }}
+          >
+            <ListItemIcon><CheckBoxIcon fontSize="small" color="primary" /></ListItemIcon>
+            <ListItemText>Select Multiple</ListItemText>
           </MenuItem>
         )}
         <MenuItem onClick={openDeleteChoices} dense sx={{ color: "error.main" }}>

@@ -210,7 +210,13 @@ class MyChatsView(APIView):
                 last_msg_by_conv[msg.conversation_id] = msg
 
         results = []
+        now = timezone.now()
         for mem in memberships:
+            if mem.is_muted and mem.mute_until and mem.mute_until <= now:
+                mem.is_muted = False
+                mem.mute_until = None
+                mem.save(update_fields=["is_muted", "mute_until"])
+
             c = mem.conversation
             raw_last = last_msg_by_conv.get(c.id)
             last_msg = raw_last if (raw_last and (not mem.cleared_at or raw_last.created_at > mem.cleared_at)) else None
@@ -218,6 +224,26 @@ class MyChatsView(APIView):
 
             if not c.group_chat:
                 if not co_members:
+                    if c.name == "Saved Messages" and c.creator_id == request.user.id:
+                        results.append({
+                            "_id": str(c.id),
+                            "id": str(c.id),
+                            "name": "Saved Messages",
+                            "username": request.user.username,
+                            "groupChat": False,
+                            "isSavedMessages": True,
+                            "avatar": [],
+                            "members": [str(request.user.id)],
+                            "memberNames": ["Saved Messages"],
+                            "isPinned": mem.is_pinned,
+                            "isMuted": mem.is_muted,
+                            "muteUntil": mem.mute_until.isoformat() if mem.mute_until else None,
+                            "isArchived": mem.is_archived,
+                            "ephemeral_ttl": c.ephemeral_ttl,
+                            "unreadCount": mem.unread_count,
+                            "lastMessage": last_msg.decrypted_content if last_msg else "",
+                            "lastMessageTime": last_msg.created_at.isoformat() if last_msg else c.updated_at.isoformat(),
+                        })
                     continue
                 other = co_members[0]
                 other_profile = getattr(other, "profile", None)
@@ -235,11 +261,13 @@ class MyChatsView(APIView):
                     "name": other.name or other.username,
                     "username": other.username,
                     "groupChat": False,
+                    "isSavedMessages": False,
                     "avatar": [avatar_url] if avatar_url else [],
                     "members": [str(other.id)],
                     "memberNames": [other.name],
                     "isPinned": mem.is_pinned,
                     "isMuted": mem.is_muted,
+                    "muteUntil": mem.mute_until.isoformat() if mem.mute_until else None,
                     "isArchived": mem.is_archived,
                     "ephemeral_ttl": c.ephemeral_ttl,
                     "unreadCount": mem.unread_count,
@@ -261,11 +289,13 @@ class MyChatsView(APIView):
                     "id": str(c.id),
                     "name": c.name,
                     "groupChat": True,
+                    "isSavedMessages": False,
                     "avatar": avatars,
                     "members": [str(m.id) for m in members_list],
                     "memberNames": [m.name for m in members_list],
                     "isPinned": mem.is_pinned,
                     "isMuted": mem.is_muted,
+                    "muteUntil": mem.mute_until.isoformat() if mem.mute_until else None,
                     "isArchived": mem.is_archived,
                     "ephemeral_ttl": c.ephemeral_ttl,
                     "unreadCount": mem.unread_count,
@@ -482,10 +512,92 @@ class ToggleMuteConversationView(APIView):
 
     def post(self, request, id):
         mem = get_object_or_404(ConversationMember, conversation_id=id, user=request.user)
-        mem.is_muted = not mem.is_muted
-        mem.save(update_fields=["is_muted"])
+        dur_hours = request.data.get("durationHours")
+        explicit_mute = request.data.get("mute")
+
+        if explicit_mute is False:
+            mem.is_muted = False
+            mem.mute_until = None
+        elif dur_hours is not None:
+            try:
+                hours = int(dur_hours)
+            except (TypeError, ValueError):
+                hours = 0
+            mem.is_muted = True
+            mem.mute_until = timezone.now() + timedelta(hours=hours) if hours > 0 else None
+        else:
+            mem.is_muted = not mem.is_muted
+            if not mem.is_muted:
+                mem.mute_until = None
+
+        mem.save(update_fields=["is_muted", "mute_until"])
         _emit_member_sync(request.user.id, id)
-        return Response({"success": True, "isMuted": mem.is_muted})
+        return Response({
+            "success": True,
+            "isMuted": mem.is_muted,
+            "muteUntil": mem.mute_until.isoformat() if mem.mute_until else None,
+        })
+
+
+class MarkUnreadView(APIView):
+    """Marks a conversation as having unread messages for the current user."""
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, id):
+        mem = get_object_or_404(ConversationMember, conversation_id=id, user=request.user)
+        mem.unread_count = max(1, int(mem.unread_count or 0))
+        mem.save(update_fields=["unread_count"])
+        _emit_member_sync(request.user.id, id)
+        return Response({"success": True, "unreadCount": mem.unread_count})
+
+
+class SavedMessagesView(APIView):
+    """Gets or creates the authenticated user's personal Saved Messages self-chat vault."""
+    permission_classes = [IsAuthenticated]
+
+    def _get_or_create_vault(self, user):
+        vault = (
+            Conversation.objects.filter(
+                type="direct",
+                group_chat=False,
+                creator=user,
+                name="Saved Messages",
+                member_records__user=user,
+            )
+            .order_by("created_at")
+            .first()
+        )
+        if vault and vault.member_records.count() == 1:
+            mem = vault.member_records.filter(user=user).first()
+            if mem and mem.is_deleted_for_user:
+                mem.is_deleted_for_user = False
+                mem.save(update_fields=["is_deleted_for_user"])
+            return vault
+
+        with transaction.atomic():
+            vault = Conversation.objects.create(
+                name="Saved Messages",
+                type="direct",
+                group_chat=False,
+                creator=user,
+            )
+            ConversationMember.objects.create(
+                conversation=vault,
+                user=user,
+                role="owner",
+                is_pinned=True,
+            )
+        return vault
+
+    def get(self, request):
+        vault = self._get_or_create_vault(request.user)
+        _emit_member_sync(request.user.id, vault.id)
+        return Response({"success": True, "chatId": str(vault.id), "chat": ChatDetailsSerializer(vault).data})
+
+    def post(self, request):
+        vault = self._get_or_create_vault(request.user)
+        _emit_member_sync(request.user.id, vault.id)
+        return Response({"success": True, "chatId": str(vault.id), "chat": ChatDetailsSerializer(vault).data})
 
 
 class ToggleArchiveConversationView(APIView):

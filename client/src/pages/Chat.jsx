@@ -2,8 +2,12 @@ import {
   ArrowBack as BackIcon,
   AttachFile as AttachFileIcon,
   AutoAwesome as SparkleIcon,
+  Bookmark as VaultIcon,
   Close as CloseIcon,
+  ContentCopy as CopyIcon,
+  Delete as DeleteIcon,
   EmojiEmotions as EmojiIcon,
+  Forward as ForwardIcon,
   GifBox as GifIcon,
   Headphones as HeadphonesIcon,
   Info as InfoIcon,
@@ -13,6 +17,8 @@ import {
   RadioButtonChecked as WalkieIcon,
   Search as SearchIcon,
   Send as SendIcon,
+  Star as StarIcon,
+  Summarize as RecapIcon,
 } from "@mui/icons-material";
 import {
   Avatar,
@@ -62,12 +68,15 @@ import {
 } from "../constants/events";
 import { useSocketEvents } from "../hooks/hook";
 import {
+  useBulkDeleteMessagesMutation,
+  useBulkStarMessagesMutation,
   useChatDetailsQuery,
   useGetMessagesQuery,
   useGetUserE2eeKeyQuery,
   usePublishE2eeKeyMutation,
   useSendAttachmentsMutation,
 } from "../redux/api/api";
+import { buildUnreadRecap, getSmartReplySuggestions } from "../utils/chatEnhancements";
 import { setIsFileMenu, setIsMobile, setUploadingLoader, toggleTheme } from "../redux/reducers/misc";
 import ChatDetailsDrawer from "../components/specific/ChatDetailsDrawer";
 import { getSocket } from "../socket.jsx";
@@ -97,6 +106,8 @@ const CreatePollDialog = lazy(() => import("../components/dialogs/CreatePollDial
 const MiniGameDialog = lazy(() => import("../components/dialogs/MiniGameDialog"));
 const WhiteboardDialog = lazy(() => import("../components/dialogs/WhiteboardDialog"));
 const ScheduleMessageDialog = lazy(() => import("../components/dialogs/ScheduleMessageDialog"));
+const CreateWidgetDialog = lazy(() => import("../components/dialogs/CreateWidgetDialog"));
+const ForwardMessageDialog = lazy(() => import("../components/dialogs/ForwardMessageDialog"));
 
 const QUICK_EMOJIS = ["❤️", "🔥", "😂", "👍", "🙏", "🎉", "😍", "🥳", "🚀", "👏"];
 const LAST_SEEN_KEY = "chat_last_seen";
@@ -145,6 +156,7 @@ const ChatComposer = React.memo(
     slowCooldownLeft = 0,
     onStartSlowCooldown,
     isAdmin = false,
+    smartReplies = [],
     onWalkieStart,
     onWalkieStop,
     walkieRecording = false,
@@ -200,13 +212,48 @@ const ChatComposer = React.memo(
       resizeTextarea();
     }, [message, resizeTextarea]);
 
-    const doSend = useCallback(async () => {
-      if (!message.trim()) return;
+    const doSend = useCallback(async (overrideText = null) => {
+      const candidate = typeof overrideText === "string" ? overrideText : message;
+      if (!candidate.trim()) return;
       if (slowCooldownLeft > 0 && !isAdmin) {
         toast.error(`Slow mode active — wait ${slowCooldownLeft}s`);
         return;
       }
-      const clean = message.trim();
+      const clean = candidate.trim();
+
+      // Quick slash shortcuts: /todo Title | item1, item2   and   /spin Title | opt1, opt2
+      const todoMatch = /^\/todo\s+(.+)$/i.exec(clean);
+      const spinMatch = /^\/spin\s+(.+)$/i.exec(clean);
+      if (todoMatch || spinMatch) {
+        const rawBody = (todoMatch || spinMatch)[1];
+        const parts = rawBody.split("|");
+        const title = (parts.length > 1 ? parts[0] : todoMatch ? "Shared Checklist" : "Spin the Wheel").trim();
+        const items = (parts.length > 1 ? parts.slice(1).join("|") : parts[0])
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+        try {
+          const base = server || (typeof window !== "undefined" ? window.location.origin : "");
+          await axios.post(
+            `${base}/api/v1/message/interactive/widget/create`,
+            {
+              chatId,
+              widgetType: todoMatch ? "checklist" : "roulette",
+              title,
+              ...(todoMatch ? { items } : { options: items }),
+              topicName: activeTopic && activeTopic !== "all" ? activeTopic : "",
+            },
+            { withCredentials: true }
+          );
+          setMessage("");
+          setShowEmoji(false);
+          onClearReply();
+          return;
+        } catch (err) {
+          toast.error(err?.response?.data?.message || "Failed to create interactive card");
+          return;
+        }
+      }
 
       const remindCmd = parseRemindCommand(clean);
       if (remindCmd) {
@@ -495,6 +542,31 @@ const ChatComposer = React.memo(
             </Box>
           )}
 
+          {!hasText && !replyingTo && smartReplies.length > 0 && (
+            <Stack
+              direction="row"
+              spacing={0.6}
+              sx={{
+                px: { xs: 1, sm: 1.75 },
+                pt: 0.6,
+                pb: 0.2,
+                overflowX: "auto",
+              }}
+            >
+              {smartReplies.map((sr) => (
+                <Chip
+                  key={sr}
+                  size="small"
+                  clickable
+                  label={sr}
+                  variant="outlined"
+                  onClick={() => doSend(sr)}
+                  sx={{ fontSize: "0.75rem", height: 24, borderRadius: 3 }}
+                />
+              ))}
+            </Stack>
+          )}
+
           {replyingTo && (
             <Box
               sx={{
@@ -739,6 +811,8 @@ const Chat = ({ chatId, user }) => {
 
   useEffect(() => {
     setSlowCooldownLeft(0);
+    setSelectedMsgIds([]);
+    setShowRecap(false);
   }, [chatId]);
 
   useEffect(() => {
@@ -753,6 +827,13 @@ const Chat = ({ chatId, user }) => {
   const [showWhiteboard, setShowWhiteboard] = useState(false);
   const [whiteboardInviteName, setWhiteboardInviteName] = useState("");
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
+  const [showWidgetDialog, setShowWidgetDialog] = useState(false);
+  const [showRecap, setShowRecap] = useState(false);
+  const [selectedMsgIds, setSelectedMsgIds] = useState([]);
+  const [bulkForwardOpen, setBulkForwardOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkStarMessages, { isLoading: isBulkStarring }] = useBulkStarMessagesMutation();
+  const [bulkDeleteMessages, { isLoading: isBulkDeleting }] = useBulkDeleteMessagesMutation();
   const [showLocationDialog, setShowLocationDialog] = useState(false);
   const [locationDuration, setLocationDuration] = useState(15);
   const [sharingLocation, setSharingLocation] = useState(false);
@@ -1540,9 +1621,69 @@ const Chat = ({ chatId, user }) => {
   }, [allMessages, user, chatId, members, socket]);
 
   const unreadCount = unreadIndex !== null ? allMessages.length - unreadIndex : 0;
+  const isSavedMessagesChat = Boolean(chat?.isSavedMessages);
+
+  const smartReplies = useMemo(() => {
+    if (isSavedMessagesChat || !allMessages.length) return [];
+    const lastMsg = allMessages[allMessages.length - 1];
+    return getSmartReplySuggestions(lastMsg, myIdStr);
+  }, [allMessages, isSavedMessagesChat, myIdStr]);
+
+  const unreadRecap = useMemo(() => {
+    if (!showRecap || !allMessages.length) return null;
+    return buildUnreadRecap(allMessages, unreadCount, myIdStr, user?.username);
+  }, [allMessages, myIdStr, showRecap, unreadCount, user?.username]);
+
+  const toggleSelectMessage = useCallback((msg) => {
+    const mid = String(msg?._id || msg?.id || "");
+    if (!mid) return;
+    setSelectedMsgIds((prev) => (prev.includes(mid) ? prev.filter((x) => x !== mid) : [...prev, mid]));
+  }, []);
+
+  const handleBulkCopy = () => {
+    const selectedSet = new Set(selectedMsgIds.map(String));
+    const lines = allMessages
+      .filter((m) => selectedSet.has(String(m._id)))
+      .map((m) => `${m.sender?.name || "User"}: ${m.content || "[Attachment]"}`);
+    if (lines.length) {
+      navigator.clipboard?.writeText(lines.join("\n"));
+      toast.success(`Copied ${lines.length} message(s)`);
+    }
+    setSelectedMsgIds([]);
+  };
+
+  const handleBulkStar = async () => {
+    try {
+      const res = await bulkStarMessages(selectedMsgIds).unwrap();
+      toast.success(`Starred ${res?.starredCount || selectedMsgIds.length} message(s)`);
+      setSelectedMsgIds([]);
+    } catch {
+      toast.error("Failed to star selected messages");
+    }
+  };
+
+  const handleBulkDelete = async (mode) => {
+    try {
+      const res = await bulkDeleteMessages({ messageIds: selectedMsgIds, mode }).unwrap();
+      const deletedSet = new Set((res?.deletedIds || []).map(String));
+      if (mode === "everyone") {
+        const patch = (m) => (deletedSet.has(String(m._id)) ? { ...m, isDeleted: true, content: "" } : m);
+        setMessages((prev) => prev.map(patch));
+        setOldMessages((prev) => prev.map(patch));
+      } else {
+        setMessages((prev) => prev.filter((m) => !deletedSet.has(String(m._id))));
+        setOldMessages((prev) => prev.filter((m) => !deletedSet.has(String(m._id))));
+      }
+      toast.success(`Deleted ${deletedSet.size} message(s)`);
+      setBulkDeleteOpen(false);
+      setSelectedMsgIds([]);
+    } catch {
+      toast.error("Failed to delete selected messages");
+    }
+  };
 
   const chatDisplayName =
-    (isGroupChat ? chat?.name : otherMember?.name || otherMember?.username || chat?.name) || "Conversation";
+    (isSavedMessagesChat ? "Saved Messages" : isGroupChat ? chat?.name : otherMember?.name || otherMember?.username || chat?.name) || "Conversation";
   const rawChatAvatar = isGroupChat
     ? chat?.avatar?.url || chat?.avatar
     : otherMember?.avatar?.url || otherMember?.avatar;
@@ -1628,11 +1769,17 @@ const Chat = ({ chatId, user }) => {
             sx={{ cursor: "pointer" }}
           >
             <Avatar
-              src={chatAvatarSrc}
+              src={isSavedMessagesChat ? undefined : chatAvatarSrc}
               alt={chatDisplayName}
-              sx={{ width: 34, height: 34, bgcolor: "#236B4A", fontSize: "0.95rem", flexShrink: 0 }}
+              sx={{
+                width: 34,
+                height: 34,
+                bgcolor: isSavedMessagesChat ? "#0EA5E9" : "#236B4A",
+                fontSize: "0.95rem",
+                flexShrink: 0,
+              }}
             >
-              {chatDisplayName[0]?.toUpperCase() || "C"}
+              {isSavedMessagesChat ? <VaultIcon fontSize="small" /> : chatDisplayName[0]?.toUpperCase() || "C"}
             </Avatar>
             <Box minWidth={0}>
               <Typography variant="subtitle2" fontWeight={700} noWrap>
@@ -1641,6 +1788,8 @@ const Chat = ({ chatId, user }) => {
               <Typography variant="caption" color={userTyping ? "primary" : "text.secondary"} noWrap display="block">
                 {userTyping
                   ? "Typing..."
+                  : isSavedMessagesChat
+                  ? "Personal Vault · Synced across PC & Mobile"
                   : chat?.ephemeral_ttl === -1
                   ? "🔥 Vanishes right after seen · Tap for info"
                   : chat?.ephemeral_ttl === -120
@@ -1656,7 +1805,18 @@ const Chat = ({ chatId, user }) => {
         </Stack>
 
         <Stack direction="row" spacing={0.25} flexShrink={0}>
-          {!isGroupChat && (
+          {allMessages.length > 0 && (
+            <Tooltip title="Catch Me Up (Unread Recap)">
+              <IconButton
+                size="small"
+                onClick={() => setShowRecap((r) => !r)}
+                sx={{ color: showRecap ? "primary.main" : unreadCount >= 3 ? "warning.main" : "text.secondary" }}
+              >
+                <RecapIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+          )}
+          {!isGroupChat && !isSavedMessagesChat && (
             <Tooltip title={e2eeEnabled ? "Client E2EE On (Tap to toggle)" : "Enable Client E2EE"}>
               <IconButton
                 size="small"
@@ -1699,6 +1859,107 @@ const Chat = ({ chatId, user }) => {
       </Box>
 
       <PinnedMessages chatId={chatId} onScrollToMessage={handleScrollToMessage} />
+
+      {selectedMsgIds.length > 0 && (
+        <Paper
+          square
+          elevation={1}
+          sx={{
+            px: 1.5,
+            py: 0.65,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            bgcolor: isDark ? "#1E3A2F" : "#DCFCE7",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+            gap: 1,
+          }}
+        >
+          <Typography variant="subtitle2" fontWeight={700}>
+            {selectedMsgIds.length} selected
+          </Typography>
+          <Stack direction="row" spacing={0.25} alignItems="center">
+            <Tooltip title="Copy text">
+              <IconButton size="small" onClick={handleBulkCopy}>
+                <CopyIcon fontSize="small" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Star selected">
+              <span>
+                <IconButton size="small" disabled={isBulkStarring} onClick={handleBulkStar}>
+                  <StarIcon fontSize="small" sx={{ color: "#f59e0b" }} />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title="Forward selected">
+              <IconButton size="small" onClick={() => setBulkForwardOpen(true)}>
+                <ForwardIcon fontSize="small" color="primary" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Delete selected">
+              <span>
+                <IconButton size="small" color="error" disabled={isBulkDeleting} onClick={() => setBulkDeleteOpen(true)}>
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <IconButton size="small" onClick={() => setSelectedMsgIds([])} aria-label="Exit selection">
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </Stack>
+        </Paper>
+      )}
+
+      {showRecap && unreadRecap && (
+        <Paper
+          square
+          elevation={0}
+          sx={{
+            px: 2,
+            py: 1,
+            bgcolor: isDark ? "#1F2622" : "#F0FDF4",
+            borderBottom: "1px solid",
+            borderColor: "divider",
+          }}
+        >
+          <Stack direction="row" justifyContent="space-between" alignItems="center" mb={0.5}>
+            <Typography variant="caption" fontWeight={700} color="primary">
+              ✨ Catch Me Up · Last {unreadRecap.scannedCount} messages
+            </Typography>
+            <IconButton size="small" onClick={() => setShowRecap(false)}>
+              <CloseIcon sx={{ fontSize: 15 }} />
+            </IconButton>
+          </Stack>
+          <Stack spacing={0.4}>
+            {unreadRecap.topSenders.length > 0 && (
+              <Typography variant="caption" color="text.secondary">
+                Active: {unreadRecap.topSenders.map((s) => `${s.name} (${s.count})`).join(" · ")}
+              </Typography>
+            )}
+            {unreadRecap.mentions.length > 0 && (
+              <Typography variant="caption" fontWeight={600} color="warning.main">
+                Mentions: {unreadRecap.mentions.map((m) => `${m.senderName}: "${m.text}"`).join(" | ")}
+              </Typography>
+            )}
+            {unreadRecap.questions.length > 0 && (
+              <Typography variant="caption" color="text.primary">
+                Questions: {unreadRecap.questions.map((q) => `${q.senderName}: "${q.text}"`).join(" | ")}
+              </Typography>
+            )}
+            {unreadRecap.highlights.length > 0 && (
+              <Typography variant="caption" color="text.primary">
+                Cards: {unreadRecap.highlights.join(" · ")}
+              </Typography>
+            )}
+            {unreadRecap.links.length > 0 && (
+              <Typography variant="caption" color="text.secondary" noWrap>
+                Links: {unreadRecap.links.map((l) => l.url).join(" · ")}
+              </Typography>
+            )}
+          </Stack>
+        </Paper>
+      )}
 
       {/* Group Topics / Channels Bar */}
       {isGroupChat && (
@@ -1907,6 +2168,10 @@ const Chat = ({ chatId, user }) => {
                     onViewOnceConsumed={handleViewOnceConsumed}
                     onOpenThread={(msg) => setActiveThreadMsg(msg)}
                     onViewProfile={setViewingUser}
+                    selectionMode={selectedMsgIds.length > 0}
+                    isSelected={selectedMsgIds.includes(String(value._id))}
+                    onToggleSelect={toggleSelectMessage}
+                    onStartMultiSelect={toggleSelectMessage}
                   />
                 </div>
               </React.Fragment>
@@ -1955,6 +2220,7 @@ const Chat = ({ chatId, user }) => {
           slowCooldownLeft={slowCooldownLeft}
           onStartSlowCooldown={(sec) => setSlowCooldownLeft(sec)}
           isAdmin={isAdmin}
+          smartReplies={smartReplies}
           onWalkieStart={handleWalkieStart}
           onWalkieStop={handleWalkieStop}
           walkieRecording={walkieRecording}
@@ -1991,6 +2257,7 @@ const Chat = ({ chatId, user }) => {
         onOpenWhiteboard={() => setShowWhiteboard(true)}
         onShareLiveLocation={() => setShowLocationDialog(true)}
         onOpenSchedule={() => setShowScheduleDialog(true)}
+        onOpenWidgetDialog={() => setShowWidgetDialog(true)}
         enterToSend={enterToSend}
         onToggleEnterToSend={() => setEnterToSendPreference(!enterToSend)}
       />
@@ -2028,6 +2295,50 @@ const Chat = ({ chatId, user }) => {
           />
         </Suspense>
       )}
+
+      {showWidgetDialog && (
+        <Suspense fallback={null}>
+          <CreateWidgetDialog
+            open={showWidgetDialog}
+            onClose={() => setShowWidgetDialog(false)}
+            chatId={chatId}
+            activeTopic={activeTopic}
+          />
+        </Suspense>
+      )}
+
+      {bulkForwardOpen && (
+        <Suspense fallback={null}>
+          <ForwardMessageDialog
+            open={bulkForwardOpen}
+            onClose={() => {
+              setBulkForwardOpen(false);
+              setSelectedMsgIds([]);
+            }}
+            messageIds={selectedMsgIds}
+          />
+        </Suspense>
+      )}
+
+      <Dialog open={bulkDeleteOpen} onClose={() => setBulkDeleteOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>Delete {selectedMsgIds.length} Selected Message(s)</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" color="text.secondary">
+            Remove selected messages only from your view, or for everyone where you are sender or group admin.
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ flexDirection: "column", alignItems: "stretch", gap: 1, p: 2 }}>
+          <Button variant="outlined" color="warning" disabled={isBulkDeleting} onClick={() => handleBulkDelete("me")}>
+            Delete for Me
+          </Button>
+          <Button variant="contained" color="error" disabled={isBulkDeleting} onClick={() => handleBulkDelete("everyone")}>
+            Delete for Everyone (Authorized)
+          </Button>
+          <Button color="inherit" onClick={() => setBulkDeleteOpen(false)}>
+            Cancel
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <ThreadDrawer
         open={Boolean(activeThreadMsg)}

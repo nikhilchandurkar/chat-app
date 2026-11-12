@@ -103,6 +103,21 @@ const AppLayout = () => (WrappedComponent) => {
       clearChatDeviceNotification(cid);
     }, [chatId]);
 
+    useEffect(() => {
+      const onMarkedUnread = (ev) => {
+        const targetId = String(ev?.detail?.chatId || "");
+        if (!targetId) return;
+        setClearedUnreadChats((prev) => {
+          if (!prev.has(targetId)) return prev;
+          const next = new Set(prev);
+          next.delete(targetId);
+          return next;
+        });
+      };
+      window.addEventListener("chitchat:mark-unread", onMarkedUnread);
+      return () => window.removeEventListener("chitchat:mark-unread", onMarkedUnread);
+    }, []);
+
     const newRequestHandler = useCallback(() => {
       dispatch(incrementNotificationCount());
       toast.success("New Friend Request received!");

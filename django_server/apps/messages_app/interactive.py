@@ -878,3 +878,137 @@ def check_slow_mode(conversation, user) -> tuple[bool, int]:
     if elapsed < cooldown:
         return False, max(1, math.ceil(cooldown - elapsed))
     return True, 0
+
+
+def create_widget_state(widget_type: str, user, options: dict | None = None) -> dict:
+    """Creates initial interactive widget attachment (checklist, roulette, countdown)."""
+    import secrets
+    import uuid as _uuid
+    from datetime import datetime as _dt
+
+    opts = options or {}
+    wtype = (widget_type or "").strip().lower()
+    uname = user.name or user.username
+
+    if wtype == "checklist":
+        title = str(opts.get("title") or "Shared Checklist").strip()[:120]
+        raw_items = opts.get("items") or ["Pack essentials", "Confirm timing"]
+        items = []
+        for entry in raw_items[:30]:
+            text = str(entry).strip()[:160]
+            if text:
+                items.append({"id": str(_uuid.uuid4())[:8], "text": text, "done": False, "doneBy": None})
+        if not items:
+            raise ValueError("Checklist requires at least 1 item.")
+        return {
+            "type": "widget",
+            "widgetType": "checklist",
+            "title": title,
+            "items": items,
+            "createdByName": uname,
+        }
+
+    if wtype == "roulette":
+        title = str(opts.get("title") or "Spin the Wheel").strip()[:120]
+        raw_opts = [str(o).strip()[:60] for o in (opts.get("options") or []) if str(o).strip()]
+        if len(raw_opts) < 2:
+            raw_opts = ["Pizza", "Tacos", "Sushi", "Burgers"]
+        return {
+            "type": "widget",
+            "widgetType": "roulette",
+            "title": title,
+            "options": raw_opts[:16],
+            "spinCount": 0,
+            "winnerIndex": None,
+            "winnerText": "",
+            "targetDeg": 0,
+            "spunBy": None,
+            "spinToken": secrets.token_hex(4),
+            "createdByName": uname,
+        }
+
+    if wtype == "countdown":
+        title = str(opts.get("title") or "Event Countdown").strip()[:120]
+        raw_target = str(opts.get("targetIso") or "").strip()
+        if not raw_target:
+            raise ValueError("targetIso is required for countdown.")
+        parsed = _dt.fromisoformat(raw_target.replace("Z", "+00:00"))
+        if timezone.is_naive(parsed):
+            parsed = timezone.make_aware(parsed)
+        return {
+            "type": "widget",
+            "widgetType": "countdown",
+            "title": title,
+            "targetIso": parsed.isoformat(),
+            "emoji": str(opts.get("emoji") or "⏳")[:8],
+            "createdByName": uname,
+        }
+
+    raise ValueError(f"Unsupported widget type: {widget_type}")
+
+
+def apply_widget_action(widget_state: dict, user, payload: dict) -> tuple[dict, str | None]:
+    """Applies collaborative actions on checklist / roulette widgets."""
+    import secrets
+    import uuid as _uuid
+
+    state = dict(widget_state or {})
+    wtype = state.get("widgetType")
+    action = str((payload or {}).get("action") or "").strip().lower()
+    uname = user.name or user.username
+
+    if wtype == "checklist":
+        items = [dict(i) for i in (state.get("items") or [])]
+        if action == "toggle":
+            item_id = str(payload.get("itemId") or "").strip()
+            for it in items:
+                if str(it.get("id")) == item_id:
+                    it["done"] = not bool(it.get("done"))
+                    it["doneBy"] = uname if it["done"] else None
+                    state["items"] = items
+                    return state, None
+            return state, "Checklist item not found."
+        if action == "add":
+            text = str(payload.get("text") or "").strip()[:160]
+            if not text:
+                return state, "Item text is required."
+            if len(items) >= 40:
+                return state, "Maximum 40 items per checklist."
+            items.append({"id": str(_uuid.uuid4())[:8], "text": text, "done": False, "doneBy": None, "addedBy": uname})
+            state["items"] = items
+            return state, None
+        if action == "remove":
+            item_id = str(payload.get("itemId") or "").strip()
+            state["items"] = [it for it in items if str(it.get("id")) != item_id]
+            return state, None
+        return state, "Invalid checklist action."
+
+    if wtype == "roulette":
+        options = list(state.get("options") or [])
+        if action == "add_option":
+            text = str(payload.get("text") or "").strip()[:60]
+            if not text:
+                return state, "Option text is required."
+            if len(options) >= 16:
+                return state, "Maximum 16 wheel options."
+            options.append(text)
+            state["options"] = options
+            return state, None
+        if action == "spin":
+            if len(options) < 2:
+                return state, "Need at least 2 options to spin."
+            winner_idx = secrets.randbelow(len(options))
+            spin_count = int(state.get("spinCount") or 0) + 1
+            slice_deg = 360.0 / len(options)
+            center_offset = winner_idx * slice_deg + slice_deg / 2.0
+            # Target angle lands slice `winner_idx` cleanly under top pointer (0deg)
+            landing_deg = (360.0 - center_offset) % 360.0
+            state["spinCount"] = spin_count
+            state["winnerIndex"] = winner_idx
+            state["winnerText"] = options[winner_idx]
+            state["targetDeg"] = round(spin_count * 1440.0 + landing_deg, 2)
+            state["spunBy"] = uname
+            return state, None
+        return state, "Invalid wheel action."
+
+    return state, "Unsupported widget action."

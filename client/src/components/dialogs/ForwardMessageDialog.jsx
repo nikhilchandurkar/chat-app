@@ -17,10 +17,11 @@ import React, { useState } from "react";
 import { useMyChatsQuery, useForwardMessageMutation } from "../../redux/api/api";
 import toast from "react-hot-toast";
 
-const ForwardMessageDialog = ({ open, onClose, messageId }) => {
+const ForwardMessageDialog = ({ open, onClose, messageId, messageIds }) => {
   const [selectedChats, setSelectedChats] = useState([]);
   const { isLoading, data, isError } = useMyChatsQuery("");
   const [forwardMessage, { isLoading: isForwarding }] = useForwardMessageMutation();
+  const idsToForward = Array.isArray(messageIds) && messageIds.length > 0 ? messageIds : messageId ? [messageId] : [];
 
   const handleToggle = (chatId) => {
     setSelectedChats((prev) =>
@@ -30,11 +31,21 @@ const ForwardMessageDialog = ({ open, onClose, messageId }) => {
 
   const handleForward = async () => {
     if (selectedChats.length === 0) return toast.error("Please select at least one chat");
-    
-    const toastId = toast.loading("Forwarding message...");
+    if (idsToForward.length === 0) return toast.error("No messages selected to forward");
+
+    const toastId = toast.loading(
+      idsToForward.length > 1 ? `Forwarding ${idsToForward.length} messages...` : "Forwarding message..."
+    );
     try {
-      const res = await forwardMessage({ messageId, targetChatIds: selectedChats }).unwrap();
-      toast.success(res.message || "Message forwarded", { id: toastId });
+      const res = await forwardMessage({
+        messageId: idsToForward.length === 1 ? idsToForward[0] : undefined,
+        messageIds: idsToForward,
+        targetChatIds: selectedChats,
+      }).unwrap();
+      toast.success(
+        res.message || (idsToForward.length > 1 ? `Forwarded ${idsToForward.length} messages` : "Message forwarded"),
+        { id: toastId }
+      );
       onClose();
       setSelectedChats([]);
     } catch (error) {
@@ -44,7 +55,9 @@ const ForwardMessageDialog = ({ open, onClose, messageId }) => {
 
   return (
     <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
-      <DialogTitle>Forward Message To...</DialogTitle>
+      <DialogTitle>
+        Forward {idsToForward.length > 1 ? `${idsToForward.length} Messages ` : "Message "}To...
+      </DialogTitle>
       <DialogContent sx={{ p: 0 }}>
         {isLoading ? (
           <CircularProgress sx={{ margin: "2rem auto", display: "block" }} />
