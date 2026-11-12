@@ -19,12 +19,12 @@ if BASE_DIR not in sys.path:
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
 
+# Load Django/daphne first so AsyncioSelectorReactor is installed cleanly before Twisted reactor import
+from core.wsgi import application  # noqa: E402
 from twisted.internet import endpoints, reactor  # noqa: E402
 from twisted.python.threadpool import ThreadPool  # noqa: E402
 from twisted.web.server import Site  # noqa: E402
 from twisted.web.wsgi import WSGIResource  # noqa: E402
-
-from core.wsgi import application  # noqa: E402
 
 
 def main() -> None:

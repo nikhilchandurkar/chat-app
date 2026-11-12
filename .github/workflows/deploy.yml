@@ -896,6 +896,11 @@ jobs:
             --name chat_celery_worker \
             --restart unless-stopped \
             --network host \
+            --health-cmd='python -c "import os, redis; redis.from_url(os.environ[\"REDIS_URL\"]).ping(); procs = [open(f\"/proc/{p}/cmdline\", \"rb\").read() for p in os.listdir(\"/proc\") if p.isdigit()]; assert any(b\"celery\" in x for x in procs)"' \
+            --health-interval=30s \
+            --health-timeout=5s \
+            --health-retries=3 \
+            --health-start-period=15s \
             -e DEBUG=False \
             -e SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY || 'django-insecure-chat-app-production-secret-key-change-me-321' }}' \
             -e DB_ENGINE=mysql \
