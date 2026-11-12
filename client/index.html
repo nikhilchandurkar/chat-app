@@ -40,6 +40,28 @@
       }
       #root { min-height: 100vh; }
     </style>
+    <script>
+      (function () {
+        try {
+          var isNative = Boolean(
+            window.Capacitor &&
+              typeof window.Capacitor.isNativePlatform === "function" &&
+              window.Capacitor.isNativePlatform()
+          );
+          if (isNative || window.location.pathname !== "/login") return;
+          var params = new URLSearchParams(window.location.search);
+          var state = params.get("state") || "";
+          if (
+            (state === "google_android" || state === "github_android") &&
+            (params.get("code") || params.get("error"))
+          ) {
+            var target = "com.nikhil.chatapp://oauth/callback" + window.location.search;
+            window.__chitchatAndroidOAuthTarget = target;
+            window.location.replace(target);
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

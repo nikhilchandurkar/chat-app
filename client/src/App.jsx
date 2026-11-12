@@ -1,14 +1,19 @@
 import axios from "axios";
-import React, { Suspense, lazy, useEffect } from "react";
+import React, { Suspense, lazy, useEffect, useState } from "react";
 import { Toaster } from "react-hot-toast";
 import { useDispatch, useSelector } from "react-redux";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { App as CapacitorApp } from "@capacitor/app";
+import { Browser } from "@capacitor/browser";
 import ProtectRoute from "./components/auth/ProtectRoute";
 import { LayoutLoader } from "./components/layout/Loaders";
 import { server } from "./constants/config";
 import { userExists, userNotExists } from "./redux/reducers/auth";
 import { SocketProvider } from "./socket.jsx";
+import { isCapacitorNative } from "./utils/device";
+import { getPendingBrowserAndroidOAuthUrl, parseIncomingOAuthAppUrl } from "./utils/oauthDeepLink";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
+import { Box, Button, Paper, Stack, Typography } from "@mui/material";
 import CssBaseline from "@mui/material/CssBaseline";
 
 import {
@@ -79,10 +84,101 @@ const AdminOnlyRoute = ({ user, children }) => {
   return children;
 };
 
+let handledColdStartOAuthUrl = null;
+
+/** Listens for incoming custom-scheme OAuth callbacks when running inside Capacitor Android. */
+const CapacitorDeepLinkHandler = () => {
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!isCapacitorNative()) return undefined;
+
+    const handleIncomingUrl = (rawUrl) => {
+      const nextRoute = parseIncomingOAuthAppUrl(rawUrl);
+      if (!nextRoute) return;
+      Browser.close().catch(() => {});
+      navigate(nextRoute, { replace: true });
+    };
+
+    let listenerHandle;
+    let cancelled = false;
+
+    CapacitorApp.addListener("appUrlOpen", ({ url }) => {
+      if (!cancelled) handleIncomingUrl(url);
+    })
+      .then((handle) => {
+        if (cancelled) {
+          handle.remove();
+        } else {
+          listenerHandle = handle;
+        }
+      })
+      .catch(() => {});
+
+    CapacitorApp.getLaunchUrl()
+      .then((res) => {
+        if (!cancelled && res?.url && res.url !== handledColdStartOAuthUrl) {
+          handledColdStartOAuthUrl = res.url;
+          handleIncomingUrl(res.url);
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      if (listenerHandle) {
+        listenerHandle.remove();
+      }
+    };
+  }, [navigate]);
+
+  return null;
+};
+
+const AndroidOAuthReturnScreen = ({ deepLinkUrl, onContinueInBrowser }) => {
+  useEffect(() => {
+    if (window.__chitchatAndroidOAuthTarget !== deepLinkUrl) {
+      window.__chitchatAndroidOAuthTarget = deepLinkUrl;
+      window.location.replace(deepLinkUrl);
+    }
+  }, [deepLinkUrl]);
+
+  return (
+    <Box
+      sx={{
+        minHeight: "100vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        p: 2,
+      }}
+    >
+      <Paper elevation={3} sx={{ p: 4, maxWidth: 420, width: "100%", textAlign: "center", borderRadius: 3 }}>
+        <Typography variant="h6" fontWeight={700} gutterBottom>
+          Returning to ChitChat
+        </Typography>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+          Tap below if the ChitChat Android app does not open automatically.
+        </Typography>
+        <Stack spacing={1.5}>
+          <Button variant="contained" size="large" component="a" href={deepLinkUrl} fullWidth>
+            Open ChitChat App
+          </Button>
+          <Button variant="text" size="small" onClick={onContinueInBrowser} fullWidth>
+            Continue in browser instead
+          </Button>
+        </Stack>
+      </Paper>
+    </Box>
+  );
+};
+
 const App = () => {
   const { user, loader } = useSelector((state) => state.auth);
   const { themeMode, fontFamily } = useSelector((state) => state.misc);
+  const [stayInBrowser, setStayInBrowser] = useState(false);
   const dispatch = useDispatch();
+  const browserAndroidOAuthUrl = stayInBrowser ? null : getPendingBrowserAndroidOAuthUrl();
 
   const theme = React.useMemo(() => createTheme({
     palette: {
@@ -157,11 +253,17 @@ const App = () => {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      {loader ? (
+      {browserAndroidOAuthUrl ? (
+        <AndroidOAuthReturnScreen
+          deepLinkUrl={browserAndroidOAuthUrl}
+          onContinueInBrowser={() => setStayInBrowser(true)}
+        />
+      ) : loader ? (
         <LayoutLoader />
       ) : (
         <SocketProvider user={user}>
           <BrowserRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+            <CapacitorDeepLinkHandler />
             <Suspense fallback={<LayoutLoader />}>
               <Routes>
                 <Route element={<ProtectRoute user={user} />}>

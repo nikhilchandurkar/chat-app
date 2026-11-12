@@ -41,9 +41,11 @@ import QRCode from "qrcode";
 import toast from "react-hot-toast";
 import { useDispatch } from "react-redux";
 import { useNavigate, useLocation } from "react-router-dom";
+import { Browser } from "@capacitor/browser";
 import { server } from "../constants/config.js";
 import { userExists } from "../redux/reducers/auth.js";
-import { getDeviceMetadata } from "../utils/device.js";
+import { getDeviceMetadata, isCapacitorNative } from "../utils/device.js";
+import { isAndroidOAuthState } from "../utils/oauthDeepLink.js";
 
 const GoogleIcon = () => (
   <svg width="20" height="20" viewBox="0 0 24 24">
@@ -118,6 +120,7 @@ const Login = () => {
   });
 
   const digitRefs = useRef([]);
+  const handledOAuthCodeRef = useRef("");
   const dispatch = useDispatch();
   const navigate = useNavigate();
   const location = useLocation();
@@ -137,13 +140,28 @@ const Login = () => {
       .catch(() => {});
   }, []);
 
-  // Handle OAuth code redirect in URL query params
+  // Handle OAuth code or error redirect in URL query params
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const code = params.get("code");
+    const oauthError = params.get("error");
     const state = params.get("state") || "";
 
+    if (oauthError) {
+      const errorDesc = params.get("error_description") || oauthError;
+      toast.error(`Sign-in was cancelled or failed (${errorDesc})`);
+      window.history.replaceState({}, document.title, window.location.pathname);
+      return;
+    }
+
+    // Never exchange Android-initiated OAuth codes inside Chrome / external browser
+    if (!isCapacitorNative() && isAndroidOAuthState(state)) {
+      return;
+    }
+
     if (code) {
+      if (handledOAuthCodeRef.current === code) return;
+      handledOAuthCodeRef.current = code;
       // Determine if Google or GitHub
       const isGitHub = state.includes("github") || location.search.includes("github");
       const provider = isGitHub ? "github" : "google";
@@ -531,29 +549,45 @@ const Login = () => {
     }
   };
 
-  // Social OAuth Redirect
-  const handleSocialClick = (provider) => {
+  // Social OAuth Redirect (uses Chrome Custom Tabs on Android Capacitor and returns via custom URL scheme)
+  const handleSocialClick = async (provider) => {
     const redirectUri = `${window.location.origin}/login`;
+    const nativeAndroid = isCapacitorNative();
 
+    let authUrl = "";
     if (provider === "Google") {
       const clientId =
         authConfig.google_client_id || DEFAULT_GOOGLE_CLIENT_ID;
-      const googleAuthUrl = `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=${encodeURIComponent(
+      const state = nativeAndroid ? "google_android" : "google";
+      authUrl = `https://accounts.google.com/o/oauth2/v2/auth?response_type=code&client_id=${encodeURIComponent(
         clientId
       )}&redirect_uri=${encodeURIComponent(
         redirectUri
-      )}&scope=openid%20email%20profile&access_type=offline&prompt=select_account`;
-      window.location.href = googleAuthUrl;
+      )}&scope=openid%20email%20profile&access_type=offline&prompt=select_account&state=${encodeURIComponent(
+        state
+      )}`;
     } else if (provider === "GitHub") {
       const clientId =
         authConfig.github_client_id || DEFAULT_GITHUB_CLIENT_ID;
-      const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(
+      const state = nativeAndroid ? "github_android" : "github";
+      authUrl = `https://github.com/login/oauth/authorize?client_id=${encodeURIComponent(
         clientId
       )}&redirect_uri=${encodeURIComponent(
         redirectUri
-      )}&scope=user:email&state=github`;
-      window.location.href = githubAuthUrl;
+      )}&scope=user:email&state=${encodeURIComponent(state)}`;
     }
+
+    if (!authUrl) return;
+
+    if (nativeAndroid) {
+      try {
+        await Browser.open({ url: authUrl, toolbarColor: "#236B4A" });
+        return;
+      } catch {
+        // Fallback to standard navigation if Custom Tabs cannot launch
+      }
+    }
+    window.location.href = authUrl;
   };
 
   // OTP Input handlers with auto-focus movement & paste

@@ -2,7 +2,18 @@
  * Stable per-device identity helper shared across Web and Android Capacitor builds.
  */
 
+export const CUSTOM_APP_SCHEME = "com.nikhil.chatapp";
+
 const STORAGE_KEY = "chitChat-device-id";
+
+export function isCapacitorNative() {
+  return Boolean(
+    typeof window !== "undefined" &&
+      window.Capacitor &&
+      typeof window.Capacitor.isNativePlatform === "function" &&
+      window.Capacitor.isNativePlatform()
+  );
+}
 
 function _detectBrowserName(ua) {
   if (/Edg\//i.test(ua)) return "Edge";
@@ -22,15 +33,10 @@ function _detectOSName(ua) {
 }
 
 export function getDeviceMetadata() {
-  const isCapacitorNative = Boolean(
-    typeof window !== "undefined" &&
-      window.Capacitor &&
-      typeof window.Capacitor.isNativePlatform === "function" &&
-      window.Capacitor.isNativePlatform()
-  );
+  const nativePlatform = isCapacitorNative();
 
   const ua = typeof navigator !== "undefined" ? navigator.userAgent || "" : "";
-  const platform = isCapacitorNative ? "android" : /Android/i.test(ua) && /wv\)/i.test(ua) ? "android" : "web";
+  const platform = nativePlatform ? "android" : /Android/i.test(ua) && /wv\)/i.test(ua) ? "android" : "web";
 
   let deviceId = "";
   try {
@@ -47,7 +53,7 @@ export function getDeviceMetadata() {
     deviceId = `${platform}-fallback`;
   }
 
-  const deviceName = isCapacitorNative
+  const deviceName = nativePlatform
     ? "ChitChat Android App"
     : `${_detectBrowserName(ua)} on ${_detectOSName(ua)}`;
 
