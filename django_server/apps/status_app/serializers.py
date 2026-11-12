@@ -51,5 +51,20 @@ class UserStatusSerializer(serializers.ModelSerializer):
         return False
 
     def get_reactions(self, obj):
-        return list(obj.reactions.values("user_id", "reaction", "created_at"))
+        items = obj.reactions.select_related("user").order_by("-created_at")
+        return [
+            {
+                "id": str(r.id),
+                "user_id": str(r.user_id),
+                "reaction": r.reaction,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "user": {
+                    "id": str(r.user_id),
+                    "name": r.user.name or r.user.username,
+                    "username": r.user.username,
+                    "avatar": r.user.avatar,
+                },
+            }
+            for r in items
+        ]
 

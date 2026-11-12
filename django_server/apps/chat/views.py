@@ -467,12 +467,26 @@ class UpdateEphemeralTTLView(APIView):
             return Response({"success": False, "message": "Only admins can change disappearing message settings."}, status=status.HTTP_403_FORBIDDEN)
 
         ttl = int(request.data.get("ephemeral_ttl", 0))
-        valid_ttls = [0, 30, 60, 300, 3600, 86400, 604800]
+        valid_ttls = [-1, -120, 0, 30, 60, 120, 300, 3600, 86400, 604800]
         if ttl not in valid_ttls:
             return Response({"success": False, "message": f"Invalid TTL. Supported: {valid_ttls}"}, status=status.HTTP_400_BAD_REQUEST)
 
         chat.ephemeral_ttl = ttl
         chat.save(update_fields=["ephemeral_ttl"])
+        OutboxService.publish_item(
+            OutboxService.create_outbox_event(
+                event_type="chat.ephemeral_updated",
+                conversation_id=str(chat.id),
+                payload={
+                    "event": "chat.ephemeral_updated",
+                    "legacy_event": "REFETCH_CHATS",
+                    "chatId": str(chat.id),
+                    "ephemeral_ttl": ttl,
+                    "recipient_ids": [str(m.user_id) for m in chat.member_records.all()],
+                },
+            )
+        )
+        return Response({"success": True, "ephemeral_ttl": ttl})
 
         recipient_ids = [str(m.user_id) for m in chat.member_records.all()]
         OutboxService.create_outbox_event(

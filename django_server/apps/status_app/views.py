@@ -196,10 +196,27 @@ class GetStatusViewersView(APIView):
             return Response({"success": False, "message": "Access denied. Only the author can view the viewers list."}, status=status.HTTP_403_FORBIDDEN)
 
         views = status_obj.views.select_related("viewer").all()
+        reactions = status_obj.reactions.select_related("user").order_by("-created_at")
+        reactions_data = [
+            {
+                "id": str(r.id),
+                "reaction": r.reaction,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "user": {
+                    "id": str(r.user_id),
+                    "name": r.user.name or r.user.username,
+                    "username": r.user.username,
+                    "avatar": r.user.avatar,
+                },
+            }
+            for r in reactions
+        ]
         return Response({
             "success": True,
             "viewers": StatusViewerSerializer(views, many=True).data,
             "totalViews": views.count(),
+            "reactions": reactions_data,
+            "totalReactions": len(reactions_data),
         })
 
 
@@ -215,11 +232,26 @@ class ReactStatusView(APIView):
         if not emoji:
             return Response({"success": False, "message": "Reaction emoji required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        rx, _ = StatusReaction.objects.update_or_create(
+        StatusReaction.objects.update_or_create(
             status=status_obj,
             user=request.user,
             defaults={"reaction": emoji}
         )
+        all_reactions = [
+            {
+                "id": str(r.id),
+                "user_id": str(r.user_id),
+                "reaction": r.reaction,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "user": {
+                    "id": str(r.user_id),
+                    "name": r.user.name or r.user.username,
+                    "username": r.user.username,
+                    "avatar": r.user.avatar,
+                },
+            }
+            for r in status_obj.reactions.select_related("user").order_by("-created_at")
+        ]
 
-        return Response({"success": True, "message": "Reaction added."})
+        return Response({"success": True, "message": "Reaction added.", "reactions": all_reactions})
 

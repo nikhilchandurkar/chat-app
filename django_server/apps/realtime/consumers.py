@@ -277,6 +277,8 @@ def save_incoming_message(
 @db_async
 def record_read_receipt(user, message_ids, chat_id):
     try:
+        from apps.messages_app.interactive import apply_seen_ephemeral_expiry
+
         user_id_str = str(user.id)
         messages = list(Message.objects.filter(id__in=message_ids, conversation_id=chat_id))
         to_update = []
@@ -294,13 +296,16 @@ def record_read_receipt(user, message_ids, chat_id):
         if receipt_objs:
             MessageReceipt.objects.bulk_create(receipt_objs, ignore_conflicts=True)
 
+        conv = Conversation.objects.filter(id=chat_id).first()
+        expires_map = apply_seen_ephemeral_expiry(conv, messages, user.id) if conv else {}
+
         ConversationMember.objects.filter(
             conversation_id=chat_id, user=user, unread_count__gt=0
         ).update(unread_count=0)
-        return True
+        return expires_map
     except Exception as e:
         logger.error("Error marking messages read: %s", str(e))
-        return False
+        return {}
 
 
 class ChatConsumer(AsyncJsonWebsocketConsumer):
@@ -478,7 +483,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             message_ids = [m for m in message_ids if m]
 
             if getattr(self, "privacy", {}).get("privacy_read_receipts", True):
-                await record_read_receipt(self.user, message_ids, chat_id)
+                expires_map = await record_read_receipt(self.user, message_ids, chat_id)
                 await self.channel_layer.group_send(
                     f"chat_{chat_id}",
                     {
@@ -489,6 +494,7 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                             "chatId": chat_id,
                             "messageIds": message_ids,
                             "readBy": str(self.user.id),
+                            "expiresMap": expires_map,
                         }
                     }
                 )

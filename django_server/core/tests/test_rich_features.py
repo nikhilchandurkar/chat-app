@@ -249,5 +249,62 @@ class RichFeaturesTestCase(APITestCase):
         self.assertEqual(upd.status_code, status.HTTP_200_OK)
         self.assertFalse(upd.data["attachments"][0]["active"])
 
+    def test_ephemeral_after_seen_quiz_and_status_reactions(self):
+        from datetime import timedelta
+        from unittest.mock import patch
+        from django.utils import timezone
+
+        # 1. Disappearing 2 minutes after seen (-120)
+        ttl_res = self.client.post(f"/api/v1/chat/{self.conv.id}/ephemeral", {"ephemeral_ttl": -120}, format="json")
+        self.assertEqual(ttl_res.status_code, status.HTTP_200_OK)
+
+        msg = Message.objects.create(conversation=self.conv, sender=self.alice, content="Secret after seen")
+        self.assertIsNone(msg.expires_at)
+
+        self.client.force_authenticate(user=self.bob)
+        get_res = self.client.get(f"/api/v1/message/chat/{self.conv.id}")
+        self.assertEqual(get_res.status_code, status.HTTP_200_OK)
+        msg.refresh_from_db()
+        self.assertIsNotNone(msg.expires_at)
+        diff = (msg.expires_at - timezone.now()).total_seconds()
+        self.assertGreater(diff, 90)
+        self.assertLessEqual(diff, 125)
+
+        # 2. Dynamic multi-round Quiz Battle + additional mini-games
+        with patch("apps.messages_app.interactive.requests.get", side_effect=OSError("offline test")):
+            q_res = self.client.post(
+                "/api/v1/message/interactive/game/create",
+                {"chatId": str(self.conv.id), "gameType": "trivia", "difficulty": "medium"},
+                format="json",
+            )
+        self.assertEqual(q_res.status_code, status.HTTP_201_CREATED)
+        q_msg_id = q_res.data["message"]["_id"]
+        q_att = q_res.data["message"]["attachments"][0]
+        self.assertEqual(len(q_att["questions"]), 5)
+
+        ans_res = self.client.post(f"/api/v1/message/interactive/game/{q_msg_id}/move", {"optionIndex": 0}, format="json")
+        self.assertEqual(ans_res.status_code, status.HTTP_200_OK)
+        nxt_res = self.client.post(f"/api/v1/message/interactive/game/{q_msg_id}/move", {"action": "next_question"}, format="json")
+        self.assertEqual(nxt_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(nxt_res.data["attachments"][0]["currentIndex"], 1)
+
+        # Verify extended mini-games create cleanly
+        for gtype in ["diceduel", "coinflip", "highlow", "memory", "dotsboxes", "reversi", "mines", "blackjack", "evenodd", "oddone", "mathsprint"]:
+            gres = self.client.post("/api/v1/message/interactive/game/create", {"chatId": str(self.conv.id), "gameType": gtype}, format="json")
+            self.assertEqual(gres.status_code, status.HTTP_201_CREATED, gtype)
+
+        # 3. Status reactions visible in GetStatusViewersView
+        st = UserStatus.objects.create(user=self.alice, status_type="text", content="Check my reactions", privacy="everyone")
+        react_res = self.client.post(f"/api/v1/status/{st.id}/react", {"reaction": "🔥"}, format="json")
+        self.assertEqual(react_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(react_res.data["reactions"]), 1)
+
+        self.client.force_authenticate(user=self.alice)
+        viewers_res = self.client.get(f"/api/v1/status/{st.id}/viewers")
+        self.assertEqual(viewers_res.status_code, status.HTTP_200_OK)
+        self.assertEqual(viewers_res.data["totalReactions"], 1)
+        self.assertEqual(viewers_res.data["reactions"][0]["reaction"], "🔥")
+
+
 
 

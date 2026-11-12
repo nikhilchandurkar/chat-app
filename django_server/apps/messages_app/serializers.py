@@ -42,6 +42,7 @@ class MessageSerializer(serializers.ModelSerializer):
     viewedBy = serializers.ListField(source="viewed_by", read_only=True)
     scheduledFor = serializers.DateTimeField(source="scheduled_for", read_only=True)
     deliveryPending = serializers.BooleanField(source="delivery_pending", read_only=True)
+    expiresAt = serializers.DateTimeField(source="expires_at", read_only=True)
     createdAt = serializers.DateTimeField(source="created_at", read_only=True)
     created_at = serializers.DateTimeField(read_only=True)
 
@@ -70,6 +71,7 @@ class MessageSerializer(serializers.ModelSerializer):
             "viewedBy",
             "scheduledFor",
             "deliveryPending",
+            "expiresAt",
             "createdAt",
             "created_at",
         ]

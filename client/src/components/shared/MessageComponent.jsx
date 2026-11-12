@@ -1096,6 +1096,16 @@ const MessageComponent = ({
             )}
 
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.3, justifyContent: "flex-end" }}>
+              {message.expiresAt && !isDeleted && (
+                <Typography variant="caption" sx={{ color: "warning.main", fontSize: "0.62rem", fontWeight: 700 }}>
+                  {(() => {
+                    const secLeft = Math.max(0, Math.ceil((new Date(message.expiresAt).getTime() - Date.now()) / 1000));
+                    if (secLeft >= 3600) return `⏱ ${Math.ceil(secLeft / 3600)}h`;
+                    if (secLeft >= 60) return `⏱ ${Math.floor(secLeft / 60)}m ${secLeft % 60}s`;
+                    return `🔥 ${secLeft}s`;
+                  })()}
+                </Typography>
+              )}
               {isEdited && !isDeleted && (
                 <Typography variant="caption" sx={{ color: isDark ? "#A6AEA8" : "#737A75", fontSize: "0.62rem" }}>
                   (edited)

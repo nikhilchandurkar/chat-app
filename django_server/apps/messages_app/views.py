@@ -208,7 +208,7 @@ class GetMessagesView(APIView):
 
     def get(self, request, id):
         from django.db.models import Count
-        from .interactive import flush_due_scheduled_messages
+        from .interactive import apply_seen_ephemeral_expiry, flush_due_scheduled_messages
 
         conversation = get_object_or_404(Conversation, id=id)
         if not conversation.member_records.filter(user=request.user).exists():
@@ -236,6 +236,8 @@ class GetMessagesView(APIView):
         rows = list(messages_qs[offset : offset + limit + 1])
         has_next = len(rows) > limit
         page_items = rows[:limit]
+        if page == 1 and page_items:
+            apply_seen_ephemeral_expiry(conversation, page_items, request.user.id)
 
         page_ids = [m.id for m in page_items]
         reply_counts = {}
@@ -931,15 +933,21 @@ class CreateGameView(APIView):
 
         chat_id = request.data.get("chatId") or request.data.get("conversation_id")
         game_type = (request.data.get("gameType") or "tictactoe").strip().lower()
-        custom_word = (request.data.get("customWord") or "").strip()
         topic_name = str(request.data.get("topicName") or "").strip().lstrip("#")[:64]
 
         conversation = get_object_or_404(Conversation, id=chat_id)
         if not conversation.member_records.filter(user=request.user).exists():
             return Response({"success": False, "message": "Access denied."}, status=status.HTTP_403_FORBIDDEN)
 
+        options = {
+            "customWord": request.data.get("customWord") or "",
+            "category": request.data.get("category") or "",
+            "categoryName": request.data.get("categoryName") or "",
+            "difficulty": request.data.get("difficulty") or "",
+            "customQuiz": request.data.get("customQuiz"),
+        }
         try:
-            game_state = create_initial_game_state(game_type, request.user, custom_word=custom_word)
+            game_state = create_initial_game_state(game_type, request.user, options=options)
         except ValueError as err:
             return Response({"success": False, "message": str(err)}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -947,8 +955,20 @@ class CreateGameView(APIView):
             "tictactoe": "Tic-Tac-Toe",
             "rps": "Rock Paper Scissors",
             "connect4": "Connect 4",
-            "trivia": "Trivia Battle",
+            "trivia": "Quiz Battle",
+            "quiz": "Quiz Battle",
             "wordguess": "Word Guess",
+            "diceduel": "Dice Duel",
+            "coinflip": "Coin Flip",
+            "highlow": "High-Low Guess",
+            "memory": "Memory Match",
+            "dotsboxes": "Dots & Boxes",
+            "reversi": "Mini Reversi",
+            "mines": "Minesweeper",
+            "blackjack": "21 Blackjack",
+            "evenodd": "Even / Odd Bet",
+            "oddone": "Emoji Odd-One-Out",
+            "mathsprint": "Math Sprint",
         }
         serialized = _publish_interactive_message(
             conversation,

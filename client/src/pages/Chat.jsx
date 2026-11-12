@@ -1062,9 +1062,16 @@ const Chat = ({ chatId, user }) => {
     (data) => {
       if (!data || data.chatId !== chatId) return;
       const msgIds = Array.isArray(data.messageIds) ? data.messageIds.map(String) : [];
+      const expiresMap = data.expiresMap && typeof data.expiresMap === "object" ? data.expiresMap : {};
       const patch = (msg) => {
-        if (msgIds.includes(String(msg._id))) {
-          return { ...msg, readBy: [...(msg.readBy || []), data.readBy] };
+        const sid = String(msg._id);
+        const newExpiry = expiresMap[sid];
+        if (msgIds.includes(sid) || newExpiry) {
+          return {
+            ...msg,
+            ...(msgIds.includes(sid) ? { readBy: [...(msg.readBy || []), data.readBy] } : {}),
+            ...(newExpiry ? { expiresAt: newExpiry } : {}),
+          };
         }
         return msg;
       };
@@ -1290,13 +1297,26 @@ const Chat = ({ chatId, user }) => {
     );
   };
 
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const hasTimedExpiry = useMemo(
+    () => oldMessages.some((m) => Boolean(m?.expiresAt)) || messages.some((m) => Boolean(m?.expiresAt)),
+    [oldMessages, messages]
+  );
+  useEffect(() => {
+    if (!hasTimedExpiry) return undefined;
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [hasTimedExpiry]);
+
   const allMessages = useMemo(() => {
     const oldIds = new Set(oldMessages.map((m) => String(m._id || m.id)));
     const uniqueRealtime = messages.filter((m) => !oldIds.has(String(m._id || m.id)));
-    const combined = [...oldMessages, ...uniqueRealtime];
+    const combined = [...oldMessages, ...uniqueRealtime].filter(
+      (m) => !m?.expiresAt || new Date(m.expiresAt).getTime() > nowMs
+    );
     if (!activeTopic || activeTopic === "all") return combined;
     return combined.filter((m) => String(m.topicName || "").toLowerCase() === activeTopic.toLowerCase());
-  }, [activeTopic, oldMessages, messages]);
+  }, [activeTopic, oldMessages, messages, nowMs]);
 
   const handleSetReply = useCallback((msg) => setReplyingTo(msg), []);
   const handleClearReply = useCallback(() => setReplyingTo(null), []);
@@ -1423,6 +1443,10 @@ const Chat = ({ chatId, user }) => {
               <Typography variant="caption" color={userTyping ? "primary" : "text.secondary"} noWrap display="block">
                 {userTyping
                   ? "Typing..."
+                  : chat?.ephemeral_ttl === -1
+                  ? "🔥 Vanishes right after seen · Tap for info"
+                  : chat?.ephemeral_ttl === -120
+                  ? "⏱ Vanishes 2m after seen · Tap for info"
                   : chat?.ephemeral_ttl
                   ? `⏱ Disappearing (${chat.ephemeral_ttl >= 3600 ? `${Math.round(chat.ephemeral_ttl / 3600)}h` : `${chat.ephemeral_ttl}s`}) · Tap for info`
                   : e2eeEnabled && peerPublicKey

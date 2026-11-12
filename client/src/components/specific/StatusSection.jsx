@@ -185,7 +185,19 @@ const StatusSection = () => {
   const handleReact = async (emoji) => {
     if (!activeStory) return;
     try {
-      await reactStatus({ statusId: activeStory.id, reaction: emoji }).unwrap();
+      const res = await reactStatus({ statusId: activeStory.id, reaction: emoji }).unwrap();
+      if (Array.isArray(res?.reactions)) {
+        setViewerGroup((prev) =>
+          prev
+            ? {
+                ...prev,
+                items: prev.items.map((item) =>
+                  item.id === activeStory.id ? { ...item, reactions: res.reactions } : item
+                ),
+              }
+            : prev
+        );
+      }
       toast.success(`Reacted ${emoji}`);
     } catch {
       toast.error("Failed to react");
@@ -485,47 +497,148 @@ const StatusSection = () => {
               )}
             </Box>
 
-            {/* Footer: View count (author) OR Reactions (viewer) */}
-            <Box p={1.25} bgcolor="rgba(0,0,0,0.45)">
-              {viewerGroup.isMine ? (
-                <Button size="small" startIcon={<ViewersIcon />} onClick={handleShowViewers} sx={{ color: "#fff" }}>
-                  Viewed by {activeStory.views_count || 0}
-                </Button>
-              ) : (
-                <Stack direction="row" justifyContent="space-around" alignItems="center">
-                  {STORY_REACTIONS.map((em) => (
-                    <IconButton key={em} size="small" onClick={() => handleReact(em)} sx={{ fontSize: "1.35rem" }}>
-                      {em}
-                    </IconButton>
-                  ))}
-                </Stack>
-              )}
+            {/* Footer: View count & Reactions */}
+            <Box p={1.25} bgcolor="rgba(0,0,0,0.52)">
+              {(() => {
+                const rawReacts = Array.isArray(activeStory.reactions) ? activeStory.reactions : [];
+                const counts = {};
+                let myReaction = "";
+                const myUid = String(user?._id || user?.id || "");
+                rawReacts.forEach((r) => {
+                  if (!r?.reaction) return;
+                  counts[r.reaction] = (counts[r.reaction] || 0) + 1;
+                  if (myUid && String(r.user_id || r.user?.id || "") === myUid) {
+                    myReaction = r.reaction;
+                  }
+                });
+
+                if (viewerGroup.isMine) {
+                  return (
+                    <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} flexWrap="wrap" useFlexGap>
+                      <Button size="small" startIcon={<ViewersIcon />} onClick={handleShowViewers} sx={{ color: "#fff" }}>
+                        Viewed by {activeStory.views_count || 0} · {rawReacts.length} reaction{rawReacts.length === 1 ? "" : "s"}
+                      </Button>
+                      <Stack direction="row" spacing={0.5} flexWrap="wrap">
+                        {Object.entries(counts).map(([em, cnt]) => (
+                          <Chip
+                            key={em}
+                            size="small"
+                            clickable
+                            onClick={handleShowViewers}
+                            label={`${em} ${cnt}`}
+                            sx={{ bgcolor: "rgba(255,255,255,0.16)", color: "#fff", height: 24 }}
+                          />
+                        ))}
+                      </Stack>
+                    </Stack>
+                  );
+                }
+
+                return (
+                  <Stack spacing={0.6}>
+                    <Stack direction="row" justifyContent="space-around" alignItems="center">
+                      {STORY_REACTIONS.map((em) => {
+                        const cnt = counts[em] || 0;
+                        const isMineRx = myReaction === em;
+                        return (
+                          <Button
+                            key={em}
+                            size="small"
+                            onClick={() => handleReact(em)}
+                            sx={{
+                              minWidth: 0,
+                              px: 1,
+                              py: 0.4,
+                              borderRadius: 99,
+                              color: "#fff",
+                              fontSize: "1.15rem",
+                              bgcolor: isMineRx ? "rgba(34, 197, 94, 0.35)" : "transparent",
+                              border: isMineRx ? "1px solid #4ADE80" : "1px solid transparent",
+                            }}
+                          >
+                            {em}
+                            {cnt > 0 && (
+                              <Typography component="span" variant="caption" sx={{ ml: 0.4, color: "#fff", fontWeight: 700 }}>
+                                {cnt}
+                              </Typography>
+                            )}
+                          </Button>
+                        );
+                      })}
+                    </Stack>
+                  </Stack>
+                );
+              })()}
             </Box>
           </Box>
         )}
       </Dialog>
 
-      {/* Viewers Modal */}
+      {/* Viewers & Reactions Modal */}
       <Dialog open={viewersOpen} onClose={() => setViewersOpen(false)} fullWidth maxWidth="xs">
-        <DialogTitle>Story Viewers</DialogTitle>
+        <DialogTitle>Story Viewers &amp; Reactions</DialogTitle>
         <DialogContent>
           {viewersLoading ? (
             <CircularProgress size={24} />
-          ) : !(viewersData?.viewers || []).length ? (
-            <Typography variant="body2" color="text.secondary">No views recorded yet.</Typography>
           ) : (
-            <Stack spacing={1.25}>
-              {(viewersData?.viewers || []).map((v) => (
-                <Stack key={v.id} direction="row" alignItems="center" justifyContent="space-between">
-                  <Stack direction="row" alignItems="center" spacing={1}>
-                    <Avatar src={transformImage(v.viewer?.avatar?.url)} sx={{ width: 30, height: 30 }}>
-                      {(v.viewer?.name || "U")[0]}
-                    </Avatar>
-                    <Typography variant="body2" fontWeight={600}>{v.viewer?.name || v.viewer?.username}</Typography>
+            <Stack spacing={1.75}>
+              <Box>
+                <Typography variant="caption" fontWeight={700} color="text.secondary" display="block" mb={0.75}>
+                  VIEWED BY ({(viewersData?.viewers || []).length})
+                </Typography>
+                {!(viewersData?.viewers || []).length ? (
+                  <Typography variant="body2" color="text.secondary">No views recorded yet.</Typography>
+                ) : (
+                  <Stack spacing={1}>
+                    {(viewersData?.viewers || []).map((v) => {
+                      const viewerReaction = (viewersData?.reactions || []).find(
+                        (r) => String(r.user?.id || "") === String(v.viewer?.id || "")
+                      );
+                      return (
+                        <Stack key={v.id} direction="row" alignItems="center" justifyContent="space-between">
+                          <Stack direction="row" alignItems="center" spacing={1}>
+                            <Avatar src={transformImage(v.viewer?.avatar?.url)} sx={{ width: 30, height: 30 }}>
+                              {(v.viewer?.name || "U")[0]}
+                            </Avatar>
+                            <Typography variant="body2" fontWeight={600}>
+                              {v.viewer?.name || v.viewer?.username}
+                            </Typography>
+                          </Stack>
+                          <Stack direction="row" alignItems="center" spacing={0.5}>
+                            {viewerReaction && (
+                              <Chip size="small" label={viewerReaction.reaction} color="primary" variant="outlined" />
+                            )}
+                            <Chip size="small" label={moment(v.viewed_at).fromNow()} />
+                          </Stack>
+                        </Stack>
+                      );
+                    })}
                   </Stack>
-                  <Chip size="small" label={moment(v.viewed_at).fromNow()} />
-                </Stack>
-              ))}
+                )}
+              </Box>
+
+              {(viewersData?.reactions || []).length > 0 && (
+                <Box>
+                  <Typography variant="caption" fontWeight={700} color="text.secondary" display="block" mb={0.75}>
+                    REACTIONS ({viewersData.reactions.length})
+                  </Typography>
+                  <Stack spacing={1}>
+                    {viewersData.reactions.map((r) => (
+                      <Stack key={r.id} direction="row" alignItems="center" justifyContent="space-between">
+                        <Stack direction="row" alignItems="center" spacing={1}>
+                          <Avatar src={transformImage(r.user?.avatar?.url)} sx={{ width: 28, height: 28 }}>
+                            {(r.user?.name || "U")[0]}
+                          </Avatar>
+                          <Typography variant="body2" fontWeight={600}>
+                            {r.user?.name || r.user?.username}
+                          </Typography>
+                        </Stack>
+                        <Typography fontSize="1.2rem">{r.reaction}</Typography>
+                      </Stack>
+                    ))}
+                  </Stack>
+                </Box>
+              )}
             </Stack>
           )}
         </DialogContent>

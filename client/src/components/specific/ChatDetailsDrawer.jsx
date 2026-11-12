@@ -405,15 +405,26 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
                         const ttl = Number(e.target.value);
                         try {
                           await updateEphemeralTtl({ chatId, ephemeral_ttl: ttl }).unwrap();
-                          toast.success(ttl ? `Messages disappear after ${ttl}s` : "Disappearing messages off");
+                          toast.success(
+                            ttl === -1
+                              ? "Messages disappear right after seen"
+                              : ttl === -120
+                              ? "Messages disappear 2 min after seen"
+                              : ttl
+                              ? `Messages disappear after ${ttl}s`
+                              : "Disappearing messages off"
+                          );
                         } catch (err) {
                           toast.error(err?.data?.message || "Failed to update timer");
                         }
                       }}
                     >
                       <option value={0}>Off</option>
-                      <option value={30}>30 seconds</option>
-                      <option value={60}>1 minute</option>
+                      <option value={-1}>Right after seen (~8s)</option>
+                      <option value={-120}>2 minutes after seen</option>
+                      <option value={30}>30 seconds (after sent)</option>
+                      <option value={60}>1 minute (after sent)</option>
+                      <option value={120}>2 minutes (after sent)</option>
                       <option value={300}>5 minutes</option>
                       <option value={3600}>1 hour</option>
                       <option value={86400}>24 hours</option>
@@ -515,15 +526,26 @@ const ChatDetailsDrawer = ({ open, onClose, chatId, isGroupChat, onViewMemberPro
                       const ttl = Number(e.target.value);
                       try {
                         await updateEphemeralTtl({ chatId, ephemeral_ttl: ttl }).unwrap();
-                        toast.success(ttl ? `Messages disappear after ${ttl}s` : "Disappearing messages off");
+                        toast.success(
+                          ttl === -1
+                            ? "Messages disappear right after seen"
+                            : ttl === -120
+                            ? "Messages disappear 2 min after seen"
+                            : ttl
+                            ? `Messages disappear after ${ttl}s`
+                            : "Disappearing messages off"
+                        );
                       } catch (err) {
                         toast.error(err?.data?.message || "Failed to update timer");
                       }
                     }}
                   >
                     <option value={0}>Off</option>
-                    <option value={30}>30 seconds</option>
-                    <option value={60}>1 minute</option>
+                    <option value={-1}>Right after seen (~8s)</option>
+                    <option value={-120}>2 minutes after seen</option>
+                    <option value={30}>30 seconds (after sent)</option>
+                    <option value={60}>1 minute (after sent)</option>
+                    <option value={120}>2 minutes (after sent)</option>
                     <option value={300}>5 minutes</option>
                     <option value={3600}>1 hour</option>
                     <option value={86400}>24 hours</option>
