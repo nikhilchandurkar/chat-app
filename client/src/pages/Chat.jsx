@@ -1737,7 +1737,7 @@ const Chat = ({ chatId, user }) => {
         setSlowCooldownLeft(Math.max(1, Number(data.retryAfter || 1)));
       }
       if (data.message) {
-        toast.error(data.message);
+        safeToast.error(data.message);
       }
     },
     [chatId]

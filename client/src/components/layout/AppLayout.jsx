@@ -1,4 +1,6 @@
-import { Drawer, Grid, Skeleton, Box, Stack, Typography, IconButton } from '@mui/material';
+import { Avatar, Drawer, Grid, Skeleton, Box, Stack, Typography, IconButton } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import { useNavigate } from 'react-router-dom';
 import { Close as CloseIcon, Home as HomeIcon } from '@mui/icons-material';
 import React, { useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import toast from 'react-hot-toast';
@@ -30,6 +32,9 @@ const AppLayout = () => (WrappedComponent) => {
   return (props) => {
     const { activeChatId: chatId } = useSelector((state) => state.misc);
     const dispatch = useDispatch();
+    const navigate = useNavigate();
+    const theme = useTheme();
+    const isDark = theme.palette.mode === 'dark';
     const { data, isLoading, isError, refetch, error } = useMyChatsQuery("")
     
     const socket = getSocket();
@@ -215,7 +220,80 @@ const AppLayout = () => (WrappedComponent) => {
         count: nextCount,
         isMuted: Boolean(targetChat?.isMuted),
       });
-    }, [chatId, clearedUnreadChats, data?.chats, refetch, user]);
+
+      // Show WhatsApp/Telegram-style top Heads-Up notification banner
+      if (!targetChat?.isMuted) {
+        const isGroup = Boolean(targetChat?.groupChat);
+        const chatTitle = isGroup ? targetChat.name || "Group Chat" : senderName;
+        const avatarUrl = payload.message?.sender?.avatar?.url || payload.message?.sender?.avatar || targetChat?.avatar;
+        const cleanSnippet = snippet.startsWith("::e2ee:v1::") ? "🔒 Encrypted Message" : snippet;
+
+        toast.custom(
+          (t) => (
+            <Box
+              onClick={() => {
+                toast.dismiss(t.id);
+                navigate(`/chat/${targetChatId}`);
+              }}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 1.5,
+                bgcolor: isDark ? "#1E2320" : "#FFFFFF",
+                color: isDark ? "#FFFFFF" : "#111827",
+                px: 2,
+                py: 1.25,
+                borderRadius: "14px",
+                boxShadow: "0 14px 35px -5px rgba(0,0,0,0.32), 0 6px 14px -4px rgba(0,0,0,0.18)",
+                border: "1px solid",
+                borderColor: isDark ? "#343B36" : "#E2E8F0",
+                maxWidth: "min(390px, calc(100vw - 32px))",
+                width: "100%",
+                cursor: "pointer",
+                pointerEvents: "auto",
+                transition: "transform 0.15s ease",
+                "&:hover": {
+                  transform: "translateY(2px)",
+                },
+              }}
+            >
+              <Avatar
+                src={avatarUrl}
+                sx={{
+                  width: 40,
+                  height: 40,
+                  bgcolor: isGroup ? "#0EA5E9" : "#236B4A",
+                  flexShrink: 0,
+                  fontSize: "0.95rem",
+                  fontWeight: 700,
+                }}
+              >
+                {chatTitle[0]?.toUpperCase() || "C"}
+              </Avatar>
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <Typography variant="subtitle2" fontWeight={700} noWrap sx={{ color: isDark ? "#68D391" : "#236B4A" }}>
+                    {chatTitle}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.7rem", flexShrink: 0, ml: 1 }}>
+                    Now
+                  </Typography>
+                </Box>
+                {isGroup && (
+                  <Typography variant="caption" fontWeight={600} noWrap sx={{ display: "block", color: isDark ? "#94A3B8" : "#64748B" }}>
+                    {senderName}
+                  </Typography>
+                )}
+                <Typography variant="body2" color="text.secondary" noWrap sx={{ fontSize: "0.82rem" }}>
+                  {cleanSnippet}
+                </Typography>
+              </Box>
+            </Box>
+          ),
+          { id: `inapp-top-msg-${targetChatId}`, duration: 4000 }
+        );
+      }
+    }, [chatId, clearedUnreadChats, data?.chats, isDark, navigate, refetch, user]);
 
     const syncReadFromOtherDeviceListener = useCallback((payload) => {
       if (!payload) return;

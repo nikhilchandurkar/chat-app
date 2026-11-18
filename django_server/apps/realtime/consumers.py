@@ -17,7 +17,7 @@ from apps.outbox.services.redis_streams import get_redis_client
 logger = logging.getLogger(__name__)
 
 MAX_PAYLOAD_BYTES = 65536  # 64 KB limit
-MAX_EVENTS_PER_MINUTE = 60
+MAX_EVENTS_PER_MINUTE = 600
 
 
 def db_async(func):
@@ -401,7 +401,15 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                 await asyncio.gather(*(self.channel_layer.group_send(f"chat_{cid}", packet) for cid in self.conv_ids[:8]), return_exceptions=True)
 
     async def receive_json(self, content):
-        # 1. Rate Limiting per WebSocket connection
+        event = content.get("event") or content.get("type")
+        data = content.get("data", content)
+
+        # 1. Ping / Pong Heartbeats (never consume rate limit budget)
+        if event in ("ping", "heartbeat"):
+            await self.send_json({"event": "pong", "timestamp": timezone.now().isoformat()})
+            return
+
+        # 2. Rate Limiting per WebSocket connection
         now = time.time()
         self.event_timestamps = [t for t in self.event_timestamps if now - t < 60]
         if len(self.event_timestamps) >= MAX_EVENTS_PER_MINUTE:
@@ -409,16 +417,8 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
             return
         self.event_timestamps.append(now)
 
-        event = content.get("event") or content.get("type")
-        data = content.get("data", content)
-
-        # 2. Ping / Pong Heartbeats
-        if event in ("ping", "heartbeat"):
-            await self.send_json({"event": "pong", "timestamp": timezone.now().isoformat()})
-            return
-
         # 3. Sending New Message
-        elif event in ("message.create", "NEW_MESSAGE"):
+        if event in ("message.create", "NEW_MESSAGE"):
             chat_id = data.get("chatId") or data.get("conversation_id")
             message_text = data.get("message") or data.get("content", "")
             client_msg_id = data.get("client_message_id", "")
@@ -536,6 +536,9 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
 
         # 6. Interactive Live Relays (Watch Party, Live Whiteboard, Live Location, Walkie-Talkie)
         elif event in ("watch.sync", "whiteboard.sync", "location.live", "walkie.signal"):
+            # Suppress high-frequency drawing strokes so drawing never floods socket connections
+            if event == "whiteboard.sync" and isinstance(data, dict) and data.get("action") == "stroke":
+                return
             chat_id = data.get("chatId") or data.get("conversation_id")
             if not await self._is_member_cached(chat_id):
                 return
