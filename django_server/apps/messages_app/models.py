@@ -143,10 +143,13 @@ class Message(models.Model):
         db_table = "messages"
         ordering = ["-created_at"]
         indexes = [
-            models.Index(fields=["conversation", "-created_at"]),
-            models.Index(fields=["client_message_id"]),
-            models.Index(fields=["sender", "-created_at"]),
-            models.Index(fields=["conversation", "expires_at"]),
+            models.Index(fields=["conversation", "-created_at"], name="msg_conv_created_idx"),
+            models.Index(fields=["conversation", "-created_at", "id"], name="msg_conv_created_id_idx"),
+            models.Index(fields=["conversation", "id"], name="msg_conv_id_idx"),
+            models.Index(fields=["client_message_id"], name="msg_client_id_idx"),
+            models.Index(fields=["sender", "-created_at"], name="msg_sender_created_idx"),
+            models.Index(fields=["sender", "status"], name="msg_sender_status_idx"),
+            models.Index(fields=["conversation", "expires_at"], name="msg_conv_expires_idx"),
         ]
 
     @property

@@ -290,10 +290,23 @@ class GetMessagesView(APIView):
         if topic and topic.lower() != "all":
             messages_qs = messages_qs.filter(topic_name=topic)
 
-        offset = (page - 1) * limit
-        rows = list(messages_qs[offset : offset + limit + 1])
+        cursor_id = (request.query_params.get("cursor") or request.query_params.get("before") or "").strip()
+        is_cursor_mode = bool(cursor_id)
+        if is_cursor_mode:
+            # Keyset cursor pagination: constant-time O(1) seeking regardless of message volume
+            cursor_msg = Message.objects.filter(id=cursor_id).only("created_at").first()
+            if cursor_msg:
+                messages_qs = messages_qs.filter(created_at__lt=cursor_msg.created_at)
+            rows = list(messages_qs[: limit + 1])
+            offset = 0
+        else:
+            offset = (page - 1) * limit
+            rows = list(messages_qs[offset : offset + limit + 1])
+
         has_next = len(rows) > limit
         page_items = rows[:limit]
+        next_cursor = str(page_items[-1].id) if has_next and page_items else None
+        prev_cursor = str(page_items[0].id) if page_items else None
         if page == 1 and page_items and conversation.ephemeral_ttl in (-1, -120):
             apply_seen_ephemeral_expiry(conversation, page_items, request.user.id)
 
@@ -356,6 +369,9 @@ class GetMessagesView(APIView):
             "totalPages": total_pages,
             "currentPage": page,
             "totalMessages": total_count,
+            "nextCursor": next_cursor,
+            "prevCursor": prev_cursor,
+            "hasMore": has_next,
             "ephemeral_ttl": conversation.ephemeral_ttl,
             "topics": conversation.topics or [],
         })

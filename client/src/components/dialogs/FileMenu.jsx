@@ -2,6 +2,7 @@ import { Divider, ListItemIcon, ListItemText, Menu, MenuItem, MenuList, Switch }
 import React, { lazy, Suspense, useRef, useState } from "react";
 import { useDispatch, useSelector } from "react-redux";
 import { setIsFileMenu, setUploadingLoader } from "../../redux/reducers/misc";
+import { compressFilesBatch } from "../../utils/imageCompressor";
 
 const MediaEditorDialog = lazy(() => import("./MediaEditorDialog"));
 import {
@@ -67,14 +68,15 @@ const FileMenu = ({
 
   const uploadPreparedFiles = async (files, key, captionText = "", isViewOnce = viewOnce) => {
     dispatch(setUploadingLoader(true));
-    const toastId = toast.loading(isViewOnce ? `Sending View-Once ${key}...` : `Sending ${key}...`);
+    const toastId = toast.loading(isViewOnce ? `Optimizing & sending View-Once ${key}...` : `Optimizing & sending ${key}...`);
     try {
+      const processedFiles = await compressFilesBatch(files);
       const myForm = new FormData();
       myForm.append("chatId", chatId);
       if (isViewOnce) myForm.append("view_once", "true");
       if (captionText) myForm.append("message", captionText);
       if (activeTopic && activeTopic !== "all") myForm.append("topic_name", activeTopic);
-      files.forEach((file) => myForm.append("files", file));
+      processedFiles.forEach((file) => myForm.append("files", file));
 
       const res = await sendAttachments(myForm);
 

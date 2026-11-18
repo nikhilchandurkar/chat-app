@@ -52,20 +52,27 @@ def get_user_privacy_profile(user):
 
 @db_async
 def set_user_online_status(user, is_online: bool):
-    """Updates presence via pooled Redis multi-device connection counter and avoids redundant DB writes."""
+    """Updates presence via pooled Redis multi-device pipeline counter and avoids redundant DB writes."""
     try:
         r = get_redis_client()
         should_update_db = True
         if r:
             key = f"ws:online_conns:{user.id}"
+            pipe = r.pipeline()
             if is_online:
-                cnt = r.incr(key)
-                r.expire(key, 3600)
+                pipe.incr(key)
+                pipe.expire(key, 3600)
+                pipe_res = pipe.execute()
+                cnt = pipe_res[0]
                 should_update_db = (cnt == 1)
             else:
-                cnt = r.decr(key)
+                pipe.decr(key)
+                pipe_res = pipe.execute()
+                cnt = pipe_res[0]
                 if cnt <= 0:
-                    r.delete(key)
+                    del_pipe = r.pipeline()
+                    del_pipe.delete(key)
+                    del_pipe.execute()
                     should_update_db = True
                 else:
                     should_update_db = False
@@ -399,6 +406,19 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
                     "data": {"user_id": str(self.user.id), "status": "offline"},
                 }
                 await asyncio.gather(*(self.channel_layer.group_send(f"chat_{cid}", packet) for cid in self.conv_ids[:8]), return_exceptions=True)
+
+    async def receive(self, text_data=None, bytes_data=None, **kwargs):
+        """Supports both standard text frames and compact binary frames."""
+        if bytes_data is not None:
+            try:
+                import json
+                text_data = bytes_data.decode("utf-8")
+                content = json.loads(text_data)
+                await self.receive_json(content)
+                return
+            except Exception:
+                pass
+        await super().receive(text_data=text_data, bytes_data=bytes_data, **kwargs)
 
     async def receive_json(self, content):
         event = content.get("event") or content.get("type")

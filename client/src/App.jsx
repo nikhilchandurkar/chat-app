@@ -326,6 +326,7 @@ const AndroidOAuthReturnScreen = ({ deepLinkUrl, onContinueInBrowser }) => {
 const App = () => {
   const { user, loader } = useSelector((state) => state.auth);
   const { themeMode, fontFamily } = useSelector((state) => state.misc);
+  const isDark = themeMode === "dark";
   const [stayInBrowser, setStayInBrowser] = useState(false);
   const [privacyShielded, setPrivacyShielded] = useState(false);
   const [appLocked, setAppLocked] = useState(() => isAppLockEnabled());

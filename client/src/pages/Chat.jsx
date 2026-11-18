@@ -52,6 +52,8 @@ import WatchPartyBar from "../components/specific/WatchPartyBar";
 import ThreadDrawer from "../components/specific/ThreadDrawer";
 import MessageComponent from "../components/shared/MessageComponent";
 import UnreadDivider from "../components/shared/UnreadDivider";
+import VirtualMessageList from "../components/chat/VirtualMessageList";
+import { getCachedMessages, saveCachedMessages } from "../utils/offlineStore";
 import { transformImage } from "../lib/feature";
 import EmojiBurst from "../components/shared/EmojiBurst";
 import { parseRemindCommand } from "../utils/interactive";
@@ -1289,6 +1291,15 @@ const Chat = ({ chatId, user }) => {
     setIncomingWalkieClip(null);
     setWalkiePeerName("");
     nearBottomRef.current = true;
+
+    // Instant 0ms rendering from local IndexedDB cache before network response
+    if (chatId) {
+      getCachedMessages(chatId).then((cached) => {
+        if (cached && cached.length > 0) {
+          setOldMessages((curr) => (curr.length === 0 ? cached : curr));
+        }
+      });
+    }
   }, [chatId]);
 
   useEffect(() => {
@@ -1310,12 +1321,15 @@ const Chat = ({ chatId, user }) => {
     const incoming = oldMessageChunk.data.messages;
     if (page === 1) {
       setOldMessages(incoming);
+      saveCachedMessages(chatId, incoming);
       requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "auto" }));
     } else {
       setOldMessages((prev) => {
         const existingIds = new Set(prev.map((m) => String(m._id || m.id)));
         const uniqueOlder = incoming.filter((m) => !existingIds.has(String(m._id || m.id)));
-        return [...uniqueOlder, ...prev];
+        const merged = [...uniqueOlder, ...prev];
+        saveCachedMessages(chatId, merged);
+        return merged;
       });
     }
   }, [chatId, page, oldMessageChunk.data?.messages]);
@@ -2486,45 +2500,29 @@ const Chat = ({ chatId, user }) => {
           bgcolor={wallpaper === "default" ? (isDark ? "#171A18" : "#F7F8F6") : undefined}
           flex={1}
         >
-          {allMessages.map((value, idx) => {
-            const myId = String(user?._id || user?.id || "");
-            const senderId = String(value.sender?._id || value.sender?.id || "");
-            const isMine = Boolean(myId && senderId === myId);
-            return (
-              <React.Fragment key={value._id}>
-                {unreadIndex !== null && idx === unreadIndex && <UnreadDivider count={unreadCount} />}
-                <div
-                  ref={(el) => {
-                    if (el) messageRefs.current[value._id] = el;
-                  }}
-                  style={{ display: "flex", justifyContent: isMine ? "flex-end" : "flex-start" }}
-                >
-                  <MessageComponent
-                    message={value}
-                    chatId={chatId}
-                    chatMembers={members}
-                    isGroupAdmin={isAdmin}
-                    onEdit={handleLocalEdit}
-                    onDelete={handleLocalDelete}
-                    onReply={handleSetReply}
-                    onReact={handleLocalReact}
-                    onPollUpdate={handleLocalPollUpdate}
-                    onInteractiveUpdate={handleLocalPollUpdate}
-                    onViewOnceConsumed={handleViewOnceConsumed}
-                    onOpenThread={(msg) => setActiveThreadMsg(msg)}
-                    onViewProfile={setViewingUser}
-                    selectionMode={selectedMsgIds.length > 0}
-                    isSelected={selectedMsgIds.includes(String(value._id))}
-                    onToggleSelect={toggleSelectMessage}
-                    onStartMultiSelect={toggleSelectMessage}
-                  />
-                </div>
-              </React.Fragment>
-            );
-          })}
-
-          {userTyping && <TypingIndicator />}
-          <div ref={bottomRef} />
+          <VirtualMessageList
+            messages={allMessages}
+            chatId={chatId}
+            user={user}
+            members={members}
+            isAdmin={isAdmin}
+            unreadIndex={unreadIndex}
+            unreadCount={unreadCount}
+            selectedMsgIds={selectedMsgIds}
+            messageRefs={messageRefs}
+            bottomRef={bottomRef}
+            scrollContainerRef={containerRef}
+            userTyping={userTyping}
+            onEdit={handleLocalEdit}
+            onDelete={handleLocalDelete}
+            onReply={handleSetReply}
+            onReact={handleLocalReact}
+            onPollUpdate={handleLocalPollUpdate}
+            onViewOnceConsumed={handleViewOnceConsumed}
+            onOpenThread={(msg) => setActiveThreadMsg(msg)}
+            onViewProfile={setViewingUser}
+            onToggleSelect={toggleSelectMessage}
+          />
         </Stack>
 
         {/* Floating Scroll to Latest button */}

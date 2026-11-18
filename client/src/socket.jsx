@@ -105,9 +105,15 @@ class NativeChatWebSocket {
         this.dispatch("connect", {});
       };
 
-      this.ws.onmessage = (event) => {
+      this.ws.onmessage = async (event) => {
         try {
-          const packet = JSON.parse(event.data);
+          let rawData = event.data;
+          if (typeof Blob !== "undefined" && rawData instanceof Blob) {
+            rawData = await rawData.text();
+          } else if (typeof ArrayBuffer !== "undefined" && rawData instanceof ArrayBuffer) {
+            rawData = new TextDecoder().decode(rawData);
+          }
+          const packet = typeof rawData === "string" ? JSON.parse(rawData) : rawData;
           const eventName = packet.event || packet.type;
           const legacyName = packet.legacy_event;
           const payload = packet.data !== undefined ? packet.data : packet;
