@@ -31,12 +31,7 @@
         "POST_NOTIFICATIONS",
         "VIBRATE",
         "RECEIVE_BOOT_COMPLETED"
-      ],
-      "notification": {
-        "icon": "./assets/icon.png",
-        "color": "#236B4A",
-        "androidMode": "default"
-      }
+      ]
     },
     "plugins": [
       [

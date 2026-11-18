@@ -5,10 +5,11 @@
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
+    "android": "expo run:android",
     "build:apk": "npx eas-cli build -p android --profile preview",
     "build:aab": "npx eas-cli build -p android --profile production",
-    "prebuild": "expo prebuild"
+    "prebuild": "expo prebuild",
+    "ios": "expo run:ios"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "~1.23.1",
@@ -20,8 +21,8 @@
     "expo-constants": "~16.0.2",
     "expo-document-picker": "~12.0.2",
     "expo-file-system": "~17.0.1",
-    "expo-image-picker": "~15.0.7",
-    "expo-local-authentication": "^58.0.3",
+    "expo-image-picker": "~15.1.0",
+    "expo-local-authentication": "~14.0.1",
     "expo-notifications": "~0.28.9",
     "expo-status-bar": "~1.12.1",
     "react": "18.2.0",
