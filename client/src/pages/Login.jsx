@@ -223,6 +223,11 @@ const Login = () => {
     }
     if (data?.token) {
       localStorage.setItem("chitChat-Token", data.token);
+      localStorage.setItem("access_token", data.token);
+    }
+    const refreshTok = data?.refreshToken || data?.tokens?.refresh;
+    if (refreshTok) {
+      localStorage.setItem("chitChat-RefreshToken", refreshTok);
     }
     dispatch(userExists(data.user));
     toast.success(

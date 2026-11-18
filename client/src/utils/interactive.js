@@ -32,27 +32,45 @@ export function parseRemindCommand(raw) {
   let body = trimmed.replace(/^\/remind\s*/i, "").replace(/^me\s+/i, "");
   let targetDate = null;
 
-  const inMatch = body.match(/^in\s+(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours)\b\s*(.*)$/i);
-  if (inMatch) {
-    const qty = Number(inMatch[1]);
-    const unit = inMatch[2].toLowerCase().startsWith("h") ? 3600000 : 60000;
-    targetDate = new Date(Date.now() + qty * unit);
-    body = inMatch[3] || "Reminder";
-  } else {
-    const atMatch = body.match(/^at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b\s*(.*)$/i);
-    if (atMatch) {
-      let hr = Number(atMatch[1]);
-      const min = Number(atMatch[2] || 0);
-      const meridiem = (atMatch[3] || "").toLowerCase();
+  // 1. Check for trailing "in X m/h" e.g. "call mom in 15 mins" or "deploy in 2h"
+  const trailingInMatch = body.match(/^(.*?)\s+in\s+(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|s|sec|seconds)\s*$/i);
+  if (trailingInMatch) {
+    const qty = Number(trailingInMatch[2]);
+    const u = trailingInMatch[3].toLowerCase();
+    const unit = u.startsWith("h") ? 3600000 : u.startsWith("s") ? 1000 : 60000;
+    targetDate = new Date(Date.now() + Math.max(5000, qty * unit));
+    body = trailingInMatch[1].replace(/^to\s+/i, "").trim() || "Reminder";
+  }
+
+  // 2. Check for leading "in X m/h" or "Xm/Xh" e.g. "in 15m call mom" or "15m call mom"
+  if (!targetDate) {
+    const leadingInMatch = body.match(/^(?:in\s+)?(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|s|sec|seconds)\b\s*(.*)$/i);
+    if (leadingInMatch) {
+      const qty = Number(leadingInMatch[1]);
+      const u = leadingInMatch[2].toLowerCase();
+      const unit = u.startsWith("h") ? 3600000 : u.startsWith("s") ? 1000 : 60000;
+      targetDate = new Date(Date.now() + Math.max(5000, qty * unit));
+      body = leadingInMatch[3].replace(/^to\s+/i, "").trim() || "Reminder";
+    }
+  }
+
+  // 3. Check for "tomorrow at HH:MM am/pm"
+  if (!targetDate) {
+    const tomorrowMatch = body.match(/^(?:tomorrow\s+at\s+)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b\s*(.*)$/i);
+    const isTomorrow = /\btomorrow\b/i.test(body);
+    if (tomorrowMatch && (tomorrowMatch[3] || tomorrowMatch[2] || isTomorrow)) {
+      let hr = Number(tomorrowMatch[1]);
+      const min = Number(tomorrowMatch[2] || 0);
+      const meridiem = (tomorrowMatch[3] || "").toLowerCase();
       if (meridiem === "pm" && hr < 12) hr += 12;
       if (meridiem === "am" && hr === 12) hr = 0;
       const d = new Date();
       d.setHours(hr, min, 0, 0);
-      if (d.getTime() <= Date.now()) {
+      if (isTomorrow || d.getTime() <= Date.now()) {
         d.setDate(d.getDate() + 1);
       }
       targetDate = d;
-      body = atMatch[4] || "Reminder";
+      body = (tomorrowMatch[4] || "").replace(/\btomorrow\b/gi, "").replace(/^to\s+/i, "").trim() || "Reminder";
     }
   }
 

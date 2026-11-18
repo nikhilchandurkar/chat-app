@@ -55,6 +55,8 @@ import UnreadDivider from "../components/shared/UnreadDivider";
 import { transformImage } from "../lib/feature";
 import EmojiBurst from "../components/shared/EmojiBurst";
 import { parseRemindCommand } from "../utils/interactive";
+import { getSlashCommandQuery, filterSlashCommands } from "../utils/slashCommands";
+import { safeToast } from "../utils/safeToast";
 
 import { useDispatch, useSelector } from "react-redux";
 import {
@@ -75,6 +77,9 @@ import {
   useGetUserE2eeKeyQuery,
   usePublishE2eeKeyMutation,
   useSendAttachmentsMutation,
+  useClearChatMutation,
+  useTogglePinChatMutation,
+  useToggleMuteChatMutation,
 } from "../redux/api/api";
 import { buildUnreadRecap, getSmartReplySuggestions } from "../utils/chatEnhancements";
 import { setIsFileMenu, setIsMobile, setUploadingLoader, toggleTheme } from "../redux/reducers/misc";
@@ -160,10 +165,31 @@ const ChatComposer = React.memo(
     onWalkieStart,
     onWalkieStop,
     walkieRecording = false,
+    onOpenWhiteboard,
+    onOpenCreatePoll,
+    onOpenMiniGame,
+    onOpenSchedule,
+    onOpenWidgetDialog,
+    onOpenSearch,
+    onClearChat,
+    onTogglePin,
+    onToggleMute,
+    onExportChat,
   }) => {
     const [message, setMessage] = useState("");
     const [showEmoji, setShowEmoji] = useState(false);
     const [mentionQuery, setMentionQuery] = useState(null);
+    const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
+
+    const slashQuery = useMemo(() => {
+      return getSlashCommandQuery(message);
+    }, [message]);
+
+    const slashSuggestions = useMemo(() => {
+      if (slashQuery === null) return [];
+      return filterSlashCommands(slashQuery);
+    }, [slashQuery]);
+
     const typingTimeout = useRef(null);
     const lastTypingEmit = useRef(0);
     const inputRef = useRef(null);
@@ -212,6 +238,70 @@ const ChatComposer = React.memo(
       resizeTextarea();
     }, [message, resizeTextarea]);
 
+    const handleSelectSlashCommand = useCallback((cmd) => {
+      setSelectedSlashIndex(0);
+      if (!cmd) return;
+      if (cmd.action === "whiteboard") {
+        setMessage("");
+        onOpenWhiteboard?.();
+      } else if (cmd.action === "poll") {
+        setMessage("");
+        onOpenCreatePoll?.();
+      } else if (cmd.action === "game") {
+        setMessage("");
+        onOpenMiniGame?.();
+      } else if (cmd.action === "remind") {
+        setMessage("/remind in 10m ");
+        inputRef.current?.focus();
+      } else if (cmd.action === "todo") {
+        setMessage("/todo Checklist | Task 1, Task 2");
+        inputRef.current?.focus();
+      } else if (cmd.action === "spin") {
+        setMessage("/spin Spin Wheel | Option A, Option B");
+        inputRef.current?.focus();
+      } else if (cmd.action === "countdown") {
+        setMessage("");
+        onOpenWidgetDialog?.("countdown");
+      } else if (cmd.action === "search") {
+        setMessage("");
+        onOpenSearch?.();
+      } else if (cmd.action === "clear") {
+        setMessage("");
+        onClearChat?.();
+      } else if (cmd.action === "pin") {
+        setMessage("");
+        onTogglePin?.();
+      } else if (cmd.action === "mute") {
+        setMessage("");
+        onToggleMute?.();
+      } else if (cmd.action === "export") {
+        setMessage("");
+        onExportChat?.();
+      } else if (cmd.type === "macro" && cmd.macro) {
+        setMessage(`${cmd.macro} `);
+        inputRef.current?.focus();
+      } else if (cmd.type === "effect" && cmd.effectEmoji) {
+        onCelebrateSend?.(cmd.effectEmoji, cmd.effectMode || "confetti");
+        setMessage(`${cmd.effectEmoji} `);
+        safeToast(`Effect ${cmd.name} triggered!`);
+        inputRef.current?.focus();
+      } else {
+        setMessage(`${cmd.name} `);
+        inputRef.current?.focus();
+      }
+    }, [
+      onOpenWhiteboard,
+      onOpenCreatePoll,
+      onOpenMiniGame,
+      onOpenWidgetDialog,
+      onOpenSearch,
+      onClearChat,
+      onTogglePin,
+      onToggleMute,
+      onExportChat,
+      onCelebrateSend,
+    ]);
+
     const doSend = useCallback(async (overrideText = null) => {
       const candidate = typeof overrideText === "string" ? overrideText : message;
       if (!candidate.trim()) return;
@@ -219,7 +309,85 @@ const ChatComposer = React.memo(
         toast.error(`Slow mode active — wait ${slowCooldownLeft}s`);
         return;
       }
-      const clean = candidate.trim();
+      let clean = candidate.trim();
+
+      // Direct interactive dialog shortcuts
+      if (clean === "/draw" || clean === "/whiteboard") {
+        setMessage("");
+        setShowEmoji(false);
+        onOpenWhiteboard?.();
+        return;
+      }
+      if (clean === "/poll") {
+        setMessage("");
+        setShowEmoji(false);
+        onOpenCreatePoll?.();
+        return;
+      }
+      if (clean === "/game") {
+        setMessage("");
+        setShowEmoji(false);
+        onOpenMiniGame?.();
+        return;
+      }
+      if (clean === "/search") {
+        setMessage("");
+        setShowEmoji(false);
+        onOpenSearch?.();
+        return;
+      }
+      if (clean === "/clear") {
+        setMessage("");
+        setShowEmoji(false);
+        onClearChat?.();
+        return;
+      }
+      if (clean === "/pin") {
+        setMessage("");
+        setShowEmoji(false);
+        onTogglePin?.();
+        return;
+      }
+      if (clean === "/mute") {
+        setMessage("");
+        setShowEmoji(false);
+        onToggleMute?.();
+        return;
+      }
+      if (clean === "/export") {
+        setMessage("");
+        setShowEmoji(false);
+        onExportChat?.();
+        return;
+      }
+      if (/^\/countdown\b/i.test(clean)) {
+        setMessage("");
+        setShowEmoji(false);
+        onOpenWidgetDialog?.("countdown");
+        return;
+      }
+
+      // Fun emoticons and celebratory effects
+      if (clean === "/flip") {
+        clean = "(╯°□°)╯︵ ┻━┻";
+      } else if (clean === "/unflip") {
+        clean = "┬─┬ノ( º _ ºノ)";
+      } else if (/^\/shrug\b/i.test(clean)) {
+        const shrugMsg = clean.replace(/^\/shrug\s*/i, "").trim();
+        clean = shrugMsg ? `${shrugMsg} ¯\\_(ツ)_/¯` : "¯\\_(ツ)_/¯";
+      } else if (/^\/confetti\b/i.test(clean)) {
+        onCelebrateSend?.("🎉", "confetti");
+        const cMsg = clean.replace(/^\/confetti\s*/i, "").trim();
+        clean = cMsg || "🎉 Let's Celebrate!";
+      } else if (/^\/fire\b/i.test(clean)) {
+        onCelebrateSend?.("🔥", "fire");
+        const fMsg = clean.replace(/^\/fire\s*/i, "").trim();
+        clean = fMsg || "🔥 Lit!";
+      } else if (/^\/party\b/i.test(clean)) {
+        onCelebrateSend?.("✨", "sparkles");
+        const pMsg = clean.replace(/^\/party\s*/i, "").trim();
+        clean = pMsg || "✨ Party Mode!";
+      }
 
       // Quick slash shortcuts: /todo Title | item1, item2   and   /spin Title | opt1, opt2
       const todoMatch = /^\/todo\s+(.+)$/i.exec(clean);
@@ -384,6 +552,31 @@ const ChatComposer = React.memo(
     };
 
     const handleKeyDown = (e) => {
+      if (slashSuggestions.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setSelectedSlashIndex((prev) => (prev + 1) % slashSuggestions.length);
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setSelectedSlashIndex((prev) => (prev - 1 + slashSuggestions.length) % slashSuggestions.length);
+          return;
+        }
+        if (e.key === "Enter" || e.key === "Tab") {
+          e.preventDefault();
+          const target = slashSuggestions[selectedSlashIndex] || slashSuggestions[0];
+          if (target) {
+            handleSelectSlashCommand(target);
+            return;
+          }
+        }
+        if (e.key === "Escape") {
+          e.preventDefault();
+          setMessage("");
+          return;
+        }
+      }
       if (e.key === "Enter") {
         if (enterToSend && !e.shiftKey) {
           e.preventDefault();
@@ -473,6 +666,106 @@ const ChatComposer = React.memo(
             zIndex: 5,
           }}
         >
+          {slashSuggestions.length > 0 && (
+            <Paper
+              elevation={6}
+              sx={{
+                mx: { xs: 1, sm: 2 },
+                mb: 0.5,
+                borderRadius: 2,
+                border: "1px solid",
+                borderColor: isDark ? "rgba(255,255,255,0.12)" : "divider",
+                maxHeight: 260,
+                overflowY: "auto",
+                bgcolor: isDark ? "#1E2320" : "#FFFFFF",
+              }}
+            >
+              <Box
+                sx={{
+                  px: 1.5,
+                  py: 0.5,
+                  bgcolor: isDark ? "#28302B" : "#F8FAFC",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Typography variant="caption" fontWeight={700} color="text.secondary">
+                  SLASH COMMANDS ({slashSuggestions.length})
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.68rem" }}>
+                  ↑↓ Navigate • Enter Select • Esc Dismiss
+                </Typography>
+              </Box>
+              {slashSuggestions.map((cmd, idx) => {
+                const isSelected = idx === selectedSlashIndex;
+                return (
+                  <Box
+                    key={cmd.name}
+                    onClick={() => handleSelectSlashCommand(cmd)}
+                    onMouseEnter={() => setSelectedSlashIndex(idx)}
+                    sx={{
+                      px: 1.5,
+                      py: 0.75,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      cursor: "pointer",
+                      bgcolor: isSelected
+                        ? isDark
+                          ? "rgba(35, 107, 74, 0.28)"
+                          : "rgba(35, 107, 74, 0.1)"
+                        : "transparent",
+                      borderLeft: isSelected ? "3px solid #236B4A" : "3px solid transparent",
+                      "&:hover": {
+                        bgcolor: isDark ? "rgba(35, 107, 74, 0.2)" : "rgba(35, 107, 74, 0.08)",
+                      },
+                    }}
+                  >
+                    <Stack direction="row" spacing={1} alignItems="center" minWidth={0}>
+                      <Typography sx={{ fontSize: "1.1rem", lineHeight: 1 }}>{cmd.icon}</Typography>
+                      <Box minWidth={0}>
+                        <Stack direction="row" spacing={0.6} alignItems="center">
+                          <Typography variant="body2" fontWeight={700} sx={{ color: isDark ? "#68D391" : "#236B4A" }}>
+                            {cmd.name}
+                          </Typography>
+                          <Chip
+                            size="small"
+                            label={cmd.category}
+                            sx={{
+                              height: 18,
+                              fontSize: "0.62rem",
+                              fontWeight: 600,
+                              bgcolor: isDark ? "rgba(255,255,255,0.08)" : "#E2E8F0",
+                            }}
+                          />
+                        </Stack>
+                        <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
+                          {cmd.description}
+                        </Typography>
+                      </Box>
+                    </Stack>
+                    <Typography
+                      variant="caption"
+                      color="text.secondary"
+                      sx={{
+                        fontFamily: "monospace",
+                        fontSize: "0.7rem",
+                        opacity: 0.75,
+                        ml: 1,
+                        display: { xs: "none", sm: "block" },
+                      }}
+                    >
+                      {cmd.usage}
+                    </Typography>
+                  </Box>
+                );
+              })}
+            </Paper>
+          )}
+
           {mentionSuggestions.length > 0 && (
             <Paper
               elevation={4}
@@ -853,6 +1146,9 @@ const Chat = ({ chatId, user }) => {
   const oldMessageChunk = useGetMessagesQuery({ chatId, page }, { skip: !chatId });
   const [sendAttachments] = useSendAttachmentsMutation();
   const [publishE2eeKey] = usePublishE2eeKeyMutation();
+  const [clearChatMutation] = useClearChatMutation();
+  const [togglePinChatMutation] = useTogglePinChatMutation();
+  const [toggleMuteChatMutation] = useToggleMuteChatMutation();
 
   const members = chatDetails?.data?.chat?.members;
   const chat = chatDetails?.data?.chat;
@@ -1384,6 +1680,55 @@ const Chat = ({ chatId, user }) => {
     },
     [chatId, chatDetails]
   );
+
+  const handleExportChat = useCallback(() => {
+    if (!allMessages.length) {
+      safeToast("No messages to export");
+      return;
+    }
+    const lines = allMessages.map((m) => {
+      const time = m.createdAt ? new Date(m.createdAt).toLocaleString() : "";
+      const sender = m.sender?.name || m.sender?.username || "Unknown";
+      return `[${time}] ${sender}: ${m.content || "[Attachment]"}`;
+    });
+    const blob = new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `chat_export_${chatId}_${Date.now()}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+    safeToast.success("Chat exported successfully!");
+  }, [allMessages, chatId]);
+
+  const handleClearEntireChat = useCallback(async () => {
+    try {
+      await clearChatMutation(chatId).unwrap();
+      setMessages([]);
+      setOldMessages([]);
+      safeToast.success("Chat history cleared");
+    } catch {
+      safeToast.error("Failed to clear chat");
+    }
+  }, [clearChatMutation, chatId]);
+
+  const handleToggleChatPin = useCallback(async () => {
+    try {
+      const res = await togglePinChatMutation(chatId).unwrap();
+      safeToast.success(res?.isPinned ? "Conversation pinned to top" : "Conversation unpinned");
+    } catch {
+      safeToast.error("Failed to toggle pin");
+    }
+  }, [togglePinChatMutation, chatId]);
+
+  const handleToggleChatMute = useCallback(async () => {
+    try {
+      const res = await toggleMuteChatMutation({ chatId }).unwrap();
+      safeToast.success(res?.isMuted ? "Notifications muted" : "Notifications unmuted");
+    } catch {
+      safeToast.error("Failed to update mute setting");
+    }
+  }, [toggleMuteChatMutation, chatId]);
 
   const socketErrorHandler = useCallback(
     (data) => {
@@ -2224,6 +2569,16 @@ const Chat = ({ chatId, user }) => {
           onWalkieStart={handleWalkieStart}
           onWalkieStop={handleWalkieStop}
           walkieRecording={walkieRecording}
+          onOpenWhiteboard={() => setShowWhiteboard(true)}
+          onOpenCreatePoll={() => setShowPollDialog(true)}
+          onOpenMiniGame={() => setShowGameDialog(true)}
+          onOpenSchedule={() => setShowScheduleDialog(true)}
+          onOpenWidgetDialog={(tab) => setShowWidgetDialog(true)}
+          onOpenSearch={() => setShowSearch(true)}
+          onClearChat={handleClearEntireChat}
+          onTogglePin={handleToggleChatPin}
+          onToggleMute={handleToggleChatMute}
+          onExportChat={handleExportChat}
         />
       ) : (
         <Box

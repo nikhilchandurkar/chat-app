@@ -1,0 +1,13 @@
+# Gitleaks configuration and allowlist
+[allowlist]
+description = "Global allowlist for CI dummy test keys and github workflow definitions"
+paths = [
+    '''^\.github/workflows/.*$''',
+    '''^load_testing/.*$''',
+    '''^django_server/core/tests/.*$''',
+]
+regexes = [
+    '''ci-test-secret-key-12345''',
+    '''12345678901234567890123456789012''',
+    '''insecure-ci-testing-dummy-key''',
+]

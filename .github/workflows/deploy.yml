@@ -119,11 +119,11 @@ jobs:
       - name: Django system check
         run: python manage.py check
         env:
-          SECRET_KEY: ci-test-secret-key-12345
+          SECRET_KEY: "ci-test-secret-key-12345" # gitleaks:allow
           DB_ENGINE: sqlite3
           USE_REDIS: "False"
           DEBUG: "True"
-          MESSAGE_ENCRYPTION_KEY: "12345678901234567890123456789012"
+          MESSAGE_ENCRYPTION_KEY: "12345678901234567890123456789012" # gitleaks:allow
 
   # ─── 1c. Frontend Lint ─────────────────────────────────────────────────────
   frontend_lint:
@@ -398,11 +398,11 @@ jobs:
             --tb=short \
             -p no:warnings
         env:
-          SECRET_KEY: ci-test-secret-key-12345
+          SECRET_KEY: "ci-test-secret-key-12345" # gitleaks:allow
           DB_ENGINE: sqlite3
           USE_REDIS: "False"
           DEBUG: "True"
-          MESSAGE_ENCRYPTION_KEY: "12345678901234567890123456789012"
+          MESSAGE_ENCRYPTION_KEY: "12345678901234567890123456789012" # gitleaks:allow
         continue-on-error: true
 
       - name: Upload coverage XML (for SonarCloud)

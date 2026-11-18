@@ -1164,6 +1164,12 @@ class ScheduleMessageView(APIView):
         )
         try:
             cache.delete(f"no_sched:{conversation.id}")
+            delay_sec = max(1, int((sched_dt - timezone.now()).total_seconds()))
+            from .tasks import flush_scheduled_messages_task
+            flush_scheduled_messages_task.apply_async(
+                kwargs={"conversation_id": conversation.id},
+                countdown=delay_sec,
+            )
         except Exception:
             pass
         return Response({

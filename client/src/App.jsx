@@ -86,19 +86,77 @@ axios.interceptors.request.use((config) => {
   return config;
 });
 
-// Immediately sign out locally if active session is revoked from another device
+// Transparent JWT access token refresh queue to ensure persistent sessions
+let isRefreshingToken = false;
+let refreshSubscribers = [];
+
+function subscribeTokenRefresh(cb) {
+  refreshSubscribers.push(cb);
+}
+
+function onRefreshedToken(token) {
+  refreshSubscribers.forEach((cb) => cb(token));
+  refreshSubscribers = [];
+}
+
 axios.interceptors.response.use(
   (response) => response,
-  (error) => {
-    const reqUrl = error?.config?.url || "";
+  async (error) => {
+    const originalRequest = error?.config;
+    const reqUrl = originalRequest?.url || "";
     const statusCode = error?.response?.status;
     const isAuthAttempt = /\/api\/v1\/(auth|user)\/(login|register|otp|qr|mfa\/login-verify|sessions\/resolve-limit|refresh)/.test(reqUrl);
-    if (statusCode === 401 && !isAuthAttempt) {
-      const hadToken = Boolean(localStorage.getItem("chitChat-Token") || localStorage.getItem("access_token"));
-      if (hadToken) {
-        localStorage.removeItem("chitChat-Token");
-        localStorage.removeItem("access_token");
-        window.dispatchEvent(new Event("chitchat:session-revoked"));
+
+    if (statusCode === 401 && originalRequest && !originalRequest._retry && !isAuthAttempt) {
+      if (isRefreshingToken) {
+        return new Promise((resolve) => {
+          subscribeTokenRefresh((newToken) => {
+            if (newToken) {
+              originalRequest.headers.Authorization = `Bearer ${newToken}`;
+            }
+            resolve(axios(originalRequest));
+          });
+        });
+      }
+
+      originalRequest._retry = true;
+      isRefreshingToken = true;
+
+      try {
+        const storedRefresh = localStorage.getItem("chitChat-RefreshToken") || "";
+        const base = server || (typeof window !== "undefined" ? window.location.origin : "");
+        const refreshResp = await axios.post(
+          `${base}/api/v1/auth/refresh`,
+          { refreshToken: storedRefresh },
+          { withCredentials: true, headers: { "Content-Type": "application/json" } }
+        );
+
+        const newAccess = refreshResp?.data?.token || refreshResp?.data?.tokens?.access;
+        const newRefresh = refreshResp?.data?.refreshToken || refreshResp?.data?.tokens?.refresh;
+
+        if (newAccess) {
+          localStorage.setItem("chitChat-Token", newAccess);
+          localStorage.setItem("access_token", newAccess);
+          originalRequest.headers.Authorization = `Bearer ${newAccess}`;
+        }
+        if (newRefresh) {
+          localStorage.setItem("chitChat-RefreshToken", newRefresh);
+        }
+
+        onRefreshedToken(newAccess);
+        return axios(originalRequest);
+      } catch (refreshErr) {
+        onRefreshedToken(null);
+        const hadToken = Boolean(localStorage.getItem("chitChat-Token") || localStorage.getItem("access_token"));
+        if (hadToken) {
+          localStorage.removeItem("chitChat-Token");
+          localStorage.removeItem("access_token");
+          localStorage.removeItem("chitChat-RefreshToken");
+          window.dispatchEvent(new Event("chitchat:session-revoked"));
+        }
+        return Promise.reject(refreshErr);
+      } finally {
+        isRefreshingToken = false;
       }
     }
     return Promise.reject(error);
@@ -481,7 +539,44 @@ const App = () => {
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </Suspense>
-            <Toaster position="bottom-center" />
+            <Toaster
+              position="top-right"
+              reverseOrder={false}
+              gutter={8}
+              containerStyle={{
+                top: 20,
+                right: 20,
+                zIndex: 99999,
+              }}
+              toastOptions={{
+                duration: 2800,
+                style: {
+                  background: isDark ? "#1E2320" : "#FFFFFF",
+                  color: isDark ? "#FFFFFF" : "#111827",
+                  fontSize: "13.5px",
+                  fontWeight: 500,
+                  borderRadius: "10px",
+                  border: isDark ? "1px solid #343B36" : "1px solid #E2E8F0",
+                  boxShadow: "0 10px 25px -5px rgba(0, 0, 0, 0.25), 0 8px 10px -6px rgba(0, 0, 0, 0.15)",
+                  maxWidth: "360px",
+                  padding: "10px 14px",
+                },
+                success: {
+                  duration: 2500,
+                  iconTheme: {
+                    primary: "#236B4A",
+                    secondary: "#FFFFFF",
+                  },
+                },
+                error: {
+                  duration: 3500,
+                  iconTheme: {
+                    primary: "#EF4444",
+                    secondary: "#FFFFFF",
+                  },
+                },
+              }}
+            />
             {privacyShielded && (
               <Box
                 sx={{

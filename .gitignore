@@ -34,7 +34,12 @@ server_code.zip
 server/logs/2026-07-07.log
 .vercel
 
-# Python & Django Server
+# IDE & Mobile build caches
+.idea/
+**/.idea/
+.expo/
+**/.expo/
+package-lock.json
 # Databases & Local Runtime Storage
 **/db.sqlite3
 **/db.sqlite3-journal

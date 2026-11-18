@@ -323,12 +323,19 @@ CSRF_COOKIE_HTTPONLY = True
 CSRF_FAILURE_VIEW = "core.urls.custom_csrf_failure"
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.environ.get("JWT_ACCESS_MINUTES", 60))),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.environ.get("JWT_REFRESH_DAYS", 30))),
+    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=int(os.environ.get("JWT_ACCESS_MINUTES", 1440))),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.environ.get("JWT_REFRESH_DAYS", 90))),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
     "AUTH_HEADER_TYPES": ("Bearer",),
     "AUTH_TOKEN_CLASSES": ("rest_framework_simplejwt.tokens.AccessToken",),
+}
+
+CELERY_BEAT_SCHEDULE = {
+    "flush-due-scheduled-messages-every-15s": {
+        "task": "apps.messages_app.tasks.flush_scheduled_messages_task",
+        "schedule": 15.0,
+    },
 }
 
 # Maximum simultaneous active device sessions allowed per user (prevents unlimited shared logins)

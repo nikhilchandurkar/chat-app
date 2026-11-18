@@ -21,6 +21,7 @@
     "expo-document-picker": "~12.0.2",
     "expo-file-system": "~17.0.1",
     "expo-image-picker": "~15.0.7",
+    "expo-local-authentication": "^58.0.3",
     "expo-notifications": "~0.28.9",
     "expo-status-bar": "~1.12.1",
     "react": "18.2.0",

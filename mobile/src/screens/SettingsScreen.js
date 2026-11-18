@@ -14,6 +14,12 @@ import {
   PROD_API_URL,
   DEV_DEFAULT_API_URL,
 } from "../config";
+import {
+  checkBiometricSupport,
+  isBiometricLockEnabled,
+  setBiometricLockEnabled,
+  promptBiometricAuth,
+} from "../services/biometricService";
 
 export default function SettingsScreen({ navigation }) {
   const [sessions, setSessions] = useState([]);
@@ -22,6 +28,8 @@ export default function SettingsScreen({ navigation }) {
   const [storageUsed, setStorageUsed] = useState("0 MB");
   const [wsConnected, setWsConnected] = useState(socket.isConnected);
   const [activeServer, setActiveServer] = useState(getApiBaseUrl());
+  const [biometricSupported, setBiometricSupported] = useState(false);
+  const [biometricEnabled, setBiometricEnabled] = useState(false);
 
   const [serverModalVisible, setServerModalVisible] = useState(false);
   const [serverInput, setServerInput] = useState(getApiBaseUrl());
@@ -50,10 +58,30 @@ export default function SettingsScreen({ navigation }) {
       if (quotaRes.data && quotaRes.data.used_mb !== undefined) {
         setStorageUsed(`${quotaRes.data.used_mb} MB / ${quotaRes.data.quota_mb} MB`);
       }
+      const bioSupport = await checkBiometricSupport();
+      setBiometricSupported(bioSupport.available);
+      const bioEnabled = await isBiometricLockEnabled();
+      setBiometricEnabled(bioEnabled);
     } catch (e) {
       console.warn("Settings error:", e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleToggleBiometric = async (value) => {
+    if (value) {
+      const success = await promptBiometricAuth("Confirm fingerprint to enable app lock");
+      if (success) {
+        await setBiometricLockEnabled(true);
+        setBiometricEnabled(true);
+        Alert.alert("Fingerprint Lock Enabled", "ChitChat will require fingerprint authentication when opened.");
+      } else {
+        Alert.alert("Authentication Failed", "Could not verify your fingerprint or device credentials.");
+      }
+    } else {
+      await setBiometricLockEnabled(false);
+      setBiometricEnabled(false);
     }
   };
 
@@ -236,6 +264,25 @@ export default function SettingsScreen({ navigation }) {
         {/* Security & Shared Sessions */}
         <Text style={styles.sectionHeader}>SECURITY & SHARED SESSIONS</Text>
         <View style={styles.card}>
+          <View style={styles.row}>
+            <View style={{ flex: 1, paddingRight: 10 }}>
+              <Text style={styles.navLabel}>Fingerprint / Biometric Lock</Text>
+              <Text style={styles.navSub}>
+                {biometricSupported
+                  ? "Prompt for fingerprint / face unlock when opening ChitChat"
+                  : "Biometric sensor unavailable or not enrolled on device"}
+              </Text>
+            </View>
+            <Switch
+              value={biometricEnabled}
+              onValueChange={handleToggleBiometric}
+              disabled={!biometricSupported}
+              trackColor={{ false: "#D1D5DB", true: "#A7F3D0" }}
+              thumbColor={biometricEnabled ? "#236B4A" : "#9CA3AF"}
+            />
+          </View>
+
+          <View style={styles.divider} />
           {sessions.map((sess) => (
             <View key={sess.id} style={styles.sessionItem}>
               <View style={{ flex: 1 }}>
