@@ -122,8 +122,50 @@ export function emitPreferencesChanged() {
   }
 }
 
-export function triggerHaptic(pattern = 15) {
+let hapticsModule = null;
+async function getCapacitorHaptics() {
+  if (typeof window === "undefined") return null;
+  if (hapticsModule) return hapticsModule;
+  try {
+    const isNative = Boolean(
+      window.Capacitor &&
+      typeof window.Capacitor.isNativePlatform === "function" &&
+      window.Capacitor.isNativePlatform()
+    );
+    if (isNative) {
+      hapticsModule = await import("@capacitor/haptics");
+      return hapticsModule;
+    }
+  } catch {
+    // fallback
+  }
+  return null;
+}
+
+export async function triggerHaptic(pattern = 15) {
   if (!isHapticsEnabled()) return;
+  try {
+    const cap = await getCapacitorHaptics();
+    if (cap?.Haptics) {
+      if (typeof pattern === "number") {
+        if (pattern <= 15) {
+          await cap.Haptics.impact({ style: cap.ImpactStyle?.Light || "LIGHT" });
+        } else if (pattern <= 35) {
+          await cap.Haptics.impact({ style: cap.ImpactStyle?.Medium || "MEDIUM" });
+        } else {
+          await cap.Haptics.impact({ style: cap.ImpactStyle?.Heavy || "HEAVY" });
+        }
+      } else if (Array.isArray(pattern)) {
+        await cap.Haptics.notification({ type: cap.NotificationType?.Success || "SUCCESS" });
+      } else {
+        await cap.Haptics.vibrate({ duration: 40 });
+      }
+      return;
+    }
+  } catch {
+    // ignore native error and fallback
+  }
+
   try {
     if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
       navigator.vibrate(pattern);
@@ -131,6 +173,18 @@ export function triggerHaptic(pattern = 15) {
   } catch {
     // ignore unsupported device/browser
   }
+}
+
+export function hapticLight() {
+  triggerHaptic(10);
+}
+
+export function hapticMedium() {
+  triggerHaptic(25);
+}
+
+export function hapticSuccess() {
+  triggerHaptic([12, 40, 15]);
 }
 
 let sharedAudioCtx = null;

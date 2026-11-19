@@ -5,6 +5,10 @@ import {
   isEnterToSendEnabled,
   isPrivacyBlurEnabled,
   isScreenshotBlockEnabled,
+  triggerHaptic,
+  hapticLight,
+  hapticMedium,
+  hapticSuccess,
 } from "../utils/feedback";
 
 describe("Chat UX feedback helpers", () => {
@@ -20,6 +24,14 @@ describe("Chat UX feedback helpers", () => {
     expect(isEnterToSendEnabled()).toBe(true);
     expect(isScreenshotBlockEnabled()).toBe(true);
     expect(isPrivacyBlurEnabled()).toBe(true);
+  });
+
+  it("safely invokes haptic helpers without crashing in Node", () => {
+    expect(() => hapticLight()).not.toThrow();
+    expect(() => hapticMedium()).not.toThrow();
+    expect(() => hapticSuccess()).not.toThrow();
+    expect(() => triggerHaptic(20)).not.toThrow();
+    expect(() => triggerHaptic([10, 20])).not.toThrow();
   });
 });
 

@@ -1,47 +1,84 @@
 import React from "react";
-import { Box } from "@mui/material";
+import { Box, Typography, useTheme } from "@mui/material";
+import { motion } from "framer-motion";
 
-const TypingIndicator = () => {
+const TypingIndicator = ({ username = "" }) => {
+  const theme = useTheme();
+  const isDark = theme.palette.mode === "dark";
+
   return (
-    <Box
-      sx={{
-        display: "flex",
-        alignItems: "center",
-        gap: "4px",
-        padding: "0.5rem 1rem",
-        borderRadius: "1.5rem",
-        backgroundColor: "rgba(230, 230, 230, 0.8)",
-        width: "fit-content",
-        margin: "0.5rem 0",
-      }}
+    <motion.div
+      initial={{ opacity: 0, scale: 0.88, y: 8 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.88, y: 8 }}
+      transition={{ type: "spring", stiffness: 480, damping: 28 }}
+      style={{ width: "fit-content", margin: "0.25rem 0" }}
     >
-      <Box sx={dotStyle} style={{ animationDelay: "0ms" }} />
-      <Box sx={dotStyle} style={{ animationDelay: "150ms" }} />
-      <Box sx={dotStyle} style={{ animationDelay: "300ms" }} />
-      <style>
-        {`
-          @keyframes typing-bounce {
-            0%, 100% {
-              transform: translateY(0);
-              opacity: 0.5;
-            }
-            50% {
-              transform: translateY(-4px);
-              opacity: 1;
-            }
-          }
-        `}
-      </style>
-    </Box>
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: "8px",
+          px: 1.75,
+          py: 0.9,
+          borderRadius: "18px 18px 18px 4px",
+          bgcolor: isDark ? "#202522" : "#FFFFFF",
+          border: `1px solid ${isDark ? "#343B36" : "#E3E6E1"}`,
+          boxShadow: isDark ? "none" : "0 2px 6px rgba(0,0,0,0.04)",
+          width: "fit-content",
+        }}
+      >
+        {username && (
+          <Typography
+            variant="caption"
+            sx={{
+              fontWeight: 600,
+              color: isDark ? "#4B9B70" : "#236B4A",
+              fontSize: "0.74rem",
+              mr: 0.25,
+            }}
+          >
+            {username}
+          </Typography>
+        )}
+        <Box sx={{ display: "flex", alignItems: "center", gap: "4px" }}>
+          <Box
+            component={motion.div}
+            animate={{ y: [0, -5, 0], opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: 0 }}
+            sx={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              bgcolor: isDark ? "#4B9B70" : "#236B4A",
+            }}
+          />
+          <Box
+            component={motion.div}
+            animate={{ y: [0, -5, 0], opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: 0.18 }}
+            sx={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              bgcolor: isDark ? "#4B9B70" : "#236B4A",
+            }}
+          />
+          <Box
+            component={motion.div}
+            animate={{ y: [0, -5, 0], opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: 0.36 }}
+            sx={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              bgcolor: isDark ? "#4B9B70" : "#236B4A",
+            }}
+          />
+        </Box>
+      </Box>
+    </motion.div>
   );
 };
 
-const dotStyle = {
-  width: "6px",
-  height: "6px",
-  backgroundColor: "#888",
-  borderRadius: "50%",
-  animation: "typing-bounce 1s infinite ease-in-out",
-};
-
-export default TypingIndicator;
+export default React.memo(TypingIndicator);

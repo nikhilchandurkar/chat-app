@@ -210,8 +210,13 @@ const ChatItem = ({
               height: "9px",
               borderRadius: "50%",
               flexShrink: 0,
-              backgroundColor: sameSender ? "#A7F3D0" : "#48bb78",
-              boxShadow: "0 0 8px rgba(72, 187, 120, 0.6)",
+              backgroundColor: sameSender ? "#A7F3D0" : "#22C55E",
+              boxShadow: "0 0 8px rgba(34, 197, 94, 0.6)",
+              animation: "onlinePulse 2s infinite ease-in-out",
+              "@keyframes onlinePulse": {
+                "0%, 100%": { transform: "scale(1)", opacity: 0.85 },
+                "50%": { transform: "scale(1.3)", opacity: 1 },
+              },
             }}
           />
         )}

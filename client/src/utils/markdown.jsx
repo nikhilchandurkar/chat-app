@@ -1,7 +1,8 @@
-import React from "react";
+import React, { useState } from "react";
 import { Box, Chip, IconButton, Tooltip, Typography } from "@mui/material";
-import { ContentCopy as CopyIcon } from "@mui/icons-material";
+import { ContentCopy as CopyIcon, Check as CheckIcon } from "@mui/icons-material";
 import toast from "react-hot-toast";
+import { triggerHaptic } from "./feedback";
 
 const INLINE_TOKEN_RE = /(\*\*[^*]+\*\*|\*[^*]+\*|~~[^~]+~~|`[^`]+`|@[a-zA-Z0-9_.-]{2,32}|https?:\/\/[^\s<]+)/g;
 
@@ -114,6 +115,75 @@ export function parseMessageSegments(text) {
   return segments;
 }
 
+const CodeBlock = ({ lang, content, isDark }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e) => {
+    e.stopPropagation();
+    try {
+      navigator.clipboard?.writeText(content);
+      setCopied(true);
+      triggerHaptic(10);
+      toast.success("Code copied");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.error("Failed to copy code");
+    }
+  };
+
+  return (
+    <Box
+      onTouchStart={(e) => e.stopPropagation()}
+      sx={{
+        position: "relative",
+        bgcolor: isDark ? "#111613" : "#1B221E",
+        color: "#E5EFE8",
+        borderRadius: 2,
+        p: 1.25,
+        pr: 4.5,
+        fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
+        fontSize: "0.82rem",
+        overflowX: "auto",
+        border: "1px solid rgba(255,255,255,0.12)",
+        boxShadow: "0 2px 8px rgba(0,0,0,0.15)",
+      }}
+    >
+      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 0.5 }}>
+        <Typography
+          variant="caption"
+          sx={{
+            display: "inline-block",
+            color: "#6EE7B7",
+            fontSize: "0.68rem",
+            fontWeight: 700,
+            textTransform: "uppercase",
+            letterSpacing: "0.5px",
+          }}
+        >
+          {lang || "code"}
+        </Typography>
+      </Box>
+      <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word", lineHeight: 1.45 }}>{content}</pre>
+      <Tooltip title={copied ? "Copied!" : "Copy code"}>
+        <IconButton
+          size="small"
+          onClick={handleCopy}
+          sx={{
+            position: "absolute",
+            top: 6,
+            right: 6,
+            color: copied ? "#10B981" : "#9CA3AF",
+            transition: "all 0.2s ease",
+            "&:hover": { color: "#FFFFFF", bgcolor: "rgba(255,255,255,0.1)" },
+          }}
+        >
+          {copied ? <CheckIcon sx={{ fontSize: 16 }} /> : <CopyIcon sx={{ fontSize: 16 }} />}
+        </IconButton>
+      </Tooltip>
+    </Box>
+  );
+};
+
 export const FormattedMessageContent = ({ content, fontSize = 15, isDark = false, onMentionClick }) => {
   const segments = parseMessageSegments(content);
 
@@ -121,45 +191,7 @@ export const FormattedMessageContent = ({ content, fontSize = 15, isDark = false
     <Box sx={{ display: "flex", flexDirection: "column", gap: 0.6 }}>
       {segments.map((seg, i) => {
         if (seg.type === "code") {
-          return (
-            <Box
-              key={`code-${i}`}
-              onTouchStart={(e) => e.stopPropagation()}
-              sx={{
-                position: "relative",
-                bgcolor: isDark ? "#111613" : "#1E2420",
-                color: "#E5EFE8",
-                borderRadius: 1.5,
-                p: 1.1,
-                pr: 4,
-                fontFamily: "monospace",
-                fontSize: "0.82rem",
-                overflowX: "auto",
-                border: "1px solid rgba(255,255,255,0.1)",
-              }}
-            >
-              <Typography
-                variant="caption"
-                sx={{ display: "block", color: "#86EFAC", fontSize: "0.66rem", mb: 0.4, textTransform: "uppercase" }}
-              >
-                {seg.lang}
-              </Typography>
-              <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{seg.content}</pre>
-              <Tooltip title="Copy code">
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    navigator.clipboard?.writeText(seg.content);
-                    toast.success("Code copied");
-                  }}
-                  sx={{ position: "absolute", top: 4, right: 4, color: "#9CA3AF" }}
-                >
-                  <CopyIcon sx={{ fontSize: 15 }} />
-                </IconButton>
-              </Tooltip>
-            </Box>
-          );
+          return <CodeBlock key={`code-${i}`} lang={seg.lang} content={seg.content} isDark={isDark} />;
         }
 
         return (

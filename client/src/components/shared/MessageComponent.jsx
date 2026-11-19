@@ -769,9 +769,9 @@ const MessageComponent = ({
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.16 }}
+          initial={{ opacity: 0, scale: 0.94, y: 10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          transition={{ type: "spring", stiffness: 450, damping: 28 }}
           style={{
             position: "relative",
             width: "100%",
@@ -1140,14 +1140,30 @@ const MessageComponent = ({
 
             <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, mt: 0.3, justifyContent: "flex-end" }}>
               {message.expiresAt && !isDeleted && (
-                <Typography variant="caption" sx={{ color: "warning.main", fontSize: "0.62rem", fontWeight: 700 }}>
-                  {(() => {
-                    const secLeft = Math.max(0, Math.ceil((new Date(message.expiresAt).getTime() - Date.now()) / 1000));
-                    if (secLeft >= 3600) return `⏱ ${Math.ceil(secLeft / 3600)}h`;
-                    if (secLeft >= 60) return `⏱ ${Math.floor(secLeft / 60)}m ${secLeft % 60}s`;
-                    return `🔥 ${secLeft}s`;
-                  })()}
-                </Typography>
+                <Box
+                  component={motion.span}
+                  animate={{ scale: [1, 1.08, 1], opacity: [0.85, 1, 0.85] }}
+                  transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+                  sx={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "2px",
+                    px: 0.5,
+                    py: 0.1,
+                    borderRadius: "4px",
+                    bgcolor: "rgba(245, 158, 11, 0.14)",
+                    border: "1px solid rgba(245, 158, 11, 0.3)",
+                  }}
+                >
+                  <Typography variant="caption" sx={{ color: "warning.main", fontSize: "0.62rem", fontWeight: 700 }}>
+                    {(() => {
+                      const secLeft = Math.max(0, Math.ceil((new Date(message.expiresAt).getTime() - Date.now()) / 1000));
+                      if (secLeft >= 3600) return `⏱ ${Math.ceil(secLeft / 3600)}h`;
+                      if (secLeft >= 60) return `⏱ ${Math.floor(secLeft / 60)}m ${secLeft % 60}s`;
+                      return `🔥 ${secLeft}s`;
+                    })()}
+                  </Typography>
+                </Box>
               )}
               {isEdited && !isDeleted && (
                 <Typography variant="caption" sx={{ color: isDark ? "#A6AEA8" : "#737A75", fontSize: "0.62rem" }}>

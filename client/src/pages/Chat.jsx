@@ -22,6 +22,7 @@ import {
 } from "@mui/icons-material";
 import {
   Avatar,
+  Badge,
   Box,
   Button,
   Chip,
@@ -39,6 +40,7 @@ import {
   Tooltip,
   Typography,
 } from "@mui/material";
+import { AnimatePresence, motion } from "framer-motion";
 import axios from "axios";
 import React, { useCallback, useMemo, useRef, useState, useEffect, lazy, Suspense } from "react";
 import toast from "react-hot-toast";
@@ -467,6 +469,7 @@ const ChatComposer = React.memo(
         }
       }
 
+      triggerHaptic(12);
       socket.emit(NEW_MESSAGE, {
         chatId,
         members,
@@ -668,105 +671,114 @@ const ChatComposer = React.memo(
             zIndex: 5,
           }}
         >
-          {slashSuggestions.length > 0 && (
-            <Paper
-              elevation={6}
-              sx={{
-                mx: { xs: 1, sm: 2 },
-                mb: 0.5,
-                borderRadius: 2,
-                border: "1px solid",
-                borderColor: isDark ? "rgba(255,255,255,0.12)" : "divider",
-                maxHeight: 260,
-                overflowY: "auto",
-                bgcolor: isDark ? "#1E2320" : "#FFFFFF",
-              }}
-            >
-              <Box
-                sx={{
-                  px: 1.5,
-                  py: 0.5,
-                  bgcolor: isDark ? "#28302B" : "#F8FAFC",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  borderBottom: "1px solid",
-                  borderColor: "divider",
-                }}
+          <AnimatePresence>
+            {slashSuggestions.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, y: 12, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 12, scale: 0.98 }}
+                transition={{ type: "spring", stiffness: 480, damping: 28 }}
               >
-                <Typography variant="caption" fontWeight={700} color="text.secondary">
-                  SLASH COMMANDS ({slashSuggestions.length})
-                </Typography>
-                <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.68rem" }}>
-                  ↑↓ Navigate • Enter Select • Esc Dismiss
-                </Typography>
-              </Box>
-              {slashSuggestions.map((cmd, idx) => {
-                const isSelected = idx === selectedSlashIndex;
-                return (
+                <Paper
+                  elevation={6}
+                  sx={{
+                    mx: { xs: 1, sm: 2 },
+                    mb: 0.5,
+                    borderRadius: 2,
+                    border: "1px solid",
+                    borderColor: isDark ? "rgba(255,255,255,0.12)" : "divider",
+                    maxHeight: 260,
+                    overflowY: "auto",
+                    bgcolor: isDark ? "#1E2320" : "#FFFFFF",
+                  }}
+                >
                   <Box
-                    key={cmd.name}
-                    onClick={() => handleSelectSlashCommand(cmd)}
-                    onMouseEnter={() => setSelectedSlashIndex(idx)}
                     sx={{
                       px: 1.5,
-                      py: 0.75,
+                      py: 0.5,
+                      bgcolor: isDark ? "#28302B" : "#F8FAFC",
                       display: "flex",
-                      alignItems: "center",
                       justifyContent: "space-between",
-                      cursor: "pointer",
-                      bgcolor: isSelected
-                        ? isDark
-                          ? "rgba(35, 107, 74, 0.28)"
-                          : "rgba(35, 107, 74, 0.1)"
-                        : "transparent",
-                      borderLeft: isSelected ? "3px solid #236B4A" : "3px solid transparent",
-                      "&:hover": {
-                        bgcolor: isDark ? "rgba(35, 107, 74, 0.2)" : "rgba(35, 107, 74, 0.08)",
-                      },
+                      alignItems: "center",
+                      borderBottom: "1px solid",
+                      borderColor: "divider",
                     }}
                   >
-                    <Stack direction="row" spacing={1} alignItems="center" minWidth={0}>
-                      <Typography sx={{ fontSize: "1.1rem", lineHeight: 1 }}>{cmd.icon}</Typography>
-                      <Box minWidth={0}>
-                        <Stack direction="row" spacing={0.6} alignItems="center">
-                          <Typography variant="body2" fontWeight={700} sx={{ color: isDark ? "#68D391" : "#236B4A" }}>
-                            {cmd.name}
-                          </Typography>
-                          <Chip
-                            size="small"
-                            label={cmd.category}
-                            sx={{
-                              height: 18,
-                              fontSize: "0.62rem",
-                              fontWeight: 600,
-                              bgcolor: isDark ? "rgba(255,255,255,0.08)" : "#E2E8F0",
-                            }}
-                          />
-                        </Stack>
-                        <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
-                          {cmd.description}
-                        </Typography>
-                      </Box>
-                    </Stack>
-                    <Typography
-                      variant="caption"
-                      color="text.secondary"
-                      sx={{
-                        fontFamily: "monospace",
-                        fontSize: "0.7rem",
-                        opacity: 0.75,
-                        ml: 1,
-                        display: { xs: "none", sm: "block" },
-                      }}
-                    >
-                      {cmd.usage}
+                    <Typography variant="caption" fontWeight={700} color="text.secondary">
+                      SLASH COMMANDS ({slashSuggestions.length})
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" sx={{ fontSize: "0.68rem" }}>
+                      ↑↓ Navigate • Enter Select • Esc Dismiss
                     </Typography>
                   </Box>
-                );
-              })}
-            </Paper>
-          )}
+                  {slashSuggestions.map((cmd, idx) => {
+                    const isSelected = idx === selectedSlashIndex;
+                    return (
+                      <Box
+                        key={cmd.name}
+                        onClick={() => handleSelectSlashCommand(cmd)}
+                        onMouseEnter={() => setSelectedSlashIndex(idx)}
+                        sx={{
+                          px: 1.5,
+                          py: 0.75,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "space-between",
+                          cursor: "pointer",
+                          bgcolor: isSelected
+                            ? isDark
+                              ? "rgba(35, 107, 74, 0.28)"
+                              : "rgba(35, 107, 74, 0.1)"
+                            : "transparent",
+                          borderLeft: isSelected ? "3px solid #236B4A" : "3px solid transparent",
+                          "&:hover": {
+                            bgcolor: isDark ? "rgba(35, 107, 74, 0.2)" : "rgba(35, 107, 74, 0.08)",
+                          },
+                        }}
+                      >
+                        <Stack direction="row" spacing={1} alignItems="center" minWidth={0}>
+                          <Typography sx={{ fontSize: "1.1rem", lineHeight: 1 }}>{cmd.icon}</Typography>
+                          <Box minWidth={0}>
+                            <Stack direction="row" spacing={0.6} alignItems="center">
+                              <Typography variant="body2" fontWeight={700} sx={{ color: isDark ? "#68D391" : "#236B4A" }}>
+                                {cmd.name}
+                              </Typography>
+                              <Chip
+                                size="small"
+                                label={cmd.category}
+                                sx={{
+                                  height: 18,
+                                  fontSize: "0.62rem",
+                                  fontWeight: 600,
+                                  bgcolor: isDark ? "rgba(255,255,255,0.08)" : "#E2E8F0",
+                                }}
+                              />
+                            </Stack>
+                            <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block" }}>
+                              {cmd.description}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                        <Typography
+                          variant="caption"
+                          color="text.secondary"
+                          sx={{
+                            fontFamily: "monospace",
+                            fontSize: "0.7rem",
+                            opacity: 0.75,
+                            ml: 1,
+                            display: { xs: "none", sm: "block" },
+                          }}
+                        >
+                          {cmd.usage}
+                        </Typography>
+                      </Box>
+                    );
+                  })}
+                </Paper>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           {mentionSuggestions.length > 0 && (
             <Paper
@@ -1041,27 +1053,34 @@ const ChatComposer = React.memo(
                         : "Tap to send message"
                     }
                   >
-                    <IconButton
-                      type="submit"
-                      disabled={!hasText || (slowCooldownLeft > 0 && !isAdmin)}
-                      aria-label="Send message"
-                      sx={{
-                        bgcolor: hasText && !(slowCooldownLeft > 0 && !isAdmin) ? "#236B4A" : isDark ? "#2C332E" : "#E5EAE6",
-                        color: hasText && !(slowCooldownLeft > 0 && !isAdmin) ? "#FFFFFF" : "text.disabled",
-                        borderRadius: "50%",
-                        width: "40px",
-                        height: "40px",
-                        flexShrink: 0,
-                        transition: "all 0.16s ease",
-                        "&:hover": { bgcolor: hasText ? "#1B573C" : undefined, transform: hasText ? "scale(1.04)" : "none" },
-                      }}
+                    <motion.div
+                      animate={{ scale: hasText ? 1.05 : 1 }}
+                      whileHover={{ scale: hasText ? 1.1 : 1 }}
+                      whileTap={{ scale: 0.92 }}
+                      transition={{ type: "spring", stiffness: 500, damping: 25 }}
                     >
-                      {slowCooldownLeft > 0 && !isAdmin ? (
-                        <Typography variant="caption" fontWeight={700}>{slowCooldownLeft}</Typography>
-                      ) : (
-                        <SendIcon sx={{ fontSize: "1.15rem", ml: "2px" }} />
-                      )}
-                    </IconButton>
+                      <IconButton
+                        type="submit"
+                        disabled={!hasText || (slowCooldownLeft > 0 && !isAdmin)}
+                        aria-label="Send message"
+                        sx={{
+                          bgcolor: hasText && !(slowCooldownLeft > 0 && !isAdmin) ? "#236B4A" : isDark ? "#2C332E" : "#E5EAE6",
+                          color: hasText && !(slowCooldownLeft > 0 && !isAdmin) ? "#FFFFFF" : "text.disabled",
+                          borderRadius: "50%",
+                          width: "40px",
+                          height: "40px",
+                          flexShrink: 0,
+                          transition: "all 0.16s ease",
+                          "&:hover": { bgcolor: hasText ? "#1B573C" : undefined },
+                        }}
+                      >
+                        {slowCooldownLeft > 0 && !isAdmin ? (
+                          <Typography variant="caption" fontWeight={700}>{slowCooldownLeft}</Typography>
+                        ) : (
+                          <SendIcon sx={{ fontSize: "1.15rem", ml: "2px" }} />
+                        )}
+                      </IconButton>
+                    </motion.div>
                   </Tooltip>
                 )}
               </Stack>
@@ -2525,18 +2544,37 @@ const Chat = ({ chatId, user }) => {
           />
         </Stack>
 
-        {/* Floating Scroll to Latest button */}
-        {showScrollBottom && (
-          <Fab
-            size="small"
-            color="primary"
-            aria-label="Scroll to latest message"
-            onClick={() => bottomRef.current?.scrollIntoView({ behavior: "smooth" })}
-            sx={{ position: "absolute", bottom: 14, right: 16, zIndex: 15 }}
-          >
-            <ScrollDownIcon />
-          </Fab>
-        )}
+        {/* Floating Scroll to Latest button with Spring & Badge */}
+        <AnimatePresence>
+          {showScrollBottom && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.7, y: 12 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.7, y: 12 }}
+              transition={{ type: "spring", stiffness: 500, damping: 26 }}
+              style={{ position: "absolute", bottom: 14, right: 16, zIndex: 15 }}
+            >
+              <Badge badgeContent={unreadCount > 0 ? unreadCount : 0} color="error" max={99}>
+                <Fab
+                  size="small"
+                  color="primary"
+                  aria-label="Scroll to latest message"
+                  onClick={() => {
+                    triggerHaptic(8);
+                    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+                  }}
+                  sx={{
+                    boxShadow: "0 4px 14px rgba(0,0,0,0.22)",
+                    "&:hover": { transform: "scale(1.06)" },
+                    transition: "transform 0.15s ease",
+                  }}
+                >
+                  <ScrollDownIcon />
+                </Fab>
+              </Badge>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </Box>
 
       {/* Spacious, Responsive Composer */}
