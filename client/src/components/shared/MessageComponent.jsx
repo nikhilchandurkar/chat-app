@@ -31,6 +31,7 @@ import {
   Forward as ForwardIcon,
   Reply as ReplyIcon,
   DoneAll as DoneAllIcon,
+  AccessTime as PendingIcon,
   ContentCopy as CopyIcon,
   Favorite as HeartIcon,
   Lock as LockIcon,
@@ -1174,16 +1175,32 @@ const MessageComponent = ({
                 {timeAgo}
               </Typography>
               {sameSender && !isDeleted && (
-                <Tooltip title="Seen By info">
-                  <DoneAllIcon
+                <Tooltip
+                  title={
+                    message.isPending || message.status === "pending"
+                      ? "Sending..."
+                      : readBy.length > 0
+                      ? "Read by recipient"
+                      : message.isDelivered || message.status === "delivered"
+                      ? "Delivered"
+                      : "Sent to server"
+                  }
+                >
+                  <Box
+                    component="span"
                     onClick={handleOpenReceipts}
-                    sx={{
-                      fontSize: "0.95rem",
-                      cursor: "pointer",
-                      color: readBy.length > 0 ? "#27834A" : isDark ? "#A6AEA8" : "#737A75",
-                      ml: 0.2,
-                    }}
-                  />
+                    sx={{ display: "inline-flex", alignItems: "center", cursor: "pointer", ml: 0.3 }}
+                  >
+                    {message.isPending || message.status === "pending" ? (
+                      <PendingIcon sx={{ fontSize: "0.82rem", color: isDark ? "#A6AEA8" : "#737A75", opacity: 0.8 }} />
+                    ) : readBy.length > 0 ? (
+                      <DoneAllIcon sx={{ fontSize: "0.95rem", color: "#22C55E" }} />
+                    ) : message.isDelivered || message.status === "delivered" ? (
+                      <DoneAllIcon sx={{ fontSize: "0.95rem", color: isDark ? "#A6AEA8" : "#737A75" }} />
+                    ) : (
+                      <CheckIcon sx={{ fontSize: "0.85rem", color: isDark ? "#A6AEA8" : "#737A75" }} />
+                    )}
+                  </Box>
                 </Tooltip>
               )}
             </Box>

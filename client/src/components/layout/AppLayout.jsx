@@ -24,6 +24,10 @@ import {
   notifyDeviceForMessage,
   requestDeviceNotificationPermission,
   updateNativeActiveState,
+  getLaunchNotificationChatId,
+  addNotificationOpenListener,
+  getNativeSharedData,
+  addShareTargetListener,
 } from '../../utils/deviceNotifications';
 
 
@@ -65,7 +69,38 @@ const AppLayout = () => (WrappedComponent) => {
     useEffect(() => {
       initAppForegroundTracker();
       requestDeviceNotificationPermission();
-    }, []);
+
+      // Deep link to conversation if app was launched via notification tap
+      getLaunchNotificationChatId().then((cid) => {
+        if (cid) {
+          navigate(`/chat/${cid}`);
+          dispatch(setIsMobile(false));
+        }
+      });
+      const removeNotifListener = addNotificationOpenListener((cid) => {
+        if (cid) {
+          navigate(`/chat/${cid}`);
+          dispatch(setIsMobile(false));
+        }
+      });
+
+      // Android Share sheet intent listener
+      const handleIncomingShare = (data) => {
+        if (data?.text) {
+          toast(`Shared: "${data.text.slice(0, 40)}..."`, { icon: "🔗" });
+          sessionStorage.setItem("chitchat_shared_text", data.text);
+          window.dispatchEvent(new CustomEvent("chitchat:shared-content", { detail: data }));
+        }
+      };
+
+      getNativeSharedData().then(handleIncomingShare);
+      const removeShareListener = addShareTargetListener(handleIncomingShare);
+
+      return () => {
+        removeNotifListener?.();
+        removeShareListener?.();
+      };
+    }, [dispatch, navigate]);
 
     useEffect(() => {
       const syncAll = () => {

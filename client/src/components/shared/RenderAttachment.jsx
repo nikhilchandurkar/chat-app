@@ -16,6 +16,7 @@ import {
   Tooltip,
 } from "@mui/material";
 import { resolveMediaUrl, transformImage } from "../../lib/feature";
+import AudioWavePlayer from "./AudioWavePlayer";
 
 const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
   // Support both component usage (<RenderAttachment file=... />) and function call (RenderAttachment(file, url))
@@ -156,22 +157,7 @@ const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
       );
 
     case "audio":
-      return (
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1, p: 0.8, mt: 0.5, bgcolor: "rgba(0,0,0,0.03)", borderRadius: 2, maxWidth: "280px" }}>
-          <MicIcon sx={{ color: "primary.main", fontSize: 22 }} />
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography variant="caption" display="block" fontWeight={600} sx={{ lineHeight: 1.2, mb: 0.5 }} noWrap>
-              {fileName || "Audio Message"}
-            </Typography>
-            <audio
-              src={resolvedUrl}
-              preload="metadata"
-              controls
-              style={{ height: 32, width: "100%", display: "block" }}
-            />
-          </Box>
-        </Box>
-      );
+      return <AudioWavePlayer src={resolvedUrl} fileName={fileName} />;
 
     case "pdf":
       return (

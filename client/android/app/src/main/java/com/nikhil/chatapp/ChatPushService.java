@@ -19,6 +19,7 @@ import android.os.Looper;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.RemoteInput;
 import androidx.core.content.ContextCompat;
 
 import org.json.JSONArray;
@@ -448,6 +449,32 @@ public class ChatPushService extends Service {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
+        // Inline Notification Quick Reply
+        Intent replyIntent = new Intent(this, NotificationReplyReceiver.class);
+        replyIntent.setAction(NotificationReplyReceiver.ACTION_QUICK_REPLY);
+        replyIntent.putExtra("chatId", chatId);
+        replyIntent.putExtra("notifId", notifId);
+
+        PendingIntent replyPendingIntent = PendingIntent.getBroadcast(
+            this,
+            notifId,
+            replyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0)
+        );
+
+        RemoteInput remoteInput = new RemoteInput.Builder(NotificationReplyReceiver.KEY_TEXT_REPLY)
+            .setLabel("Reply...")
+            .build();
+
+        NotificationCompat.Action replyAction = new NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_send,
+            "Reply",
+            replyPendingIntent
+        )
+            .addRemoteInput(remoteInput)
+            .setAllowGeneratedReplies(true)
+            .build();
+
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, MESSAGE_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
@@ -459,7 +486,8 @@ public class ChatPushService extends Service {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setOnlyAlertOnce(count > 1)
-            .setContentIntent(pi);
+            .setContentIntent(pi)
+            .addAction(replyAction);
 
         nm.notify(notifId, builder.build());
     }

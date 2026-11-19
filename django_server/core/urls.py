@@ -117,6 +117,7 @@ urlpatterns = [
     path("api/v1/storage/", include("apps.storage_app.urls")),
     path("api/v1/notifications/", include("apps.notifications.urls")),
     path("api/v1/sync/", include("apps.sync_app.urls")),
+    path("api/v1/preview", include("apps.preview.urls")),
     path("api/v1/preview/", include("apps.preview.urls")),
     path("api/v1/admin/", include("apps.authentication.urls_admin")),
 ]

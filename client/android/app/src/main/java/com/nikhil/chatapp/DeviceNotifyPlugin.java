@@ -8,9 +8,11 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.os.Build;
 
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.RemoteInput;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
@@ -32,6 +34,48 @@ public class DeviceNotifyPlugin extends Plugin {
     private static final String CHANNEL_ID = "chitchat_messages";
     private static volatile DeviceNotifyPlugin activeInstance = null;
     private static volatile String pendingLaunchChatId = "";
+    private static volatile String pendingSharedText = "";
+    private static volatile String pendingSharedType = "";
+    private static volatile String pendingSharedUri = "";
+
+    public static void handleShareIntent(Intent intent) {
+        if (intent == null) return;
+        String action = intent.getAction();
+        String type = intent.getType();
+        if (Intent.ACTION_SEND.equals(action) && type != null) {
+            if ("text/plain".equals(type)) {
+                String sharedText = intent.getStringExtra(Intent.EXTRA_TEXT);
+                if (sharedText != null && !sharedText.isEmpty()) {
+                    pendingSharedText = sharedText;
+                    pendingSharedType = "text";
+                    DeviceNotifyPlugin inst = activeInstance;
+                    if (inst != null) {
+                        JSObject payload = new JSObject();
+                        payload.put("type", "text");
+                        payload.put("text", sharedText);
+                        inst.notifyListeners("shareTargetReceived", payload);
+                    }
+                }
+            } else if (type.startsWith("image/")) {
+                Uri uri = null;
+                try {
+                    uri = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+                } catch (Exception ignored) {}
+                if (uri != null) {
+                    String uriStr = uri.toString();
+                    pendingSharedUri = uriStr;
+                    pendingSharedType = "image";
+                    DeviceNotifyPlugin inst = activeInstance;
+                    if (inst != null) {
+                        JSObject payload = new JSObject();
+                        payload.put("type", "image");
+                        payload.put("uri", uriStr);
+                        inst.notifyListeners("shareTargetReceived", payload);
+                    }
+                }
+            }
+        }
+    }
 
     public static void handleNotificationIntent(Intent intent) {
         if (intent == null) return;
@@ -161,6 +205,21 @@ public class DeviceNotifyPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void getSharedData(PluginCall call) {
+        String text = pendingSharedText != null ? pendingSharedText : "";
+        String type = pendingSharedType != null ? pendingSharedType : "";
+        String uri = pendingSharedUri != null ? pendingSharedUri : "";
+        pendingSharedText = "";
+        pendingSharedType = "";
+        pendingSharedUri = "";
+        JSObject ret = new JSObject();
+        ret.put("type", type);
+        ret.put("text", text);
+        ret.put("uri", uri);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
     public void showMessageNotification(PluginCall call) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && getPermissionState("notifications") != PermissionState.GRANTED) {
             JSObject ret = new JSObject();
@@ -199,6 +258,32 @@ public class DeviceNotifyPlugin extends Plugin {
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
+        // Inline Notification Quick Reply
+        Intent replyIntent = new Intent(ctx, NotificationReplyReceiver.class);
+        replyIntent.setAction(NotificationReplyReceiver.ACTION_QUICK_REPLY);
+        replyIntent.putExtra("chatId", chatId);
+        replyIntent.putExtra("notifId", notifId);
+
+        PendingIntent replyPendingIntent = PendingIntent.getBroadcast(
+            ctx,
+            notifId,
+            replyIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0)
+        );
+
+        RemoteInput remoteInput = new RemoteInput.Builder(NotificationReplyReceiver.KEY_TEXT_REPLY)
+            .setLabel("Reply...")
+            .build();
+
+        NotificationCompat.Action replyAction = new NotificationCompat.Action.Builder(
+            android.R.drawable.ic_menu_send,
+            "Reply",
+            replyPendingIntent
+        )
+            .addRemoteInput(remoteInput)
+            .setAllowGeneratedReplies(true)
+            .build();
+
         NotificationCompat.Builder builder = new NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setContentTitle(title)
@@ -210,7 +295,8 @@ public class DeviceNotifyPlugin extends Plugin {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .setOnlyAlertOnce(count > 1)
-            .setContentIntent(pendingIntent);
+            .setContentIntent(pendingIntent)
+            .addAction(replyAction);
 
         nm.notify(notifId, builder.build());
 

@@ -29,6 +29,28 @@
                 <data android:scheme="@string/custom_url_scheme" />
             </intent-filter>
 
+            <!-- Android Share Target for Text & Links -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+            <!-- Android Share Target for Single Media -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+
+            <!-- Android Share Target for Multiple Media / Files -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+
         </activity>
 
         <provider
@@ -45,6 +67,10 @@
             android:name=".ChatPushService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <receiver
+            android:name=".NotificationReplyReceiver"
+            android:exported="false" />
     </application>
 
     <!-- Permissions -->

@@ -19,6 +19,7 @@ import {
   Send as SendIcon,
   Star as StarIcon,
   Summarize as RecapIcon,
+  CloudUpload as CloudUploadIcon,
 } from "@mui/icons-material";
 import {
   Avatar,
@@ -56,6 +57,7 @@ import MessageComponent from "../components/shared/MessageComponent";
 import UnreadDivider from "../components/shared/UnreadDivider";
 import VirtualMessageList from "../components/chat/VirtualMessageList";
 import { getCachedMessages, saveCachedMessages } from "../utils/offlineStore";
+import { compressFilesBatch } from "../utils/imageCompressor";
 import { transformImage } from "../lib/feature";
 import EmojiBurst from "../components/shared/EmojiBurst";
 import { parseRemindCommand } from "../utils/interactive";
@@ -179,6 +181,7 @@ const ChatComposer = React.memo(
     onTogglePin,
     onToggleMute,
     onExportChat,
+    onOptimisticSend,
   }) => {
     const [message, setMessage] = useState("");
     const [showEmoji, setShowEmoji] = useState(false);
@@ -208,7 +211,13 @@ const ChatComposer = React.memo(
     useEffect(() => {
       let restored = "";
       try {
-        restored = localStorage.getItem(`chitchat_draft_${chatId}`) || "";
+        const shared = sessionStorage.getItem("chitchat_shared_text");
+        if (shared) {
+          sessionStorage.removeItem("chitchat_shared_text");
+          restored = shared;
+        } else {
+          restored = localStorage.getItem(`chitchat_draft_${chatId}`) || "";
+        }
       } catch {
         restored = "";
       }
@@ -219,6 +228,17 @@ const ChatComposer = React.memo(
         inputRef.current.style.height = "40px";
       }
     }, [chatId]);
+
+    useEffect(() => {
+      const onShared = (e) => {
+        if (e.detail?.text) {
+          setMessage((prev) => (prev ? `${prev} ${e.detail.text}` : e.detail.text));
+          inputRef.current?.focus();
+        }
+      };
+      window.addEventListener("chitchat:shared-content", onShared);
+      return () => window.removeEventListener("chitchat:shared-content", onShared);
+    }, []);
 
     useEffect(() => {
       if (!chatId) return;
@@ -470,6 +490,7 @@ const ChatComposer = React.memo(
       }
 
       triggerHaptic(12);
+      onOptimisticSend?.(clean, replyingTo, activeTopic);
       socket.emit(NEW_MESSAGE, {
         chatId,
         members,
@@ -1139,6 +1160,66 @@ const Chat = ({ chatId, user }) => {
   const [showGameDialog, setShowGameDialog] = useState(false);
   const [showWatchParty, setShowWatchParty] = useState(false);
   const [showWhiteboard, setShowWhiteboard] = useState(false);
+
+  const [isDraggingFile, setIsDraggingFile] = useState(false);
+  const dragCounterRef = useRef(0);
+
+  const handleDragEnter = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current += 1;
+    if (e.dataTransfer?.items && e.dataTransfer.items.length > 0) {
+      setIsDraggingFile(true);
+    }
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current -= 1;
+    if (dragCounterRef.current <= 0) {
+      dragCounterRef.current = 0;
+      setIsDraggingFile(false);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback(
+    async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragCounterRef.current = 0;
+      setIsDraggingFile(false);
+      if (e.dataTransfer?.files && e.dataTransfer.files.length > 0) {
+        const filesArray = Array.from(e.dataTransfer.files);
+        if (!filesArray.length || !chatId) return;
+        dispatch(setUploadingLoader(true));
+        const toastId = toast.loading(`Optimizing & uploading ${filesArray.length} file${filesArray.length > 1 ? "s" : ""}...`);
+        try {
+          const processedFiles = await compressFilesBatch(filesArray);
+          const fd = new FormData();
+          fd.append("chatId", chatId);
+          if (activeTopic && activeTopic !== "all") fd.append("topic_name", activeTopic);
+          processedFiles.forEach((file) => fd.append("files", file));
+          const res = await sendAttachments(fd);
+          if (res.data?.success) {
+            toast.success(`${filesArray.length} file${filesArray.length > 1 ? "s" : ""} sent!`, { id: toastId });
+          } else {
+            toast.error(res.error?.data?.message || "Failed to upload dropped files", { id: toastId });
+          }
+        } catch {
+          toast.error("Failed to upload dropped files", { id: toastId });
+        } finally {
+          dispatch(setUploadingLoader(false));
+        }
+      }
+    },
+    [chatId, activeTopic, dispatch, sendAttachments]
+  );
   const [whiteboardInviteName, setWhiteboardInviteName] = useState("");
   const [showScheduleDialog, setShowScheduleDialog] = useState(false);
   const [showWidgetDialog, setShowWidgetDialog] = useState(false);
@@ -1443,6 +1524,16 @@ const Chat = ({ chatId, user }) => {
         if (celeb) spawnChatBurst(celeb.emoji, celeb.mode);
         setMessages((prev) => {
           if (prev.some((m) => String(m._id) === String(msg._id))) return prev;
+          const myId = String(user?._id || user?.id || "");
+          const isFromMe = String(msg.sender?._id || msg.sender?.id || msg.sender || "") === myId;
+          if (isFromMe) {
+            const tempIdx = prev.findIndex((m) => String(m._id).startsWith("temp-") && m.content === msg.content);
+            if (tempIdx >= 0) {
+              const updated = [...prev];
+              updated[tempIdx] = msg;
+              return updated;
+            }
+          }
           return [...prev, msg];
         });
         if (nearBottomRef.current) {
@@ -1754,6 +1845,35 @@ const Chat = ({ chatId, user }) => {
     URL.revokeObjectURL(url);
     safeToast.success("Chat exported successfully!");
   }, [allMessages, chatId]);
+
+  const handleOptimisticSend = useCallback((content, replyToMsg, topic) => {
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+    const myId = String(user?._id || user?.id || "");
+    const optimisticMessage = {
+      _id: tempId,
+      id: tempId,
+      content,
+      sender: {
+        _id: myId,
+        id: myId,
+        name: user?.name || user?.username,
+        username: user?.username,
+        avatar: user?.avatar,
+      },
+      chat: chatId,
+      conversation_id: chatId,
+      createdAt: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      attachments: [],
+      readBy: [],
+      isPending: !socket?.connected,
+      status: socket?.connected ? "sent" : "pending",
+      replyTo: replyToMsg,
+      topicName: topic && topic !== "all" ? topic : "",
+    };
+    setMessages((prev) => [...prev, optimisticMessage]);
+    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
+  }, [chatId, socket, user]);
 
   const handleClearEntireChat = useCallback(async () => {
     try {
@@ -2099,6 +2219,10 @@ const Chat = ({ chatId, user }) => {
           dispatch(setIsMobile(true));
         }
       }}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       sx={{
         height: "100%",
         width: "100%",
@@ -2108,6 +2232,37 @@ const Chat = ({ chatId, user }) => {
         position: "relative",
       }}
     >
+      {/* Full-Screen Drag & Drop Zone Overlay */}
+      {isDraggingFile && (
+        <Box
+          sx={{
+            position: "absolute",
+            inset: 8,
+            zIndex: 100,
+            bgcolor: isDark ? "rgba(18, 24, 20, 0.92)" : "rgba(240, 253, 244, 0.95)",
+            backdropFilter: "blur(10px)",
+            border: "3px dashed",
+            borderColor: "primary.main",
+            borderRadius: "16px",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            pointerEvents: "none",
+            p: 3,
+            boxShadow: "0 8px 32px rgba(0,0,0,0.2)",
+          }}
+        >
+          <CloudUploadIcon sx={{ fontSize: 64, color: "primary.main", mb: 1.5 }} />
+          <Typography variant="h6" fontWeight={700} color="text.primary">
+            Drop files to send to {chatDisplayName}
+          </Typography>
+          <Typography variant="body2" color="text.secondary" mt={0.5}>
+            Images are auto-compressed for lightning-fast delivery
+          </Typography>
+        </Box>
+      )}
+
       <EmojiBurst bursts={chatBursts} />
 
       {/* Crisp Sticky Conversation Header Bar (no overlapping floating icons) */}
@@ -2615,6 +2770,7 @@ const Chat = ({ chatId, user }) => {
           onTogglePin={handleToggleChatPin}
           onToggleMute={handleToggleChatMute}
           onExportChat={handleExportChat}
+          onOptimisticSend={handleOptimisticSend}
         />
       ) : (
         <Box

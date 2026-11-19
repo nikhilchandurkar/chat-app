@@ -112,10 +112,11 @@ const ChatList = ({
     return () => window.removeEventListener("chitchat:drafts-updated", bump);
   }, []);
 
-  const { activeChats, unreadChats, groupChats, archivedChats } = useMemo(() => {
+  const { activeChats, unreadChats, groupChats, directChats, archivedChats } = useMemo(() => {
     const active = [];
     const unread = [];
     const groups = [];
+    const direct = [];
     const archived = [];
     for (const c of chats || []) {
       if (c.isArchived) {
@@ -128,10 +129,14 @@ const ChatList = ({
         if (Number(c.unreadCount || 0) > 0 || Number(liveAlert?.count || 0) > 0) {
           unread.push(c);
         }
-        if (c.groupChat) groups.push(c);
+        if (c.groupChat) {
+          groups.push(c);
+        } else if (!c.isSavedMessages) {
+          direct.push(c);
+        }
       }
     }
-    return { activeChats: active, unreadChats: unread, groupChats: groups, archivedChats: archived };
+    return { activeChats: active, unreadChats: unread, groupChats: groups, directChats: direct, archivedChats: archived };
   }, [chats, newMessagesAlert]);
 
   const activeFolder = folders.find((f) => f.id === filterMode);
@@ -144,6 +149,8 @@ const ChatList = ({
     ? unreadChats
     : filterMode === "groups"
     ? groupChats
+    : filterMode === "direct"
+    ? directChats
     : activeChats;
 
   return (
@@ -214,6 +221,14 @@ const ChatList = ({
             color={filterMode === "unread" ? "primary" : "default"}
             variant={filterMode === "unread" ? "filled" : "outlined"}
             onClick={() => setFilterMode("unread")}
+          />
+          <Chip
+            size="small"
+            clickable
+            label={`Direct (${directChats.length})`}
+            color={filterMode === "direct" ? "primary" : "default"}
+            variant={filterMode === "direct" ? "filled" : "outlined"}
+            onClick={() => setFilterMode("direct")}
           />
           <Chip
             size="small"

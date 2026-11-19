@@ -15,6 +15,7 @@ public class MainActivity extends BridgeActivity {
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         super.onCreate(savedInstanceState);
         DeviceNotifyPlugin.handleNotificationIntent(getIntent());
+        DeviceNotifyPlugin.handleShareIntent(getIntent());
     }
 
     @Override
@@ -22,5 +23,6 @@ public class MainActivity extends BridgeActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         DeviceNotifyPlugin.handleNotificationIntent(intent);
+        DeviceNotifyPlugin.handleShareIntent(intent);
     }
 }

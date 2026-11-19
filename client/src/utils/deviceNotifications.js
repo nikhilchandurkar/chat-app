@@ -125,6 +125,39 @@ export function addNotificationOpenListener(onOpenChat) {
   };
 }
 
+export async function getNativeSharedData() {
+  if (!isCapacitorNative()) return { type: "", text: "", uri: "" };
+  try {
+    const res = await NativeDeviceNotify.getSharedData();
+    return res || { type: "", text: "", uri: "" };
+  } catch {
+    return { type: "", text: "", uri: "" };
+  }
+}
+
+export function addShareTargetListener(onShareReceived) {
+  if (!isCapacitorNative() || typeof onShareReceived !== "function") {
+    return () => {};
+  }
+  let handle = null;
+  let cancelled = false;
+  NativeDeviceNotify.addListener("shareTargetReceived", (payload) => {
+    if (!cancelled && payload) {
+      onShareReceived(payload);
+    }
+  })
+    .then((h) => {
+      if (cancelled) h?.remove?.();
+      else handle = h;
+    })
+    .catch(() => {});
+
+  return () => {
+    cancelled = true;
+    handle?.remove?.();
+  };
+}
+
 export function isPushAlertsEnabled() {
   try {
     return localStorage.getItem("chat_notif_push_enabled") !== "false";

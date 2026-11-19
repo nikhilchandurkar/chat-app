@@ -15,9 +15,9 @@ const LinkPreviewCard = ({ url }) => {
   const { data, isLoading } = useGetLinkPreviewQuery(url, { skip: !url });
 
   if (isLoading) return (
-    <Box sx={{ mt: 1, p: 1, borderRadius: 1, border: "1px solid rgba(0,0,0,0.1)", width: 240 }}>
-      <Skeleton variant="rectangular" height={100} />
-      <Skeleton width="80%" sx={{ mt: 0.5 }} />
+    <Box sx={{ mt: 1, p: 1, borderRadius: "10px", border: "1px solid", borderColor: "divider", width: 260 }}>
+      <Skeleton variant="rectangular" height={100} sx={{ borderRadius: "8px" }} />
+      <Skeleton width="80%" sx={{ mt: 0.8 }} />
       <Skeleton width="60%" />
     </Box>
   );
@@ -36,13 +36,19 @@ const LinkPreviewCard = ({ url }) => {
     >
       <Box
         sx={{
-          border: "1px solid rgba(0,0,0,0.12)",
-          borderRadius: "8px",
+          border: "1px solid",
+          borderColor: (theme) => (theme.palette.mode === "dark" ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.12)"),
+          borderRadius: "10px",
           overflow: "hidden",
-          maxWidth: 280,
-          bgcolor: "rgba(255,255,255,0.8)",
-          transition: "box-shadow 0.2s",
-          "&:hover": { boxShadow: "0 2px 12px rgba(0,0,0,0.15)" },
+          maxWidth: 320,
+          bgcolor: (theme) => (theme.palette.mode === "dark" ? "rgba(30, 35, 32, 0.95)" : "rgba(255, 255, 255, 0.95)"),
+          backdropFilter: "blur(6px)",
+          transition: "all 0.2s ease-in-out",
+          "&:hover": {
+            boxShadow: (theme) =>
+              theme.palette.mode === "dark" ? "0 4px 16px rgba(0,0,0,0.5)" : "0 4px 16px rgba(0,0,0,0.12)",
+            borderColor: "primary.main",
+          },
         }}
       >
         {image && (
