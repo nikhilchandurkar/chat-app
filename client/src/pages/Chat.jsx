@@ -1169,6 +1169,27 @@ const Chat = ({ chatId, user }) => {
     setE2eeEnabled(isChatE2eeEnabled(chatId));
   }, [chatId]);
 
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const hasTimedExpiry = useMemo(
+    () => oldMessages.some((m) => Boolean(m?.expiresAt)) || messages.some((m) => Boolean(m?.expiresAt)),
+    [oldMessages, messages]
+  );
+  useEffect(() => {
+    if (!hasTimedExpiry) return undefined;
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [hasTimedExpiry]);
+
+  const allMessages = useMemo(() => {
+    const oldIds = new Set(oldMessages.map((m) => String(m._id || m.id)));
+    const uniqueRealtime = messages.filter((m) => !oldIds.has(String(m._id || m.id)));
+    const combined = [...oldMessages, ...uniqueRealtime].filter(
+      (m) => !m?.expiresAt || new Date(m.expiresAt).getTime() > nowMs
+    );
+    if (!activeTopic || activeTopic === "all") return combined;
+    return combined.filter((m) => String(m.topicName || "").toLowerCase() === activeTopic.toLowerCase());
+  }, [activeTopic, oldMessages, messages, nowMs]);
+
   const handleToggleE2ee = async () => {
     if (isGroupChat) return;
     if (e2eeEnabled) {
@@ -1934,27 +1955,6 @@ const Chat = ({ chatId, user }) => {
       { enableHighAccuracy: true, timeout: 10000 }
     );
   };
-
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const hasTimedExpiry = useMemo(
-    () => oldMessages.some((m) => Boolean(m?.expiresAt)) || messages.some((m) => Boolean(m?.expiresAt)),
-    [oldMessages, messages]
-  );
-  useEffect(() => {
-    if (!hasTimedExpiry) return undefined;
-    const t = setInterval(() => setNowMs(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, [hasTimedExpiry]);
-
-  const allMessages = useMemo(() => {
-    const oldIds = new Set(oldMessages.map((m) => String(m._id || m.id)));
-    const uniqueRealtime = messages.filter((m) => !oldIds.has(String(m._id || m.id)));
-    const combined = [...oldMessages, ...uniqueRealtime].filter(
-      (m) => !m?.expiresAt || new Date(m.expiresAt).getTime() > nowMs
-    );
-    if (!activeTopic || activeTopic === "all") return combined;
-    return combined.filter((m) => String(m.topicName || "").toLowerCase() === activeTopic.toLowerCase());
-  }, [activeTopic, oldMessages, messages, nowMs]);
 
   const handleSetReply = useCallback((msg) => setReplyingTo(msg), []);
   const handleClearReply = useCallback(() => setReplyingTo(null), []);
