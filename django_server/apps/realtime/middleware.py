@@ -18,16 +18,15 @@ def get_user_from_token(token_str):
     try:
         access_token = AccessToken(token_str)
         sid = access_token.get("sid")
-        if sid and SessionService.is_session_revoked(str(sid)):
-            return AnonymousUser()
+        if sid:
+            try:
+                if SessionService.is_session_revoked(str(sid)):
+                    return AnonymousUser()
+            except Exception:
+                pass
         user_id = access_token.get("user_id")
         return (
             User.objects.select_related("profile")
-            .only(
-                "id", "username", "name", "avatar", "status", "is_active",
-                "profile__privacy_online", "profile__privacy_last_seen",
-                "profile__privacy_read_receipts", "profile__privacy_typing_indicator",
-            )
             .get(id=user_id, is_active=True)
         )
     except Exception:

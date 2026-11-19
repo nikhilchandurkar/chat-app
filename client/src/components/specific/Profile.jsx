@@ -28,6 +28,7 @@ import {
   isScreenshotBlockEnabled,
   setPrivacyBlurPreference,
   setScreenshotBlockPreference,
+  useAdaptiveAnimation,
 } from "../../utils/feedback";
 import {
   canUseNativeBiometricUnlock,
@@ -59,6 +60,7 @@ const SecurityDevicesDialog = lazy(() => import("../dialogs/SecurityDevicesDialo
 const Profile = () => {
   const { user } = useSelector((state) => state.auth);
   const { fontFamily } = useSelector((state) => state.misc);
+  const { isAnimationEnabled, batteryInfo } = useAdaptiveAnimation();
   const dispatch = useDispatch();
   const navigate = useNavigate();
 
@@ -326,6 +328,14 @@ const Profile = () => {
             />
           </Stack>
 
+          <Chip
+            size="small"
+            variant="outlined"
+            color={batteryInfo?.isAllowed ? "success" : "warning"}
+            label={batteryInfo?.reason || "Battery & Hardware Optimized"}
+            sx={{ maxWidth: "350px", fontWeight: 600, fontSize: "0.75rem" }}
+          />
+
           <Paper variant="outlined" sx={{ width: "100%", maxWidth: "350px", p: 1.5, borderRadius: 2 }}>
             <Typography variant="caption" fontWeight={700} color="primary" display="block" mb={0.5}>
               Screen Privacy Shield
@@ -569,30 +579,65 @@ const Profile = () => {
                     {pushBusy ? "Configuring..." : "Enable Browser Push Alerts"}
                   </Button>
                 )}
-                {notifPrefsData?.preferences && (
-                  <>
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          size="small"
-                          checked={Boolean(notifPrefsData.preferences.push_enabled)}
-                          onChange={(e) => updateNotifPrefs({ push_enabled: e.target.checked })}
-                        />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={
+                        notifPrefsData?.preferences?.push_enabled !== undefined
+                          ? Boolean(notifPrefsData.preferences.push_enabled)
+                          : notifPrefsData?.preferences?.web_push_enabled !== undefined
+                          ? Boolean(notifPrefsData.preferences.web_push_enabled)
+                          : localStorage.getItem("chat_notif_push_enabled") !== "false"
                       }
-                      label={<Typography variant="caption">Push Alerts Enabled</Typography>}
+                      onChange={async (e) => {
+                        const nextVal = e.target.checked;
+                        localStorage.setItem("chat_notif_push_enabled", String(nextVal));
+                        window.dispatchEvent(new Event("chitchat:preferences-changed"));
+                        try {
+                          await updateNotifPrefs({
+                            push_enabled: nextVal,
+                            web_push_enabled: nextVal,
+                            fcm_enabled: nextVal,
+                          }).unwrap();
+                          toast.success(nextVal ? "Push alerts enabled" : "Push alerts disabled");
+                        } catch {
+                          toast.error("Failed to update push alerts preference");
+                        }
+                      }}
                     />
-                    <FormControlLabel
-                      control={
-                        <Switch
-                          size="small"
-                          checked={Boolean(notifPrefsData.preferences.show_message_preview)}
-                          onChange={(e) => updateNotifPrefs({ show_message_preview: e.target.checked })}
-                        />
+                  }
+                  label={<Typography variant="caption">Push Alerts Enabled</Typography>}
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      size="small"
+                      checked={
+                        notifPrefsData?.preferences?.show_message_preview !== undefined
+                          ? Boolean(notifPrefsData.preferences.show_message_preview)
+                          : notifPrefsData?.preferences?.message_preview !== undefined
+                          ? Boolean(notifPrefsData.preferences.message_preview)
+                          : localStorage.getItem("chat_notif_message_preview") !== "false"
                       }
-                      label={<Typography variant="caption">Show Message Preview in Alert</Typography>}
+                      onChange={async (e) => {
+                        const nextVal = e.target.checked;
+                        localStorage.setItem("chat_notif_message_preview", String(nextVal));
+                        window.dispatchEvent(new Event("chitchat:preferences-changed"));
+                        try {
+                          await updateNotifPrefs({
+                            show_message_preview: nextVal,
+                            message_preview: nextVal,
+                          }).unwrap();
+                          toast.success(nextVal ? "Message preview enabled" : "Message preview hidden in alerts");
+                        } catch {
+                          toast.error("Failed to update preview preference");
+                        }
+                      }}
                     />
-                  </>
-                )}
+                  }
+                  label={<Typography variant="caption">Show Message Preview in Alert</Typography>}
+                />
               </Stack>
             </Collapse>
           </Paper>

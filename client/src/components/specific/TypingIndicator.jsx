@@ -1,17 +1,19 @@
 import React from "react";
 import { Box, Typography, useTheme } from "@mui/material";
 import { motion } from "framer-motion";
+import { useAdaptiveAnimation } from "../../utils/feedback";
 
 const TypingIndicator = ({ username = "" }) => {
   const theme = useTheme();
   const isDark = theme.palette.mode === "dark";
+  const { isAnimationEnabled } = useAdaptiveAnimation();
 
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.88, y: 8 }}
+      initial={isAnimationEnabled ? { opacity: 0, scale: 0.88, y: 8 } : { opacity: 0 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.88, y: 8 }}
-      transition={{ type: "spring", stiffness: 480, damping: 28 }}
+      exit={isAnimationEnabled ? { opacity: 0, scale: 0.88, y: 8 } : { opacity: 0 }}
+      transition={isAnimationEnabled ? { type: "spring", stiffness: 480, damping: 28 } : { duration: 0.05 }}
       style={{ width: "fit-content", margin: "0.25rem 0" }}
     >
       <Box
@@ -42,39 +44,25 @@ const TypingIndicator = ({ username = "" }) => {
           </Typography>
         )}
         <Box sx={{ display: "flex", alignItems: "center", gap: "4px" }}>
-          <Box
-            component={motion.div}
-            animate={{ y: [0, -5, 0], opacity: [0.5, 1, 0.5] }}
-            transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: 0 }}
-            sx={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              bgcolor: isDark ? "#4B9B70" : "#236B4A",
-            }}
-          />
-          <Box
-            component={motion.div}
-            animate={{ y: [0, -5, 0], opacity: [0.5, 1, 0.5] }}
-            transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: 0.18 }}
-            sx={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              bgcolor: isDark ? "#4B9B70" : "#236B4A",
-            }}
-          />
-          <Box
-            component={motion.div}
-            animate={{ y: [0, -5, 0], opacity: [0.5, 1, 0.5] }}
-            transition={{ duration: 0.9, repeat: Infinity, ease: "easeInOut", delay: 0.36 }}
-            sx={{
-              width: "6px",
-              height: "6px",
-              borderRadius: "50%",
-              bgcolor: isDark ? "#4B9B70" : "#236B4A",
-            }}
-          />
+          {[0, 0.18, 0.36].map((delay, idx) => (
+            <Box
+              key={idx}
+              component={isAnimationEnabled ? motion.div : "div"}
+              {...(isAnimationEnabled
+                ? {
+                    animate: { y: [0, -5, 0], opacity: [0.5, 1, 0.5] },
+                    transition: { duration: 0.9, repeat: Infinity, ease: "easeInOut", delay },
+                  }
+                : {})}
+              sx={{
+                width: "6px",
+                height: "6px",
+                borderRadius: "50%",
+                bgcolor: isDark ? "#4B9B70" : "#236B4A",
+                opacity: isAnimationEnabled ? 0.7 : 0.85,
+              }}
+            />
+          ))}
         </Box>
       </Box>
     </motion.div>

@@ -15,7 +15,7 @@ const api = createApi({
       return headers;
     },
   }),
-  tagTypes: ["Chat", "User", "Message", "Starred", "Status"],
+  tagTypes: ["Chat", "User", "Message", "Starred", "Status", "NotifPrefs"],
 
   endpoints: (builder) => ({
     myChats: builder.query({
@@ -646,6 +646,7 @@ const api = createApi({
         url: "notifications/preferences",
         credentials: "include",
       }),
+      providesTags: ["NotifPrefs"],
     }),
 
     updateNotificationPrefs: builder.mutation({
@@ -655,6 +656,7 @@ const api = createApi({
         credentials: "include",
         body: data,
       }),
+      invalidatesTags: ["NotifPrefs"],
     }),
 
     getStatusFeed: builder.query({

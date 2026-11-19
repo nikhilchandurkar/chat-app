@@ -55,7 +55,12 @@ class SessionService:
     def is_session_revoked(session_id: str | None) -> bool:
         if not session_id:
             return False
-        cache_key = f"revoked_sid:{session_id}"
+        try:
+            valid_uuid = str(uuid.UUID(str(session_id)))
+        except (ValueError, TypeError, AttributeError):
+            return True
+
+        cache_key = f"revoked_sid:{valid_uuid}"
         try:
             cached = cache.get(cache_key)
             if cached == "1":
@@ -65,9 +70,14 @@ class SessionService:
         except Exception:
             pass
 
-        is_revoked = not UserSession.objects.filter(
-            id=session_id, is_revoked=False, expires_at__gt=timezone.now()
-        ).exists()
+        try:
+            is_revoked = not UserSession.objects.filter(
+                id=valid_uuid, is_revoked=False, expires_at__gt=timezone.now()
+            ).exists()
+        except Exception as exc:
+            logger.warning("Error checking session revocation for %s: %s", valid_uuid, str(exc))
+            return False
+
         try:
             cache.set(cache_key, "1" if is_revoked else "0", timeout=3600 if is_revoked else 300)
         except Exception:

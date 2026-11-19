@@ -1,3 +1,4 @@
+import logging
 import jwt
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -9,6 +10,7 @@ from rest_framework_simplejwt.tokens import AccessToken
 from apps.authentication.services.session_service import SessionService
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 class SessionValidatedJWTAuthentication(JWTAuthentication):
@@ -38,9 +40,15 @@ class SessionValidatedJWTAuthentication(JWTAuthentication):
             return None
         user, validated_token = result
         sid = validated_token.get("sid")
-        if sid and SessionService.is_session_revoked(str(sid)):
-            raise InvalidToken("Session has been revoked.")
         if sid:
+            try:
+                if SessionService.is_session_revoked(str(sid)):
+                    raise InvalidToken("Session has been revoked.")
+            except InvalidToken:
+                raise
+            except Exception as exc:
+                logger.warning("Session revocation check failed in DRF auth: %s", str(exc))
+                raise InvalidToken("Session validation failed.")
             request.current_session_id = str(sid)
         return user, validated_token
 
@@ -68,9 +76,13 @@ class JWTAuthenticationFromCookieMiddleware:
             try:
                 validated_token = AccessToken(token)
                 sid = validated_token.get("sid")
-                if sid and SessionService.is_session_revoked(str(sid)):
-                    request.user = AnonymousUser()
-                    return self.get_response(request)
+                if sid:
+                    try:
+                        if SessionService.is_session_revoked(str(sid)):
+                            request.user = AnonymousUser()
+                            return self.get_response(request)
+                    except Exception as exc:
+                        logger.warning("Session check failed in cookie middleware: %s", str(exc))
                 request.current_session_id = str(sid) if sid else None
                 user_id = validated_token.get("user_id") or validated_token.get("_id")
                 if user_id:

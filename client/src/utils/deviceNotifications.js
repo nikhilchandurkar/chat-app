@@ -125,15 +125,32 @@ export function addNotificationOpenListener(onOpenChat) {
   };
 }
 
+export function isPushAlertsEnabled() {
+  try {
+    return localStorage.getItem("chat_notif_push_enabled") !== "false";
+  } catch {
+    return true;
+  }
+}
+
+export function isMessagePreviewEnabled() {
+  try {
+    return localStorage.getItem("chat_notif_message_preview") !== "false";
+  } catch {
+    return true;
+  }
+}
+
 /**
  * Posts ONE grouped OS notification per conversation when app is in background
  * (or on Android when native service isn't already handling it).
  */
 export async function notifyDeviceForMessage({ chatId, title, preview, count = 1, isMuted = false }) {
-  if (!chatId || isMuted) return;
+  if (!chatId || isMuted || !isPushAlertsEnabled()) return;
 
+  const showPreview = isMessagePreviewEnabled();
   const displayTitle = count > 1 ? `${title} (${count} new messages)` : title;
-  const displayBody = preview || "New message";
+  const displayBody = showPreview ? (preview || "New message") : (count > 1 ? `${count} new messages` : "New message");
 
   try {
     if (isCapacitorNative()) {

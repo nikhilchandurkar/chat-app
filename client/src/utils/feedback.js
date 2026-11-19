@@ -1,6 +1,7 @@
 /**
  * Shared UI/UX interaction preferences, haptic feedback, Web Audio sound effects, and celebration triggers.
  */
+import { useEffect, useState } from "react";
 
 export const PREFS_EVENT = "chitchat:preferences-changed";
 
@@ -50,8 +51,146 @@ export function setSoundEffectsPreference(enabled) {
   }
 }
 
+// Battery & Device Performance Engine
+let batteryState = {
+  supported: false,
+  charging: true,
+  level: 1.0,
+};
+
+let batteryListenerInitialized = false;
+
+export function initBatteryMonitoring() {
+  if (typeof window === "undefined" || batteryListenerInitialized) return;
+  batteryListenerInitialized = true;
+
+  if (typeof navigator !== "undefined" && typeof navigator.getBattery === "function") {
+    navigator
+      .getBattery()
+      .then((battery) => {
+        batteryState = {
+          supported: true,
+          charging: Boolean(battery.charging),
+          level: typeof battery.level === "number" ? battery.level : 1.0,
+        };
+
+        const onBatteryChange = () => {
+          const prevAllowed = isBatteryAnimationAllowed();
+          batteryState = {
+            supported: true,
+            charging: Boolean(battery.charging),
+            level: typeof battery.level === "number" ? battery.level : 1.0,
+          };
+          const nextAllowed = isBatteryAnimationAllowed();
+          if (prevAllowed !== nextAllowed) {
+            emitPreferencesChanged();
+          }
+        };
+
+        battery.addEventListener("chargingchange", onBatteryChange);
+        battery.addEventListener("levelchange", onBatteryChange);
+      })
+      .catch(() => {});
+  }
+}
+
+// Auto-initialize battery tracker in browser environments
+if (typeof window !== "undefined") {
+  initBatteryMonitoring();
+}
+
+/**
+ * Checks whether battery conditions permit full animations.
+ * Requirement: Rich animations ONLY run when battery >= 75% or actively charging.
+ */
+export function isBatteryAnimationAllowed() {
+  if (!batteryState.supported) {
+    return true;
+  }
+  if (batteryState.charging) {
+    return true;
+  }
+  return batteryState.level >= 0.75;
+}
+
+export function getBatteryStatus() {
+  const percentage = Math.round(batteryState.level * 100);
+  const isAllowed = isBatteryAnimationAllowed();
+  return {
+    supported: batteryState.supported,
+    charging: batteryState.charging,
+    level: batteryState.level,
+    percentage,
+    isAllowed,
+    reason: !batteryState.supported
+      ? "Desktop / Standard Power"
+      : batteryState.charging
+      ? "⚡ Charging (Full Performance)"
+      : batteryState.level >= 0.75
+      ? `🔋 Battery ${percentage}% (Performance Enabled)`
+      : `🪫 Battery ${percentage}% (Power Saving Mode - Animations Paused)`,
+  };
+}
+
+/**
+ * Checks device hardware capability: CPU cores, RAM, and reduced motion preference.
+ */
+export function isDeviceHighPerformance() {
+  if (typeof window === "undefined") return true;
+
+  if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return false;
+  }
+
+  // Low CPU cores (<= 2 cores)
+  if (navigator.hardwareConcurrency && navigator.hardwareConcurrency <= 2) {
+    return false;
+  }
+
+  // Low RAM (< 4 GB)
+  if (navigator.deviceMemory && navigator.deviceMemory < 4) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Master check for running animations:
+ * 1. User preferences (chat_message_effects && !chat_reduced_motion)
+ * 2. Battery level >= 75% or charging
+ * 3. Device hardware capability
+ */
+export function isAnimationEnabled() {
+  const userPref = readBoolPref("chat_message_effects", true) && !readBoolPref("chat_reduced_motion", false);
+  if (!userPref) return false;
+  if (!isBatteryAnimationAllowed()) return false;
+  if (!isDeviceHighPerformance()) return false;
+  return true;
+}
+
 export function isEffectsEnabled() {
-  return readBoolPref("chat_message_effects", true) && !readBoolPref("chat_reduced_motion", false);
+  return isAnimationEnabled();
+}
+
+export function useAdaptiveAnimation() {
+  const [animEnabled, setAnimEnabled] = useState(isAnimationEnabled);
+  const [batteryInfo, setBatteryInfo] = useState(getBatteryStatus);
+
+  useEffect(() => {
+    const update = () => {
+      setAnimEnabled(isAnimationEnabled());
+      setBatteryInfo(getBatteryStatus());
+    };
+    window.addEventListener(PREFS_EVENT, update);
+    window.addEventListener("chitchat:preferences-changed", update);
+    return () => {
+      window.removeEventListener(PREFS_EVENT, update);
+      window.removeEventListener("chitchat:preferences-changed", update);
+    };
+  }, []);
+
+  return { isAnimationEnabled: animEnabled, batteryInfo };
 }
 
 export function isEnterToSendEnabled() {

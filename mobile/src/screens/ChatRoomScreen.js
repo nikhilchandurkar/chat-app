@@ -676,6 +676,11 @@ export default function ChatRoomScreen({ route, navigation }) {
     String(selectedMessage.sender?._id || selectedMessage.sender?.id || selectedMessage.sender || "") ===
       currentUserId;
 
+  const selectedAgeMs = selectedMessage?.createdAt || selectedMessage?.created_at
+    ? Date.now() - new Date(selectedMessage.createdAt || selectedMessage.created_at).getTime()
+    : Infinity;
+  const canDeleteForEveryone = selectedIsMine && selectedAgeMs <= 60 * 1000;
+
   return (
     <SafeAreaView style={styles.container} edges={["top", "left", "right", "bottom"]}>
       {/* Header */}
@@ -836,7 +841,7 @@ export default function ChatRoomScreen({ route, navigation }) {
               <Text style={styles.actionOptionText}>Delete for me</Text>
             </TouchableOpacity>
 
-            {selectedIsMine && (
+            {canDeleteForEveryone && (
               <TouchableOpacity
                 style={[styles.actionOption, { borderBottomWidth: 0 }]}
                 onPress={() => handleDeleteMessage(true)}

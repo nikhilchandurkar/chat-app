@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 import uuid
 from django.core.files.storage import default_storage
@@ -14,6 +15,8 @@ from apps.authentication.models import User, BlockedUser, Contact
 from apps.storage_app.services.file_validator import sanitize_filename, validate_file_header
 from .models import UserStatus, StatusView, StatusReaction
 from .serializers import UserStatusSerializer, StatusViewerSerializer
+
+logger = logging.getLogger(__name__)
 
 
 class CreateStatusView(APIView):
@@ -83,77 +86,85 @@ class StatusFeedView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        now = timezone.now()
-        # Find contacts / direct chat friends
-        from apps.chat.models import ConversationMember
-        contact_ids = set(Contact.objects.filter(user=request.user).values_list("contact_user_id", flat=True))
-        direct_conv_ids = ConversationMember.objects.filter(
-            user=request.user, conversation__type="direct"
-        ).values_list("conversation_id", flat=True)
-        friend_ids = ConversationMember.objects.filter(
-            conversation_id__in=direct_conv_ids
-        ).exclude(user=request.user).values_list("user_id", flat=True)
-        contact_ids |= set(friend_ids)
+        try:
+            now = timezone.now()
+            # Find contacts / direct chat friends
+            from apps.chat.models import ConversationMember
+            contact_ids = set(Contact.objects.filter(user=request.user).values_list("contact_user_id", flat=True))
+            direct_conv_ids = ConversationMember.objects.filter(
+                user=request.user, conversation__type="direct"
+            ).values_list("conversation_id", flat=True)
+            friend_ids = ConversationMember.objects.filter(
+                conversation_id__in=direct_conv_ids
+            ).exclude(user=request.user).values_list("user_id", flat=True)
+            contact_ids |= set(friend_ids)
 
-        # Blocked users
-        blocked_ids = set(BlockedUser.objects.filter(user=request.user).values_list("blocked_user_id", flat=True))
-        blocked_by_ids = set(BlockedUser.objects.filter(blocked_user=request.user).values_list("user_id", flat=True))
-        forbidden_user_ids = blocked_ids | blocked_by_ids
+            # Blocked users
+            blocked_ids = set(BlockedUser.objects.filter(user=request.user).values_list("blocked_user_id", flat=True))
+            blocked_by_ids = set(BlockedUser.objects.filter(blocked_user=request.user).values_list("user_id", flat=True))
+            forbidden_user_ids = blocked_ids | blocked_by_ids
 
-        # Fetch active statuses
-        all_active = UserStatus.objects.filter(
-            expires_at__gt=now
-        ).exclude(
-            user=request.user
-        ).exclude(
-            user_id__in=forbidden_user_ids
-        ).select_related("user").prefetch_related("views", "reactions", "allowed_users", "excluded_users").order_by("-created_at")
+            # Fetch active statuses
+            all_active = UserStatus.objects.filter(
+                expires_at__gt=now
+            ).exclude(
+                user=request.user
+            ).exclude(
+                user_id__in=forbidden_user_ids
+            ).select_related("user").prefetch_related("views", "reactions", "allowed_users", "excluded_users").order_by("-created_at")
 
-        visible_statuses = []
-        for s in all_active:
-            # Privacy policy evaluation
-            if s.privacy == "contacts" and s.user_id not in contact_ids:
-                continue
-            elif s.privacy == "selected" and not s.allowed_users.filter(id=request.user.id).exists():
-                continue
-            elif s.privacy == "exclude" and s.excluded_users.filter(id=request.user.id).exists():
-                continue
+            visible_statuses = []
+            for s in all_active:
+                # Privacy policy evaluation
+                if s.privacy == "contacts" and s.user_id not in contact_ids:
+                    continue
+                elif s.privacy == "selected" and not s.allowed_users.filter(id=request.user.id).exists():
+                    continue
+                elif s.privacy == "exclude" and s.excluded_users.filter(id=request.user.id).exists():
+                    continue
 
-            visible_statuses.append(s)
+                visible_statuses.append(s)
 
-        # Group by user
-        grouped = {}
-        for s in visible_statuses:
-            uid = str(s.user.id)
-            if uid not in grouped:
-                grouped[uid] = {
-                    "user": {
-                        "id": uid,
-                        "name": s.user.name or s.user.username,
-                        "username": s.user.username,
-                        "avatar": s.user.avatar,
-                    },
-                    "statuses": [],
-                }
-            grouped[uid]["statuses"].append(UserStatusSerializer(s, context={"request": request}).data)
+            # Group by user
+            grouped = {}
+            for s in visible_statuses:
+                uid = str(s.user.id)
+                if uid not in grouped:
+                    grouped[uid] = {
+                        "user": {
+                            "id": uid,
+                            "name": s.user.name or s.user.username,
+                            "username": s.user.username,
+                            "avatar": s.user.avatar,
+                        },
+                        "statuses": [],
+                    }
+                grouped[uid]["statuses"].append(UserStatusSerializer(s, context={"request": request}).data)
 
-        return Response({"success": True, "feed": list(grouped.values())})
+            return Response({"success": True, "feed": list(grouped.values())})
+        except Exception as exc:
+            logger.exception("StatusFeedView.get failed: %s", str(exc))
+            return Response({"success": True, "feed": []})
 
 
 class MyStatusView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        now = timezone.now()
-        my_statuses = UserStatus.objects.filter(
-            user=request.user,
-            expires_at__gt=now
-        ).prefetch_related("views", "reactions").order_by("-created_at")
+        try:
+            now = timezone.now()
+            my_statuses = UserStatus.objects.filter(
+                user=request.user,
+                expires_at__gt=now
+            ).prefetch_related("views", "reactions").order_by("-created_at")
 
-        return Response({
-            "success": True,
-            "statuses": UserStatusSerializer(my_statuses, many=True, context={"request": request}).data
-        })
+            return Response({
+                "success": True,
+                "statuses": UserStatusSerializer(my_statuses, many=True, context={"request": request}).data
+            })
+        except Exception as exc:
+            logger.exception("MyStatusView.get failed: %s", str(exc))
+            return Response({"success": True, "statuses": []})
 
 
 class DeleteStatusView(APIView):

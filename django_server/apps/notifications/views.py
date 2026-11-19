@@ -50,7 +50,15 @@ class NotificationPreferencesView(APIView):
 
     def put(self, request):
         pref, _ = NotificationPreference.objects.get_or_create(user=request.user)
-        serializer = NotificationPreferenceSerializer(pref, data=request.data, partial=True)
+        payload = request.data.copy() if hasattr(request.data, "copy") else dict(request.data)
+        if "push_enabled" in payload:
+            val = bool(payload["push_enabled"])
+            payload["web_push_enabled"] = val
+            payload["fcm_enabled"] = val
+        if "show_message_preview" in payload:
+            payload["message_preview"] = bool(payload["show_message_preview"])
+
+        serializer = NotificationPreferenceSerializer(pref, data=payload, partial=True)
         if serializer.is_valid():
             serializer.save()
             return Response({"success": True, "preferences": serializer.data})

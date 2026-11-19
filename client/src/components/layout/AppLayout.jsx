@@ -19,6 +19,8 @@ import {
   clearChatDeviceNotification,
   initAppForegroundTracker,
   isAppInBackground,
+  isMessagePreviewEnabled,
+  isPushAlertsEnabled,
   notifyDeviceForMessage,
   requestDeviceNotificationPermission,
   updateNativeActiveState,
@@ -222,11 +224,14 @@ const AppLayout = () => (WrappedComponent) => {
       });
 
       // Show WhatsApp/Telegram-style top Heads-Up notification banner
-      if (!targetChat?.isMuted) {
+      const pushAlertsActive = isPushAlertsEnabled();
+      const showPreviewActive = isMessagePreviewEnabled();
+      if (!targetChat?.isMuted && pushAlertsActive) {
         const isGroup = Boolean(targetChat?.groupChat);
         const chatTitle = isGroup ? targetChat.name || "Group Chat" : senderName;
         const avatarUrl = payload.message?.sender?.avatar?.url || payload.message?.sender?.avatar || targetChat?.avatar;
-        const cleanSnippet = snippet.startsWith("::e2ee:v1::") ? "🔒 Encrypted Message" : snippet;
+        const rawSnippet = snippet.startsWith("::e2ee:v1::") ? "🔒 Encrypted Message" : snippet;
+        const cleanSnippet = showPreviewActive ? rawSnippet : "New message";
 
         toast.custom(
           (t) => (

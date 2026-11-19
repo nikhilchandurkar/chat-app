@@ -9,6 +9,9 @@ class NotificationSerializer(serializers.ModelSerializer):
 
 
 class NotificationPreferenceSerializer(serializers.ModelSerializer):
+    push_enabled = serializers.SerializerMethodField()
+    show_message_preview = serializers.SerializerMethodField()
+
     class Meta:
         model = NotificationPreference
         fields = [
@@ -16,9 +19,17 @@ class NotificationPreferenceSerializer(serializers.ModelSerializer):
             "group_messages",
             "sound_enabled",
             "message_preview",
+            "show_message_preview",
             "web_push_enabled",
             "fcm_enabled",
+            "push_enabled",
         ]
+
+    def get_push_enabled(self, obj):
+        return bool(obj.web_push_enabled or obj.fcm_enabled)
+
+    def get_show_message_preview(self, obj):
+        return bool(obj.message_preview)
 
 
 class WebPushSubscribeSerializer(serializers.Serializer):

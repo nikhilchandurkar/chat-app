@@ -62,7 +62,7 @@ import {
   useVotePollMutation,
   useLazyGetMessageReceiptsQuery,
 } from "../../redux/api/api";
-import { getChatFontSize, PREFS_EVENT, triggerHaptic } from "../../utils/feedback";
+import { getChatFontSize, PREFS_EVENT, triggerHaptic, isAnimationEnabled } from "../../utils/feedback";
 import { FormattedMessageContent } from "../../utils/markdown";
 import { decryptE2eeMessage, getStoredKeyPair, isE2eePayload } from "../../utils/e2ee";
 import toast from "react-hot-toast";
@@ -769,9 +769,9 @@ const MessageComponent = ({
         </motion.div>
 
         <motion.div
-          initial={{ opacity: 0, scale: 0.94, y: 10 }}
+          initial={isAnimationEnabled() ? { opacity: 0, scale: 0.94, y: 10 } : { opacity: 1 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ type: "spring", stiffness: 450, damping: 28 }}
+          transition={isAnimationEnabled() ? { type: "spring", stiffness: 450, damping: 28 } : { duration: 0 }}
           style={{
             position: "relative",
             width: "100%",
@@ -1300,11 +1300,16 @@ const MessageComponent = ({
           <Button variant="outlined" color="warning" onClick={handleDeleteForMe} disabled={isDeletingForMe}>
             Delete for Me
           </Button>
-          {(sameSender || isGroupAdmin) && (
-            <Button variant="contained" color="error" onClick={handleDeleteForEveryone} disabled={isDeleting}>
-              Delete for Everyone
-            </Button>
-          )}
+          {(() => {
+            const messageAgeMs = Date.now() - new Date(createdAt).getTime();
+            const isWithinOneMinute = messageAgeMs <= 60 * 1000;
+            if (!(sameSender || isGroupAdmin) || !isWithinOneMinute) return null;
+            return (
+              <Button variant="contained" color="error" onClick={handleDeleteForEveryone} disabled={isDeleting}>
+                Delete for Everyone
+              </Button>
+            );
+          })()}
           <Button color="inherit" onClick={() => setDeleteChoiceOpen(false)}>
             Cancel
           </Button>

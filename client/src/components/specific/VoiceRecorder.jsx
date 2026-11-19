@@ -6,7 +6,7 @@ import toast from "react-hot-toast";
 import { useDispatch } from "react-redux";
 import { setUploadingLoader } from "../../redux/reducers/misc";
 import { useSendAttachmentsMutation } from "../../redux/api/api";
-import { triggerHaptic } from "../../utils/feedback";
+import { triggerHaptic, isAnimationEnabled } from "../../utils/feedback";
 
 const NUM_WAVE_BARS = 14;
 
@@ -36,6 +36,7 @@ const VoiceRecorder = ({ chatId, topicName = "", autoStart = false, onCancel }) 
     }
     if (animFrameRef.current) {
       cancelAnimationFrame(animFrameRef.current);
+      clearTimeout(animFrameRef.current);
       animFrameRef.current = null;
     }
     if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
@@ -78,7 +79,11 @@ const VoiceRecorder = ({ chatId, topicName = "", autoStart = false, onCancel }) 
           bars.push(height);
         }
         setWaveBars(bars);
-        animFrameRef.current = requestAnimationFrame(updateBars);
+        if (isAnimationEnabled()) {
+          animFrameRef.current = requestAnimationFrame(updateBars);
+        } else {
+          animFrameRef.current = setTimeout(updateBars, 160);
+        }
       };
 
       updateBars();

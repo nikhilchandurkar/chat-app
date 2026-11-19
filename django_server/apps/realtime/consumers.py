@@ -349,43 +349,54 @@ class ChatConsumer(AsyncJsonWebsocketConsumer):
         return is_member
 
     async def connect(self):
-        self.user = self.scope.get("user")
-        if not self.user or not self.user.is_authenticated:
-            await self.close(code=4001)
-            return
+        try:
+            self.user = self.scope.get("user")
+            if not self.user or not self.user.is_authenticated:
+                await self.close(code=4001)
+                return
 
-        self.event_timestamps = []
-        self.user_group = f"user_{self.user.id}"
+            self.event_timestamps = []
+            self.user_group = f"user_{self.user.id}"
 
-        self.conv_ids = await get_user_conversation_ids(self.user)
-        self.conv_id_set = {str(cid) for cid in self.conv_ids}
+            self.conv_ids = await get_user_conversation_ids(self.user)
+            self.conv_id_set = {str(cid) for cid in self.conv_ids}
 
-        group_adds = [self.channel_layer.group_add(self.user_group, self.channel_name)]
-        group_adds.extend(
-            self.channel_layer.group_add(f"chat_{cid}", self.channel_name) for cid in self.conv_ids
-        )
-        await asyncio.gather(*group_adds)
+            # Accept early to complete WebSocket HTTP upgrade handshake cleanly
+            await self.accept()
 
-        await set_user_online_status(self.user, True)
-        privacy = await get_user_privacy_profile(self.user)
-        self.privacy = privacy
+            group_adds = [self.channel_layer.group_add(self.user_group, self.channel_name)]
+            group_adds.extend(
+                self.channel_layer.group_add(f"chat_{cid}", self.channel_name) for cid in self.conv_ids
+            )
+            await asyncio.gather(*group_adds, return_exceptions=True)
 
-        await self.accept()
+            await set_user_online_status(self.user, True)
+            privacy = await get_user_privacy_profile(self.user)
+            self.privacy = privacy
 
-        await self.send_json({
-            "event": "connection.ready",
-            "user_id": str(self.user.id),
-            "timestamp": timezone.now().isoformat(),
-        })
+            await self.send_json({
+                "event": "connection.ready",
+                "user_id": str(self.user.id),
+                "timestamp": timezone.now().isoformat(),
+            })
 
-        if privacy.get("privacy_online") != "nobody" and self.conv_ids:
-            packet = {
-                "type": "chat.event",
-                "event": "user.online",
-                "event_legacy": "ONLINE_USERS",
-                "data": {"user_id": str(self.user.id), "status": "online"},
-            }
-            await asyncio.gather(*(self.channel_layer.group_send(f"chat_{cid}", packet) for cid in self.conv_ids[:8]))
+            if privacy.get("privacy_online") != "nobody" and self.conv_ids:
+                packet = {
+                    "type": "chat.event",
+                    "event": "user.online",
+                    "event_legacy": "ONLINE_USERS",
+                    "data": {"user_id": str(self.user.id), "status": "online"},
+                }
+                await asyncio.gather(
+                    *(self.channel_layer.group_send(f"chat_{cid}", packet) for cid in self.conv_ids[:8]),
+                    return_exceptions=True,
+                )
+        except Exception as exc:
+            logger.exception("Error during ChatConsumer.connect: %s", str(exc))
+            try:
+                await self.close(code=4500)
+            except Exception:
+                pass
 
     async def disconnect(self, close_code):
         if hasattr(self, "user") and self.user.is_authenticated:

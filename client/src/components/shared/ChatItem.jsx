@@ -10,6 +10,7 @@ import AvatarCard from "./AvatarCard";
 import { useDispatch } from "react-redux";
 import { setActiveChatId, setIsMobile } from "../../redux/reducers/misc";
 import { motion } from "framer-motion";
+import { isAnimationEnabled } from "../../utils/feedback";
 
 const ChatItem = ({
   avatar = [],
@@ -90,9 +91,9 @@ const ChatItem = ({
       }}
     >
       <motion.div
-        initial={{ opacity: 0, y: 8 }}
+        initial={isAnimationEnabled() ? { opacity: 0, y: 8 } : { opacity: 1 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: Math.min(0.25, 0.03 * index), duration: 0.22 }}
+        transition={isAnimationEnabled() ? { delay: Math.min(0.25, 0.03 * index), duration: 0.22 } : { duration: 0 }}
         style={{ display: "flex", alignItems: "center", gap: "10px", width: "100%", minWidth: 0 }}
       >
         {isSavedMessages ? (
@@ -212,7 +213,7 @@ const ChatItem = ({
               flexShrink: 0,
               backgroundColor: sameSender ? "#A7F3D0" : "#22C55E",
               boxShadow: "0 0 8px rgba(34, 197, 94, 0.6)",
-              animation: "onlinePulse 2s infinite ease-in-out",
+              animation: isAnimationEnabled() ? "onlinePulse 2s infinite ease-in-out" : "none",
               "@keyframes onlinePulse": {
                 "0%, 100%": { transform: "scale(1)", opacity: 0.85 },
                 "50%": { transform: "scale(1.3)", opacity: 1 },

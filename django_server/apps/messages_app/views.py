@@ -435,6 +435,13 @@ class DeleteMessageView(APIView):
         if message.sender_id != request.user.id and not is_admin:
             return Response({"success": False, "message": "Permission denied."}, status=status.HTTP_403_FORBIDDEN)
 
+        # Enforce 1-minute window for delete for everyone
+        if timezone.now() - message.created_at > timedelta(seconds=60):
+            return Response(
+                {"success": False, "message": "Messages can only be deleted for everyone within 1 minute of sending."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         with transaction.atomic():
             message.is_deleted = True
             message.save(update_fields=["is_deleted"])
