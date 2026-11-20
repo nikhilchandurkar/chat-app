@@ -1125,6 +1125,10 @@ const Chat = ({ chatId, user }) => {
   const nearBottomRef = useRef(true);
   const edgeSwipeStartRef = useRef(null);
   const burstCounterRef = useRef(0);
+  const dragCounterRef = useRef(0);
+  const walkieRecorderRef = useRef(null);
+  const walkieStreamRef = useRef(null);
+  const walkieChunksRef = useRef([]);
 
   const [oldMessages, setOldMessages] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -1143,26 +1147,68 @@ const Chat = ({ chatId, user }) => {
   const [showGifStudio, setShowGifStudio] = useState(false);
   const [showPollDialog, setShowPollDialog] = useState(false);
   const [slowCooldownLeft, setSlowCooldownLeft] = useState(0);
-
-  useEffect(() => {
-    setSlowCooldownLeft(0);
-    setSelectedMsgIds([]);
-    setShowRecap(false);
-  }, [chatId]);
-
-  useEffect(() => {
-    if (slowCooldownLeft <= 0) return undefined;
-    const t = setInterval(() => {
-      setSlowCooldownLeft((prev) => (prev > 1 ? prev - 1 : 0));
-    }, 1000);
-    return () => clearInterval(t);
-  }, [slowCooldownLeft]);
   const [showGameDialog, setShowGameDialog] = useState(false);
   const [showWatchParty, setShowWatchParty] = useState(false);
   const [showWhiteboard, setShowWhiteboard] = useState(false);
-
   const [isDraggingFile, setIsDraggingFile] = useState(false);
-  const dragCounterRef = useRef(0);
+  const [whiteboardInviteName, setWhiteboardInviteName] = useState("");
+  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
+  const [showWidgetDialog, setShowWidgetDialog] = useState(false);
+  const [showRecap, setShowRecap] = useState(false);
+  const [selectedMsgIds, setSelectedMsgIds] = useState([]);
+  const [bulkForwardOpen, setBulkForwardOpen] = useState(false);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [showLocationDialog, setShowLocationDialog] = useState(false);
+  const [locationDuration, setLocationDuration] = useState(15);
+  const [sharingLocation, setSharingLocation] = useState(false);
+  const [activeTopic, setActiveTopic] = useState("all");
+  const [showTopicDialog, setShowTopicDialog] = useState(false);
+  const [newTopicText, setNewTopicText] = useState("");
+  const [activeThreadMsg, setActiveThreadMsg] = useState(null);
+  const [walkieRecording, setWalkieRecording] = useState(false);
+  const [walkiePeerName, setWalkiePeerName] = useState("");
+  const [incomingWalkieClip, setIncomingWalkieClip] = useState(null);
+  const [e2eeEnabled, setE2eeEnabled] = useState(() => isChatE2eeEnabled(chatId));
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  const [bulkStarMessages, { isLoading: isBulkStarring }] = useBulkStarMessagesMutation();
+  const [bulkDeleteMessages, { isLoading: isBulkDeleting }] = useBulkDeleteMessagesMutation();
+  const chatDetails = useChatDetailsQuery({ chatId, populate: true }, { skip: !chatId });
+  const oldMessageChunk = useGetMessagesQuery({ chatId, page }, { skip: !chatId });
+  const [sendAttachments] = useSendAttachmentsMutation();
+  const [publishE2eeKey] = usePublishE2eeKeyMutation();
+  const [clearChatMutation] = useClearChatMutation();
+  const [togglePinChatMutation] = useTogglePinChatMutation();
+  const [toggleMuteChatMutation] = useToggleMuteChatMutation();
+
+  const members = chatDetails?.data?.chat?.members;
+  const chat = chatDetails?.data?.chat;
+  const isGroupChat = Boolean(chat?.groupChat);
+  const myIdStr = String(user?._id || user?.id || "");
+  const otherMember = !isGroupChat && Array.isArray(members)
+    ? members.find((m) => String(m?._id || m?.id || m) !== myIdStr)
+    : null;
+  const otherMemberId = otherMember ? String(otherMember?._id || otherMember?.id || otherMember) : "";
+  const { data: peerE2eeData } = useGetUserE2eeKeyQuery(otherMemberId, {
+    skip: isGroupChat || !otherMemberId,
+  });
+  const peerPublicKey = peerE2eeData?.publicKey || null;
+
+  const hasTimedExpiry = useMemo(
+    () => oldMessages.some((m) => Boolean(m?.expiresAt)) || messages.some((m) => Boolean(m?.expiresAt)),
+    [oldMessages, messages]
+  );
+
+  const allMessages = useMemo(() => {
+    const oldIds = new Set(oldMessages.map((m) => String(m._id || m.id)));
+    const uniqueRealtime = messages.filter((m) => !oldIds.has(String(m._id || m.id)));
+    const combined = [...oldMessages, ...uniqueRealtime].filter(
+      (m) => !m?.expiresAt || new Date(m.expiresAt).getTime() > nowMs
+    );
+    if (!activeTopic || activeTopic === "all") return combined;
+    return combined.filter((m) => String(m.topicName || "").toLowerCase() === activeTopic.toLowerCase());
+  }, [activeTopic, oldMessages, messages, nowMs]);
+
 
   const handleDragEnter = useCallback((e) => {
     e.preventDefault();
@@ -1220,75 +1266,31 @@ const Chat = ({ chatId, user }) => {
     },
     [chatId, activeTopic, dispatch, sendAttachments]
   );
-  const [whiteboardInviteName, setWhiteboardInviteName] = useState("");
-  const [showScheduleDialog, setShowScheduleDialog] = useState(false);
-  const [showWidgetDialog, setShowWidgetDialog] = useState(false);
-  const [showRecap, setShowRecap] = useState(false);
-  const [selectedMsgIds, setSelectedMsgIds] = useState([]);
-  const [bulkForwardOpen, setBulkForwardOpen] = useState(false);
-  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const [bulkStarMessages, { isLoading: isBulkStarring }] = useBulkStarMessagesMutation();
-  const [bulkDeleteMessages, { isLoading: isBulkDeleting }] = useBulkDeleteMessagesMutation();
-  const [showLocationDialog, setShowLocationDialog] = useState(false);
-  const [locationDuration, setLocationDuration] = useState(15);
-  const [sharingLocation, setSharingLocation] = useState(false);
-  const [activeTopic, setActiveTopic] = useState("all");
-  const [showTopicDialog, setShowTopicDialog] = useState(false);
-  const [newTopicText, setNewTopicText] = useState("");
-  const [activeThreadMsg, setActiveThreadMsg] = useState(null);
-  const [walkieRecording, setWalkieRecording] = useState(false);
-  const [walkiePeerName, setWalkiePeerName] = useState("");
-  const [incomingWalkieClip, setIncomingWalkieClip] = useState(null);
-  const walkieRecorderRef = useRef(null);
-  const walkieStreamRef = useRef(null);
-  const walkieChunksRef = useRef([]);
-  const [e2eeEnabled, setE2eeEnabled] = useState(() => isChatE2eeEnabled(chatId));
 
-  const chatDetails = useChatDetailsQuery({ chatId, populate: true }, { skip: !chatId });
-  const oldMessageChunk = useGetMessagesQuery({ chatId, page }, { skip: !chatId });
-  const [sendAttachments] = useSendAttachmentsMutation();
-  const [publishE2eeKey] = usePublishE2eeKeyMutation();
-  const [clearChatMutation] = useClearChatMutation();
-  const [togglePinChatMutation] = useTogglePinChatMutation();
-  const [toggleMuteChatMutation] = useToggleMuteChatMutation();
+  useEffect(() => {
+    setSlowCooldownLeft(0);
+    setSelectedMsgIds([]);
+    setShowRecap(false);
+  }, [chatId]);
 
-  const members = chatDetails?.data?.chat?.members;
-  const chat = chatDetails?.data?.chat;
-  const isGroupChat = Boolean(chat?.groupChat);
-  const myIdStr = String(user?._id || user?.id || "");
-  const otherMember = !isGroupChat && Array.isArray(members)
-    ? members.find((m) => String(m?._id || m?.id || m) !== myIdStr)
-    : null;
-  const otherMemberId = otherMember ? String(otherMember?._id || otherMember?.id || otherMember) : "";
-  const { data: peerE2eeData } = useGetUserE2eeKeyQuery(otherMemberId, {
-    skip: isGroupChat || !otherMemberId,
-  });
-  const peerPublicKey = peerE2eeData?.publicKey || null;
+  useEffect(() => {
+    if (slowCooldownLeft <= 0) return undefined;
+    const t = setInterval(() => {
+      setSlowCooldownLeft((prev) => (prev > 1 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [slowCooldownLeft]);
 
   useEffect(() => {
     setE2eeEnabled(isChatE2eeEnabled(chatId));
   }, [chatId]);
 
-  const [nowMs, setNowMs] = useState(() => Date.now());
-  const hasTimedExpiry = useMemo(
-    () => oldMessages.some((m) => Boolean(m?.expiresAt)) || messages.some((m) => Boolean(m?.expiresAt)),
-    [oldMessages, messages]
-  );
   useEffect(() => {
     if (!hasTimedExpiry) return undefined;
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
   }, [hasTimedExpiry]);
 
-  const allMessages = useMemo(() => {
-    const oldIds = new Set(oldMessages.map((m) => String(m._id || m.id)));
-    const uniqueRealtime = messages.filter((m) => !oldIds.has(String(m._id || m.id)));
-    const combined = [...oldMessages, ...uniqueRealtime].filter(
-      (m) => !m?.expiresAt || new Date(m.expiresAt).getTime() > nowMs
-    );
-    if (!activeTopic || activeTopic === "all") return combined;
-    return combined.filter((m) => String(m.topicName || "").toLowerCase() === activeTopic.toLowerCase());
-  }, [activeTopic, oldMessages, messages, nowMs]);
 
   const handleToggleE2ee = async () => {
     if (isGroupChat) return;
