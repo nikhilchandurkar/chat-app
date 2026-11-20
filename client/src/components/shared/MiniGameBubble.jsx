@@ -27,6 +27,11 @@ const GAME_TITLES = {
   evenodd: "Even / Odd Bet",
   oddone: "Odd-One-Out",
   mathsprint: "Math Sprint",
+  wordle: "Wordle Duel",
+  game2048: "2048 Puzzle",
+  "2048": "2048 Puzzle",
+  typerace: "Typing Speed Race",
+  truthordare: "Truth or Dare",
 };
 
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
@@ -34,6 +39,9 @@ const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
 const MiniGameBubble = ({ messageId, game, currentUserId, onUpdated }) => {
   const [busy, setBusy] = useState(false);
   const [numberInput, setNumberInput] = useState("");
+  const [wordleInput, setWordleInput] = useState("");
+  const [typeRaceInput, setTypeRaceInput] = useState("");
+  const [typeRaceStartTime, setTypeRaceStartTime] = useState(null);
   if (!game || typeof game !== "object") return null;
 
   const myId = String(currentUserId || "");
@@ -555,6 +563,339 @@ const MiniGameBubble = ({ messageId, game, currentUserId, onUpdated }) => {
             </Button>
           ))}
         </Box>
+      )}
+
+      {/* 16. Wordle Duel */}
+      {gtype === "wordle" && (
+        <Stack spacing={1} alignItems="center">
+          <Typography variant="caption" color="text.secondary">
+            {status === "active" ? `Tries: ${(game.guesses || []).length}/6 · 5-Letter Word` : game.winnerName || "Game Over"}
+          </Typography>
+
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
+            {Array.from({ length: 6 }).map((_, rIdx) => {
+              const guessObj = (game.guesses || [])[rIdx];
+              const letters = guessObj ? guessObj.word.split("") : Array(5).fill("");
+              const evals = guessObj ? guessObj.evaluation : Array(5).fill("");
+
+              return (
+                <Stack key={rIdx} direction="row" spacing={0.5}>
+                  {Array.from({ length: 5 }).map((_, cIdx) => {
+                    const char = letters[cIdx] || "";
+                    const ev = evals[cIdx];
+                    const bgColor =
+                      ev === "correct"
+                        ? "#15803d"
+                        : ev === "present"
+                        ? "#b45309"
+                        : ev === "absent"
+                        ? "#334155"
+                        : "transparent";
+                    const borderColor = char ? "primary.main" : "divider";
+
+                    return (
+                      <Box
+                        key={cIdx}
+                        sx={{
+                          width: 32,
+                          height: 34,
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontWeight: 800,
+                          fontSize: "1.1rem",
+                          borderRadius: 1,
+                          bgcolor: bgColor,
+                          color: ev ? "#ffffff" : "text.primary",
+                          border: ev ? "none" : "1.5px solid",
+                          borderColor: borderColor,
+                        }}
+                      >
+                        {char}
+                      </Box>
+                    );
+                  })}
+                </Stack>
+              );
+            })}
+          </Box>
+
+          {status === "active" && (
+            <Stack direction="row" spacing={0.5} width="100%" maxWidth={210}>
+              <TextField
+                size="small"
+                placeholder="5-letter word"
+                inputProps={{ maxLength: 5, style: { textTransform: "uppercase", fontWeight: 700, textAlign: "center", padding: "6px" } }}
+                value={wordleInput}
+                onChange={(e) => setWordleInput(e.target.value.replace(/[^a-zA-Z]/g, "").slice(0, 5).toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && wordleInput.length === 5 && !busy) {
+                    sendMove({ guess: wordleInput });
+                    setWordleInput("");
+                  }
+                }}
+              />
+              <Button
+                size="small"
+                variant="contained"
+                disabled={busy || wordleInput.length !== 5}
+                onClick={() => {
+                  sendMove({ guess: wordleInput });
+                  setWordleInput("");
+                }}
+              >
+                Guess
+              </Button>
+            </Stack>
+          )}
+        </Stack>
+      )}
+
+      {/* 17. 2048 Puzzle */}
+      {(gtype === "game2048" || gtype === "2048") && (
+        <Stack spacing={1} alignItems="center">
+          <Stack direction="row" justifyContent="space-between" width="100%" px={0.5}>
+            <Typography variant="caption" fontWeight={700}>
+              Score: {game.score || 0}
+            </Typography>
+            <Typography variant="caption" color="text.secondary">
+              Best: {game.bestTile || 2} · {game.movesCount || 0} moves
+            </Typography>
+          </Stack>
+
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: "repeat(4, 1fr)",
+              gap: 0.6,
+              p: 0.75,
+              borderRadius: 2,
+              bgcolor: (theme) => (theme.palette.mode === "dark" ? "#181f1b" : "#bbada0"),
+              width: 196,
+              height: 196,
+            }}
+          >
+            {(game.grid || Array(4).fill(Array(4).fill(0))).flatMap((row, r) =>
+              row.map((cell, c) => {
+                const colors = {
+                  2: { bg: "#eee4da", color: "#776e65" },
+                  4: { bg: "#ede0c8", color: "#776e65" },
+                  8: { bg: "#f2b179", color: "#f9f6f2" },
+                  16: { bg: "#f59563", color: "#f9f6f2" },
+                  32: { bg: "#f67c5f", color: "#f9f6f2" },
+                  64: { bg: "#f65e3b", color: "#f9f6f2" },
+                  128: { bg: "#edcf72", color: "#f9f6f2" },
+                  256: { bg: "#edcc61", color: "#f9f6f2" },
+                  512: { bg: "#edc850", color: "#f9f6f2" },
+                  1024: { bg: "#edc53f", color: "#f9f6f2" },
+                  2048: { bg: "#edc22e", color: "#f9f6f2" },
+                };
+                const style = colors[cell] || { bg: "rgba(255,255,255,0.08)", color: "transparent" };
+                return (
+                  <Box
+                    key={`${r}-${c}`}
+                    sx={{
+                      borderRadius: 1,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      bgcolor: style.bg,
+                      color: style.color,
+                      fontWeight: 800,
+                      fontSize: cell >= 1000 ? "0.75rem" : cell >= 100 ? "0.95rem" : "1.1rem",
+                    }}
+                  >
+                    {cell > 0 ? cell : ""}
+                  </Box>
+                );
+              })
+            )}
+          </Box>
+
+          {status === "active" && (
+            <Stack spacing={0.4} alignItems="center">
+              <Button
+                size="small"
+                variant="outlined"
+                disabled={busy}
+                onClick={() => sendMove({ direction: "up" })}
+                sx={{ minWidth: 44, height: 28, p: 0 }}
+              >
+                ⬆️
+              </Button>
+              <Stack direction="row" spacing={1}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={busy}
+                  onClick={() => sendMove({ direction: "left" })}
+                  sx={{ minWidth: 44, height: 28, p: 0 }}
+                >
+                  ⬅️
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={busy}
+                  onClick={() => sendMove({ direction: "down" })}
+                  sx={{ minWidth: 44, height: 28, p: 0 }}
+                >
+                  ⬇️
+                </Button>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={busy}
+                  onClick={() => sendMove({ direction: "right" })}
+                  sx={{ minWidth: 44, height: 28, p: 0 }}
+                >
+                  ➡️
+                </Button>
+              </Stack>
+            </Stack>
+          )}
+        </Stack>
+      )}
+
+      {/* 18. Typing Speed Race */}
+      {gtype === "typerace" && (
+        <Stack spacing={1} width="100%">
+          <Paper
+            variant="outlined"
+            sx={{
+              p: 1,
+              bgcolor: (theme) => (theme.palette.mode === "dark" ? "#1e293b" : "#f8fafc"),
+              fontFamily: "monospace",
+              fontSize: "0.82rem",
+              lineHeight: 1.4,
+              borderRadius: 1.5,
+            }}
+          >
+            "{game.prompt}"
+          </Paper>
+
+          {status === "active" && (
+            <Stack spacing={0.6}>
+              <TextField
+                size="small"
+                multiline
+                rows={2}
+                placeholder="Type the sentence above..."
+                value={typeRaceInput}
+                onChange={(e) => {
+                  if (!typeRaceStartTime) setTypeRaceStartTime(Date.now());
+                  setTypeRaceInput(e.target.value);
+                }}
+                disabled={busy}
+              />
+              <Button
+                size="small"
+                variant="contained"
+                disabled={busy || !typeRaceInput.trim()}
+                onClick={() => {
+                  const duration = Date.now() - (typeRaceStartTime || Date.now());
+                  sendMove({ typed: typeRaceInput, timeMs: duration });
+                  setTypeRaceInput("");
+                  setTypeRaceStartTime(null);
+                }}
+              >
+                Submit Speed
+              </Button>
+            </Stack>
+          )}
+
+          {/* Results Leaderboard */}
+          {(game.results || []).length > 0 && (
+            <Stack spacing={0.4} mt={0.5}>
+              <Typography variant="caption" fontWeight={700}>
+                🏁 Leaderboard:
+              </Typography>
+              {(game.results || []).map((r, i) => (
+                <Stack key={i} direction="row" justifyContent="space-between" alignItems="center">
+                  <Typography variant="caption">
+                    {i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉"} {r.player}:
+                  </Typography>
+                  <Typography variant="caption" fontWeight={700} color="primary">
+                    {r.wpm} WPM · {r.accuracy}% Acc · {r.timeSec}s
+                  </Typography>
+                </Stack>
+              ))}
+            </Stack>
+          )}
+        </Stack>
+      )}
+
+      {/* 19. Truth or Dare */}
+      {gtype === "truthordare" && (
+        <Stack spacing={1} alignItems="center" width="100%">
+          {game.currentPrompt && (
+            <Paper
+              elevation={0}
+              sx={{
+                p: 1.25,
+                width: "100%",
+                borderRadius: 2,
+                border: "1.5px solid",
+                borderColor: game.currentPrompt.type === "truth" ? "info.main" : "error.main",
+                bgcolor: (theme) =>
+                  game.currentPrompt.type === "truth"
+                    ? theme.palette.mode === "dark"
+                      ? "rgba(14, 165, 233, 0.12)"
+                      : "#f0f9ff"
+                    : theme.palette.mode === "dark"
+                    ? "rgba(239, 68, 68, 0.12)"
+                    : "#fef2f2",
+                textAlign: "center",
+              }}
+            >
+              <Chip
+                size="small"
+                color={game.currentPrompt.type === "truth" ? "info" : "error"}
+                label={`${(game.currentPrompt.type || "TRUTH").toUpperCase()} for ${game.currentPrompt.player || "Anyone"}`}
+                sx={{ fontWeight: 800, mb: 1, height: 22, fontSize: "0.72rem" }}
+              />
+              <Typography variant="body2" fontWeight={600} lineHeight={1.4}>
+                "{game.currentPrompt.text}"
+              </Typography>
+            </Paper>
+          )}
+
+          {game.lastAction && (
+            <Typography variant="caption" color="text.secondary">
+              {game.lastAction}
+            </Typography>
+          )}
+
+          <Stack direction="row" spacing={0.75} flexWrap="wrap" justifyContent="center">
+            <Button
+              size="small"
+              variant="outlined"
+              color="info"
+              disabled={busy}
+              onClick={() => sendMove({ action: "pick", type: "truth" })}
+            >
+              🔵 Truth
+            </Button>
+            <Button
+              size="small"
+              variant="outlined"
+              color="error"
+              disabled={busy}
+              onClick={() => sendMove({ action: "pick", type: "dare" })}
+            >
+              🔴 Dare
+            </Button>
+            <Button
+              size="small"
+              variant="contained"
+              color="success"
+              disabled={busy}
+              onClick={() => sendMove({ action: "complete" })}
+            >
+              ✅ Completed!
+            </Button>
+          </Stack>
+        </Stack>
       )}
 
       {/* Live Scoreboard */}

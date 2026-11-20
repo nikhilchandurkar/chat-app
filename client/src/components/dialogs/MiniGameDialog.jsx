@@ -36,6 +36,10 @@ const GAMES = [
   { id: "evenodd", title: "Even / Odd Bet", emoji: "🎯", desc: "Predict Even or Odd on a 1–20 roll" },
   { id: "oddone", title: "Emoji Odd-One-Out", emoji: "👀", desc: "First to spot the sneaky emoji wins" },
   { id: "mathsprint", title: "Math Sprint", emoji: "⚡", desc: "Speed solve dynamic arithmetic" },
+  { id: "wordle", title: "Wordle Duel", emoji: "🟩🟨", desc: "Guess the 5-letter word in 6 tries" },
+  { id: "game2048", title: "2048 Puzzle", emoji: "🔢", desc: "Slide & merge matching numbers" },
+  { id: "typerace", title: "Typing Speed Race", emoji: "⌨️", desc: "Test your WPM in a live sentence sprint" },
+  { id: "truthordare", title: "Truth or Dare", emoji: "🎭", desc: "Party truth & dare generator" },
 ];
 
 const QUIZ_CATEGORIES = [
@@ -80,7 +84,7 @@ const MiniGameDialog = ({ open, onClose, chatId, activeTopic = "", onCreated }) 
         {
           chatId,
           gameType: selected,
-          customWord: selected === "wordguess" ? customWord.trim() : "",
+          customWord: selected === "wordguess" || selected === "wordle" ? customWord.trim() : "",
           category,
           categoryName: useCustomQuiz ? "Custom Quiz" : catLabel,
           difficulty,
@@ -241,13 +245,13 @@ const MiniGameDialog = ({ open, onClose, chatId, activeTopic = "", onCreated }) 
             </Paper>
           )}
 
-          {selected === "wordguess" && (
+          {(selected === "wordguess" || selected === "wordle") && (
             <TextField
               size="small"
-              label="Optional Secret Word (4-8 letters)"
-              placeholder="Leave blank for random word"
+              label={selected === "wordle" ? "Optional 5-Letter Target Word" : "Optional Secret Word (4-8 letters)"}
+              placeholder={selected === "wordle" ? "Leave blank for random 5-letter word" : "Leave blank for random word"}
               value={customWord}
-              onChange={(e) => setCustomWord(e.target.value.replace(/[^a-zA-Z]/g, "").slice(0, 8))}
+              onChange={(e) => setCustomWord(e.target.value.replace(/[^a-zA-Z]/g, "").slice(0, selected === "wordle" ? 5 : 8))}
               fullWidth
             />
           )}

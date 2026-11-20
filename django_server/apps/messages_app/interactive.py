@@ -78,6 +78,112 @@ WORD_GUESS_BANK = [
     "CHESS", "NEXUS", "BRAIN", "QUIZZ", "PRISM", "LASER", "SWIFT", "DELTA",
 ]
 
+WORDLE_WORDS = [
+    "CRANE", "SLATE", "AUDIO", "LIGHT", "BRAIN", "PLANT", "SHINE", "TRACE",
+    "GHOST", "BEACH", "FLAME", "CLOUD", "STORM", "POWER", "RIVER", "SWEET",
+    "DREAM", "HEART", "PIXEL", "SWIFT", "MAGIC", "OCEAN", "SPARK", "TIGER",
+    "EAGLE", "FROST", "BLAZE", "CHAMP", "FOCUS", "NOBLE", "QUEST", "VIVID",
+    "ZEBRA", "SOLAR", "LUNAR", "PRISM", "VALOR", "CROWN", "BLISS", "AMBER"
+]
+
+TYPERACE_PROMPTS = [
+    "The quick brown fox jumps over the lazy dog near the riverbank.",
+    "Simplicity is the soul of efficiency and the key to great software.",
+    "In the middle of difficulty lies the hidden opportunity to innovate.",
+    "Technology is at its best when it brings people together across the globe.",
+    "Fast reflexes and focused minds turn everyday challenges into victories.",
+    "Every line of clean code is a step toward building something unforgettable.",
+    "Great conversations inspire ideas that can change the world overnight."
+]
+
+TRUTH_PROMPTS = [
+    "What is the most embarrassing thing currently in your search history?",
+    "Have you ever made up an excuse just to cancel plans and stay in bed?",
+    "What is the most ridiculous purchase you've ever made online?",
+    "What is a secret guilty pleasure song you listen to when no one is around?",
+    "If you could trade lives with anyone in this chat for 24 hours, who would it be?",
+    "What was the most awkward text message you ever sent to the wrong person?",
+    "What is a strange phobia or fear you have that makes no rational sense?",
+    "Who in this chat group would survive the longest in a zombie apocalypse?",
+    "What is the biggest culinary disaster you cooked and secretly ate anyway?",
+    "If you were gifted $50,000 right now, what is the first thing you would buy?"
+]
+
+DARE_PROMPTS = [
+    "Send a selfie making the most ridiculous face right now in chat!",
+    "Voice note: Sing the chorus of your favorite song with maximum emotion!",
+    "Send the 5th picture in your phone gallery with absolutely zero context!",
+    "Type your next message using only your nose or your chin!",
+    "Voice note: Do your best impression of a movie villain or cartoon character!",
+    "Write a dramatic 2-line poem about a random object on your desk right now!",
+    "Voice note: Speak in an over-the-top dramatic accent for 10 seconds!",
+    "Send a screenshot of your home screen or current battery level right now!",
+    "Tell an absurd lie with complete confidence and see if anyone notices!"
+]
+
+def _slide_and_merge_2048(grid, direction):
+    def slide_left(row):
+        non_zero = [v for v in row if v != 0]
+        new_row = []
+        score_gain = 0
+        skip = False
+        for i in range(len(non_zero)):
+            if skip:
+                skip = False
+                continue
+            if i + 1 < len(non_zero) and non_zero[i] == non_zero[i + 1]:
+                merged = non_zero[i] * 2
+                new_row.append(merged)
+                score_gain += merged
+                skip = True
+            else:
+                new_row.append(non_zero[i])
+        while len(new_row) < 4:
+            new_row.append(0)
+        return new_row, score_gain
+
+    score_total = 0
+    new_grid = [list(r) for r in grid]
+
+    if direction == "left":
+        for r in range(4):
+            new_grid[r], gain = slide_left(new_grid[r])
+            score_total += gain
+    elif direction == "right":
+        for r in range(4):
+            reversed_row = new_grid[r][::-1]
+            slid, gain = slide_left(reversed_row)
+            new_grid[r] = slid[::-1]
+            score_total += gain
+    elif direction == "up":
+        for c in range(4):
+            col = [new_grid[r][c] for r in range(4)]
+            slid, gain = slide_left(col)
+            for r in range(4):
+                new_grid[r][c] = slid[r]
+            score_total += gain
+    elif direction == "down":
+        for c in range(4):
+            col = [new_grid[r][c] for r in range(4)][::-1]
+            slid, gain = slide_left(col)
+            unreversed = slid[::-1]
+            for r in range(4):
+                new_grid[r][c] = unreversed[r]
+            score_total += gain
+
+    return new_grid, score_total
+
+def _can_move_2048(grid):
+    for r in range(4):
+        for c in range(4):
+            if grid[r][c] == 0:
+                return True
+            if c + 1 < 4 and grid[r][c] == grid[r][c + 1]:
+                return True
+            if r + 1 < 4 and grid[r][c] == grid[r + 1][c]:
+                return True
+    return False
+
 MEMORY_EMOJIS = ["🚀", "🔥", "💎", "🍕", "🎧", "🌈"]
 ODD_PAIRS = [("😀", "😃"), ("🌕", "🌖"), ("🍎", "🍅"), ("🐶", "🐺"), ("⭐", "🌟"), ("🔵", "🟣")]
 
@@ -256,6 +362,59 @@ def create_initial_game_state(game_type: str, creator, options: dict | None = No
         op = random.choice(["+", "-"])
         answer = (a * b + c) if op == "+" else (a * b - c)
         return {**base, "expression": f"{a} × {b} {op} {c}", "target": answer, "lastGuess": ""}
+
+    if game_type == "wordle":
+        raw_word = str((options or {}).get("customWord") or "").strip().upper()
+        clean_word = "".join(c for c in raw_word if c.isalpha())[:5]
+        target = clean_word if len(clean_word) == 5 else random.choice(WORDLE_WORDS)
+        return {
+            **base,
+            "target": target,
+            "guesses": [],
+            "maxGuesses": 6,
+            "keyboard": {},
+            "lastGuess": "",
+        }
+
+    if game_type in ("game2048", "2048"):
+        grid = [[0] * 4 for _ in range(4)]
+        for _ in range(2):
+            empty = [(r, c) for r in range(4) for c in range(4) if grid[r][c] == 0]
+            if empty:
+                r, c = random.choice(empty)
+                grid[r][c] = 2 if random.random() < 0.9 else 4
+        return {
+            **base,
+            "grid": grid,
+            "score": 0,
+            "bestTile": 4,
+            "won": False,
+            "movesCount": 0,
+        }
+
+    if game_type == "typerace":
+        prompt = random.choice(TYPERACE_PROMPTS)
+        return {
+            **base,
+            "prompt": prompt,
+            "wordCount": len(prompt.split()),
+            "results": [],
+        }
+
+    if game_type == "truthordare":
+        initial_type = random.choice(["truth", "dare"])
+        prompt_text = random.choice(TRUTH_PROMPTS if initial_type == "truth" else DARE_PROMPTS)
+        uname = creator.name or creator.username
+        return {
+            **base,
+            "currentPrompt": {
+                "type": initial_type,
+                "text": prompt_text,
+                "player": uname,
+            },
+            "history": [{"type": initial_type, "text": prompt_text, "player": uname}],
+            "completedCount": 0,
+        }
 
     raise ValueError(f"Unsupported game type: {game_type}")
 
@@ -750,6 +909,158 @@ def apply_game_move(game: dict, user, move: dict) -> tuple[dict, str | None]:
             game["lastGuess"] = f"{uname} solved it: {ans}!"
         else:
             game["lastGuess"] = f"{uname} tried {ans} ❌"
+        return game, None
+
+    if gtype == "wordle":
+        raw_guess = str(move.get("guess", "")).strip().upper()
+        clean_guess = "".join(c for c in raw_guess if c.isalpha())
+        if len(clean_guess) != 5:
+            return game, "Wordle guess must be exactly 5 letters."
+        target = str(game.get("target", "SPARK")).upper()
+        guesses = list(game.get("guesses") or [])
+        if len(guesses) >= int(game.get("maxGuesses", 6)):
+            return game, "No more guesses left in this duel."
+
+        eval_result = ["absent"] * 5
+        target_counts = {}
+        for c in target:
+            target_counts[c] = target_counts.get(c, 0) + 1
+
+        for i in range(5):
+            if clean_guess[i] == target[i]:
+                eval_result[i] = "correct"
+                target_counts[clean_guess[i]] -= 1
+
+        for i in range(5):
+            if eval_result[i] != "correct" and target_counts.get(clean_guess[i], 0) > 0:
+                eval_result[i] = "present"
+                target_counts[clean_guess[i]] -= 1
+
+        kb = dict(game.get("keyboard") or {})
+        for i, c in enumerate(clean_guess):
+            st = eval_result[i]
+            current = kb.get(c)
+            if current == "correct":
+                continue
+            if current == "present" and st == "absent":
+                continue
+            kb[c] = st
+        game["keyboard"] = kb
+
+        guesses.append({
+            "word": clean_guess,
+            "player": uname,
+            "playerId": uid,
+            "evaluation": eval_result,
+        })
+        game["guesses"] = guesses
+        game["lastGuess"] = f"{uname} guessed {clean_guess}"
+
+        if clean_guess == target:
+            game["status"] = "finished"
+            game["winnerId"] = uid
+            game["winnerName"] = f"{uname} cracked it in {len(guesses)}/6!"
+            scores[uid] = scores.get(uid, 0) + (7 - len(guesses))
+        elif len(guesses) >= 6:
+            game["status"] = "finished"
+            game["winnerName"] = f"Word was {target}!"
+
+        return game, None
+
+    if gtype in ("game2048", "2048"):
+        direction = str(move.get("direction", "")).lower()
+        if direction not in ("up", "down", "left", "right"):
+            return game, "Direction must be up, down, left, or right."
+        grid = game.get("grid") or [[0] * 4 for _ in range(4)]
+        new_grid, gain = _slide_and_merge_2048(grid, direction)
+        if new_grid == grid:
+            return game, "No tiles moved in that direction."
+
+        empty_cells = [(r, c) for r in range(4) for c in range(4) if new_grid[r][c] == 0]
+        if empty_cells:
+            r, c = random.choice(empty_cells)
+            new_grid[r][c] = 2 if random.random() < 0.9 else 4
+
+        game["grid"] = new_grid
+        game["score"] = int(game.get("score", 0)) + gain
+        scores[uid] = game["score"]
+        game["movesCount"] = int(game.get("movesCount", 0)) + 1
+        best_tile = max(max(row) for row in new_grid)
+        game["bestTile"] = best_tile
+
+        if best_tile >= 2048 and not game.get("won"):
+            game["won"] = True
+            game["winnerName"] = f"🎉 2048 Reached by {uname}!"
+
+        if not _can_move_2048(new_grid):
+            game["status"] = "finished"
+            game["winnerName"] = f"Game Over! Score: {game['score']}"
+
+        return game, None
+
+    if gtype == "typerace":
+        typed = str(move.get("typed", "")).strip()
+        time_ms = max(500, int(move.get("timeMs", 1000)))
+        prompt = str(game.get("prompt", ""))
+
+        match_chars = sum(1 for i, c in enumerate(typed) if i < len(prompt) and c == prompt[i])
+        accuracy = round((match_chars / max(1, len(prompt))) * 100)
+
+        time_sec = time_ms / 1000.0
+        words = len(typed.split())
+        wpm = round((words / (time_sec / 60.0))) if time_sec > 0 else 0
+        if accuracy < 60:
+            wpm = max(0, wpm - 20)
+
+        results = list(game.get("results") or [])
+        idx = next((i for i, r in enumerate(results) if r.get("playerId") == uid), -1)
+        entry = {
+            "playerId": uid,
+            "player": uname,
+            "wpm": wpm,
+            "accuracy": accuracy,
+            "timeSec": round(time_sec, 1),
+        }
+        if idx >= 0:
+            if wpm > results[idx].get("wpm", 0):
+                results[idx] = entry
+        else:
+            results.append(entry)
+
+        results.sort(key=lambda r: r.get("wpm", 0), reverse=True)
+        game["results"] = results
+        scores[uid] = wpm
+
+        if results:
+            game["winnerId"] = results[0]["playerId"]
+            game["winnerName"] = f"🏆 {results[0]['player']} ({results[0]['wpm']} WPM)"
+
+        return game, None
+
+    if gtype == "truthordare":
+        action = str(move.get("action", "pick"))
+        if action == "complete":
+            game["completedCount"] = int(game.get("completedCount", 0)) + 1
+            scores[uid] = scores.get(uid, 0) + 1
+            game["lastAction"] = f"✅ {uname} completed the challenge!"
+            return game, None
+
+        choice_type = str(move.get("type", "random")).lower()
+        if choice_type == "random":
+            choice_type = random.choice(["truth", "dare"])
+
+        prompt_bank = TRUTH_PROMPTS if choice_type == "truth" else DARE_PROMPTS
+        chosen_prompt = random.choice(prompt_bank)
+        new_prompt = {
+            "type": choice_type,
+            "text": chosen_prompt,
+            "player": uname,
+        }
+        game["currentPrompt"] = new_prompt
+        history = list(game.get("history") or [])
+        history.append(new_prompt)
+        game["history"] = history[-10:]
+        game["lastAction"] = f"🎲 {uname} drew a {choice_type.upper()}!"
         return game, None
 
     return game, "Unsupported game."

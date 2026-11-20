@@ -1275,6 +1275,11 @@ class CreateGameView(APIView):
             "evenodd": "Even / Odd Bet",
             "oddone": "Emoji Odd-One-Out",
             "mathsprint": "Math Sprint",
+            "wordle": "Wordle Duel",
+            "game2048": "2048 Puzzle",
+            "2048": "2048 Puzzle",
+            "typerace": "Typing Speed Race",
+            "truthordare": "Truth or Dare",
         }
         serialized = _publish_interactive_message(
             conversation,
