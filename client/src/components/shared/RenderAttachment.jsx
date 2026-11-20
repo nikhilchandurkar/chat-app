@@ -62,6 +62,7 @@ const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
               onClick={() => setPreviewOpen(true)}
               onError={() => setImgError(true)}
               loading="lazy"
+              decoding="async"
               style={{
                 maxWidth: "280px",
                 maxHeight: "220px",
@@ -144,6 +145,7 @@ const RenderAttachment = (propsOrFile, maybeUrl, maybeName) => {
               <img
                 src={resolvedUrl}
                 alt={fileName}
+                decoding="async"
                 style={{
                   maxWidth: "100%",
                   maxHeight: "75vh",

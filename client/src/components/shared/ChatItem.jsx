@@ -241,4 +241,26 @@ const ChatItem = ({
   );
 };
 
-export default memo(ChatItem);
+const areChatItemPropsEqual = (prevProps, nextProps) => {
+  if (prevProps.sameSender !== nextProps.sameSender) return false;
+  if (prevProps.unreadCount !== nextProps.unreadCount) return false;
+  if (prevProps.isOnline !== nextProps.isOnline) return false;
+  if (prevProps.isTyping !== nextProps.isTyping) return false;
+  if (prevProps.isPinned !== nextProps.isPinned) return false;
+  if (prevProps.isMuted !== nextProps.isMuted) return false;
+  if (prevProps.isArchived !== nextProps.isArchived) return false;
+  if (prevProps.lastMessage !== nextProps.lastMessage) return false;
+  if (prevProps.name !== nextProps.name) return false;
+  if (prevProps._id !== nextProps._id) return false;
+  if (prevProps.index !== nextProps.index) return false;
+  if (prevProps.draftTick !== nextProps.draftTick) return false;
+  if (prevProps.newMessageAlert?.count !== nextProps.newMessageAlert?.count) return false;
+  if (prevProps.newMessageAlert?.message?.content !== nextProps.newMessageAlert?.message?.content) return false;
+  if (prevProps.avatar !== nextProps.avatar) {
+    if ((prevProps.avatar?.length || 0) !== (nextProps.avatar?.length || 0)) return false;
+  }
+  return true;
+};
+
+export { areChatItemPropsEqual };
+export default memo(ChatItem, areChatItemPropsEqual);

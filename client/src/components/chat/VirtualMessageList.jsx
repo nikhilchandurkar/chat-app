@@ -35,6 +35,13 @@ export default function VirtualMessageList({
 }) {
   const myId = String(user?._id || user?.id || "");
 
+  // O(1) selected set lookup to prevent O(N * M) scans on each render
+  const selectedSet = React.useMemo(
+    () => new Set((selectedMsgIds || []).map(String)),
+    [selectedMsgIds]
+  );
+  const selectionMode = selectedSet.size > 0;
+
   // When message list is small (<= 25 items), render normal DOM stack to avoid any virtualization overhead
   const shouldVirtualize = messages.length > 25;
 
@@ -75,8 +82,8 @@ export default function VirtualMessageList({
                   onViewOnceConsumed={onViewOnceConsumed}
                   onOpenThread={onOpenThread}
                   onViewProfile={onViewProfile}
-                  selectionMode={selectedMsgIds.length > 0}
-                  isSelected={selectedMsgIds.includes(String(value._id))}
+                  selectionMode={selectionMode}
+                  isSelected={selectedSet.has(String(value._id))}
                   onToggleSelect={onToggleSelect}
                   onStartMultiSelect={onToggleSelect}
                 />
@@ -149,8 +156,8 @@ export default function VirtualMessageList({
                 onViewOnceConsumed={onViewOnceConsumed}
                 onOpenThread={onOpenThread}
                 onViewProfile={onViewProfile}
-                selectionMode={selectedMsgIds.length > 0}
-                isSelected={selectedMsgIds.includes(String(value._id))}
+                selectionMode={selectionMode}
+                isSelected={selectedSet.has(String(value._id))}
                 onToggleSelect={onToggleSelect}
                 onStartMultiSelect={onToggleSelect}
               />

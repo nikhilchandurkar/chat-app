@@ -1,8 +1,19 @@
 import { createSlice } from "@reduxjs/toolkit";
 
+const getInitialStorageItem = (key, fallback) => {
+  try {
+    if (typeof localStorage !== "undefined") {
+      return localStorage.getItem(key) || fallback;
+    }
+  } catch {
+    // Fallback for SSR or non-browser environments
+  }
+  return fallback;
+};
+
 const initialState = {
-  themeMode: localStorage.getItem("themeMode") || "light",
-  fontFamily: localStorage.getItem("fontFamily") || "Inter",
+  themeMode: getInitialStorageItem("themeMode", "light"),
+  fontFamily: getInitialStorageItem("fontFamily", "Inter"),
   isNewGroup: false,
   isAddMember: false,
   isNotification: false,
@@ -68,11 +79,15 @@ const miscSlice = createSlice({
     },
     toggleTheme: (state) => {
       state.themeMode = state.themeMode === "light" ? "dark" : "light";
-      localStorage.setItem("themeMode", state.themeMode);
+      try {
+        if (typeof localStorage !== "undefined") localStorage.setItem("themeMode", state.themeMode);
+      } catch {}
     },
     setFontFamily: (state, action) => {
       state.fontFamily = action.payload;
-      localStorage.setItem("fontFamily", action.payload);
+      try {
+        if (typeof localStorage !== "undefined") localStorage.setItem("fontFamily", action.payload);
+      } catch {}
     }
   },
 });

@@ -36,35 +36,16 @@ import StatusSection from "./StatusSection";
 
 const GlobalMessageSearchDialog = lazy(() => import("../dialogs/GlobalMessageSearchDialog"));
 
-const checkIsOnline = (members, onlineUsers) => {
-  if (!members || !onlineUsers) return false;
-  return members.some((member) => {
+const checkMemberOnline = (members, onlineSet) => {
+  if (!members || !onlineSet || onlineSet.size === 0) return false;
+  for (const member of members) {
     const memberId =
       typeof member === "object" && member !== null
         ? String(member._id || member.id || member.user_id || "")
         : String(member || "");
-    if (!memberId) return false;
-
-    if (Array.isArray(onlineUsers)) {
-      return onlineUsers.some((u) => {
-        if (typeof u === "object" && u !== null) {
-          return String(u.user_id || u.id || u._id || "") === memberId;
-        }
-        return String(u) === memberId;
-      });
-    }
-    if (onlineUsers instanceof Set) {
-      return onlineUsers.has(memberId);
-    }
-    if (typeof onlineUsers === "object") {
-      if (onlineUsers.user_id || onlineUsers.id) {
-        const uId = String(onlineUsers.user_id || onlineUsers.id);
-        return uId === memberId && onlineUsers.status !== "offline";
-      }
-      return Boolean(onlineUsers[memberId]);
-    }
-    return false;
-  });
+    if (memberId && onlineSet.has(memberId)) return true;
+  }
+  return false;
 };
 
 const ChatList = ({
@@ -86,6 +67,41 @@ const ChatList = ({
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [openSavedMessages, { isLoading: isOpeningVault }] = useOpenSavedMessagesMutation();
+
+  const onlineUserSet = useMemo(() => {
+    if (!onlineUsers) return new Set();
+    if (onlineUsers instanceof Set) return onlineUsers;
+    const s = new Set();
+    if (Array.isArray(onlineUsers)) {
+      for (const u of onlineUsers) {
+        if (typeof u === "object" && u !== null) {
+          const uid = String(u.user_id || u.id || u._id || "");
+          if (uid && u.status !== "offline") s.add(uid);
+        } else if (u) {
+          s.add(String(u));
+        }
+      }
+    } else if (typeof onlineUsers === "object") {
+      for (const [k, v] of Object.entries(onlineUsers)) {
+        if (v && v !== "offline") s.add(String(k));
+      }
+    }
+    return s;
+  }, [onlineUsers]);
+
+  const newMessagesAlertMap = useMemo(() => {
+    const map = new Map();
+    if (Array.isArray(newMessagesAlert)) {
+      for (const alert of newMessagesAlert) {
+        if (alert?.chatId) map.set(alert.chatId, alert);
+      }
+    }
+    return map;
+  }, [newMessagesAlert]);
+
+  const typingChatsSet = useMemo(() => {
+    return new Set(Array.isArray(typingChats) ? typingChats : []);
+  }, [typingChats]);
 
   useEffect(() => {
     setFolders(getChatFolders(userId));
@@ -283,12 +299,9 @@ const ChatList = ({
       {displayedChats.length > 0 ? (
         displayedChats.map((data, index) => {
           const { avatar, _id, name, groupChat, isSavedMessages, members, memberNames, isPinned, isMuted, isArchived, unreadCount, lastMessage } = data;
-          const newMessageAlert = Array.isArray(newMessagesAlert)
-            ? newMessagesAlert.find(({ chatId: alertChatId }) => alertChatId === _id)
-            : undefined;
-
-          const isOnline = checkIsOnline(members, onlineUsers);
-          const isTyping = Array.isArray(typingChats) ? typingChats.includes(_id) : false;
+          const newMessageAlert = newMessagesAlertMap.get(_id);
+          const isOnline = checkMemberOnline(members, onlineUserSet);
+          const isTyping = typingChatsSet.has(_id);
 
           return (
             <ChatItem

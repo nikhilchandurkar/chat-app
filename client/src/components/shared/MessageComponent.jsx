@@ -1377,4 +1377,61 @@ const MessageComponent = ({
   );
 };
 
-export default memo(MessageComponent);
+const areMessagePropsEqual = (prevProps, nextProps) => {
+  if (prevProps.isSelected !== nextProps.isSelected) return false;
+  if (prevProps.selectionMode !== nextProps.selectionMode) return false;
+  if (prevProps.chatId !== nextProps.chatId) return false;
+  if (prevProps.isGroupAdmin !== nextProps.isGroupAdmin) return false;
+
+  const pm = prevProps.message;
+  const nm = nextProps.message;
+  if (pm === nm) return true;
+  if (!pm || !nm) return false;
+
+  if (pm._id !== nm._id) return false;
+  if (pm.content !== nm.content) return false;
+  if (pm.status !== nm.status) return false;
+  if (pm.isPending !== nm.isPending) return false;
+  if (pm.isDelivered !== nm.isDelivered) return false;
+  if (pm.isEdited !== nm.isEdited) return false;
+  if (pm.isDeleted !== nm.isDeleted) return false;
+  if (pm.isPinned !== nm.isPinned || pm.pinned !== nm.pinned) return false;
+  if (pm.isStarred !== nm.isStarred) return false;
+  if (pm.topicName !== nm.topicName) return false;
+  if (pm.replyCount !== nm.replyCount) return false;
+  if (pm.expiresAt !== nm.expiresAt) return false;
+  if (pm.updatedAt !== nm.updatedAt) return false;
+  if (pm.interactive_type !== nm.interactive_type) return false;
+  if (pm.interactive_data !== nm.interactive_data) return false;
+
+  if (pm.attachments !== nm.attachments) {
+    if ((pm.attachments?.length || 0) !== (nm.attachments?.length || 0)) return false;
+    try {
+      if (JSON.stringify(pm.attachments) !== JSON.stringify(nm.attachments)) return false;
+    } catch {
+      return false;
+    }
+  }
+
+  if (pm.reactions !== nm.reactions) {
+    if ((pm.reactions?.length || 0) !== (nm.reactions?.length || 0)) return false;
+    try {
+      if (JSON.stringify(pm.reactions) !== JSON.stringify(nm.reactions)) return false;
+    } catch {
+      return false;
+    }
+  }
+
+  if (pm.readBy !== nm.readBy) {
+    if ((pm.readBy?.length || 0) !== (nm.readBy?.length || 0)) return false;
+  }
+
+  if (pm.viewedBy !== nm.viewedBy) {
+    if ((pm.viewedBy?.length || 0) !== (nm.viewedBy?.length || 0)) return false;
+  }
+
+  return true;
+};
+
+export { areMessagePropsEqual };
+export default memo(MessageComponent, areMessagePropsEqual);
